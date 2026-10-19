@@ -1,0 +1,21 @@
+# Runs Terminus 2 (Harbor's terminal agent) with the local Qwen model on every task: all three tasks in all four tiers.
+# bench/qwen.ts selects tiers or tasks (--tier raw, --task "craft-*-full").
+# Start it with bench/qwen.ts, which reads the API key and the model's context length:
+#   node bench/qwen.ts
+# Terminus 2 runs in the Harbor process on this machine, so the endpoint only has to be
+# reachable from here, not from the containers.
+jobs_dir: bench/runs
+n_attempts: 3
+# One trial at a time: a single local GPU serves every request.
+n_concurrent_trials: 1
+environment:
+  type: podman
+datasets:
+  - path: bench/tasks
+agents:
+  - name: terminus-2
+    model_name: openai/qwen3.8-27b
+    model_base_url: http://192.168.50.168:18020/v1
+    model_api_key_name: HYPERQWEN_API_KEY
+    kwargs:
+      temperature: 0.6

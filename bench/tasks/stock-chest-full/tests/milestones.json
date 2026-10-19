@@ -1,0 +1,83 @@
+{
+  "player": "agent",
+  "milestones": [
+    {
+      "id": "log",
+      "description": "Obtain a log",
+      "via": "gathered",
+      "obtained": [
+        "*_log"
+      ],
+      "count": 1
+    },
+    {
+      "id": "planks",
+      "description": "Craft planks",
+      "via": "crafted",
+      "obtained": [
+        "*_planks"
+      ],
+      "count": 1
+    },
+    {
+      "id": "crafting_table",
+      "description": "Craft a crafting table",
+      "via": "crafted",
+      "obtained": [
+        "crafting_table"
+      ],
+      "count": 1
+    },
+    {
+      "id": "stick",
+      "description": "Craft sticks",
+      "via": "crafted",
+      "obtained": [
+        "stick"
+      ],
+      "count": 1
+    },
+    {
+      "id": "wooden_pickaxe",
+      "description": "Craft a wooden pickaxe",
+      "via": "crafted",
+      "obtained": [
+        "wooden_pickaxe"
+      ],
+      "count": 1
+    },
+    {
+      "id": "cobblestone",
+      "description": "Obtain 16 cobblestone",
+      "via": "gathered",
+      "obtained": [
+        "cobblestone"
+      ],
+      "blocks": [
+        "stone",
+        "cobblestone"
+      ],
+      "count": 16
+    },
+    {
+      "id": "chest",
+      "description": "Craft a chest",
+      "via": "crafted",
+      "obtained": [
+        "chest"
+      ],
+      "count": 1
+    }
+  ],
+  "checks": [
+    {
+      "id": "stocked",
+      "description": "Store 16 cobblestone in a chest",
+      "type": "stored",
+      "items": [
+        "cobblestone"
+      ],
+      "min": 16
+    }
+  ]
+}

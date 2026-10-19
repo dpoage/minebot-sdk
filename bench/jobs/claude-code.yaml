@@ -1,0 +1,12 @@
+# Runs Claude Code on every task, three attempts each.
+#   CLAUDE_CODE_OAUTH_TOKEN=... harbor run -c bench/jobs/claude-code.yaml -y
+# Claude Code also accepts ANTHROPIC_API_KEY.
+jobs_dir: bench/runs
+n_attempts: 3
+n_concurrent_trials: 3
+environment:
+  type: podman
+datasets:
+  - path: bench/tasks
+agents:
+  - name: claude-code

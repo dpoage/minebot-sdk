@@ -1,0 +1,2 @@
+harbor @ git+https://github.com/harbor-framework/harbor@7331d8a3e23cb72e8277522059ff7c9ab9435d90
+podman-compose==1.6.0

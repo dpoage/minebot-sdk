@@ -1,0 +1,24 @@
+{
+  "player": "agent",
+  "milestones": [],
+  "checks": [
+    {
+      "id": "night_1",
+      "description": "Live to the end of night 1",
+      "type": "nights",
+      "nights": 1
+    },
+    {
+      "id": "night_2",
+      "description": "Live to the end of night 2",
+      "type": "nights",
+      "nights": 2
+    },
+    {
+      "id": "no_deaths",
+      "description": "Do not die",
+      "type": "deaths",
+      "max": 0
+    }
+  ]
+}

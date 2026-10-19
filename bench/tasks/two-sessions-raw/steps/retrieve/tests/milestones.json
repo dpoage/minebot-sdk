@@ -1,0 +1,48 @@
+{
+  "player": "agent",
+  "milestones": [
+    {
+      "id": "wooden_pickaxe",
+      "description": "Craft a wooden pickaxe",
+      "via": "crafted",
+      "obtained": [
+        "wooden_pickaxe"
+      ],
+      "count": 1
+    },
+    {
+      "id": "cobblestone",
+      "description": "Obtain three cobblestone",
+      "via": "gathered",
+      "obtained": [
+        "cobblestone"
+      ],
+      "blocks": [
+        "stone",
+        "cobblestone"
+      ],
+      "count": 3
+    },
+    {
+      "id": "stone_pickaxe",
+      "description": "Craft a stone pickaxe",
+      "via": "crafted",
+      "obtained": [
+        "stone_pickaxe"
+      ],
+      "count": 1
+    }
+  ],
+  "checks": [
+    {
+      "id": "withdrawn",
+      "description": "Take 4 logs out of the chest that the first session filled",
+      "type": "withdrawn",
+      "items": [
+        "*_log"
+      ],
+      "held": 8,
+      "max": 4
+    }
+  ]
+}

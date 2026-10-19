@@ -1,0 +1,356 @@
+# minebot SDK
+
+The minebot SDK gives AI agents a body in Minecraft Java Edition. A body is a long-running process that holds one Mineflayer player connection and serves an API. Any agent harness, such as Claude Code, Codex, or your own loop, controls the body through MCP, a CLI, or HTTP.
+
+The agent acts by writing JavaScript programs. The body runs each program against the live bot and returns the logs and the result.
+
+The SDK does not decide anything for the agent. The harness owns the turn loop, the context, the prompts, and every decision. The body acts on its own only where the connection requires it (it reconnects after a disconnect and paces inventory clicks) or where the agent registered a trigger. See [docs/sdk.md](docs/sdk.md) for the layers and the boundary between the SDK and a harness.
+
+## Requirements
+
+- Node.js 24 or later. Node runs the TypeScript sources directly, without a build step.
+- Java 25 or later, for the development server.
+- Minecraft 26.1. minebot pins this version in `src/mc/version.ts` (`MC_VERSION`). It is the newest version in Mineflayer 4.39's `testedVersions`.
+
+## Quick start
+
+1. Install the dependencies:
+
+   ```sh
+   npm install
+   ```
+
+2. Read the [Minecraft EULA](https://aka.ms/MinecraftEULA). Then start the development server:
+
+   ```sh
+   npm run dev-server -- --accept-eula
+   ```
+
+   The script downloads the vanilla 26.1 server jar to `.dev-server/`, checks its SHA-1, and starts it on `127.0.0.1:25565` in offline mode. Type server commands such as `op alpha` into this terminal.
+
+3. In a second terminal, start a body named `alpha`:
+
+   ```sh
+   npm run minebot -- body --bot alpha
+   ```
+
+4. In a third terminal, send the body a program:
+
+   ```sh
+   echo 'return bot.entity.position' | npm run --silent minebot -- run --bot alpha
+   ```
+
+## Control a body from an agent
+
+Register the MCP server with your harness. For Claude Code:
+
+```sh
+claude mcp add minebot -- node /absolute/path/to/minebot/src/cli.ts mcp --bot alpha
+```
+
+The MCP server exposes these tools:
+
+| Tool | What it does |
+| - | - |
+| `observe` | Returns position, vitals, armor, effects, biome, open sky, inventory, nearby creatures, and program state as one line. `full: true` returns the complete JSON. |
+| `status` | Returns deaths and reconnects since the body started, and progress toward the body's milestones. |
+| `notes_list`, `notes_set`, `notes_delete` | Read and write the agent's persistent notes. |
+| `run_program` | Runs a program and blocks until it returns, fails, or times out. |
+| `stop_program` | Aborts the running program and halts movement, pathfinding, and digging. |
+| `get_events` | Returns chat, damage, deaths, joins, disconnects, and what the player did or noticed (items picked up, blocks broken and placed, low health or food, hostile creatures near) since a cursor. |
+| `wait_for` | Blocks until a matching event arrives (chat, whisper, system message, night, day, hostile_near, low_health, low_food, item_picked_up, ...) or the timeout, then returns it. The cheap way to idle. |
+| `send_chat` | Sends a chat message or a command as the player. |
+| `api_reference` | Returns the globals available to programs on this body. |
+| `list_kits` | Lists the kits, their uses and actions, and which kits are active. |
+| `use_kits` | Replaces the active kits. |
+| `kit_docs` | Returns the action reference for kits. |
+| `kit_search` | Ranks the kits and actions by what they do (names, descriptions, action docs). |
+| `kit_save` | Saves an agent-written kit from TypeScript source. |
+| `kit_remove` | Deletes a saved kit. |
+| `kit_source` | Prints a kit's source: the model for writing your own. |
+| `kit_try` | Runs one action of kit source once, without saving it, and returns the result or the error. |
+| `kit_versions`, `kit_revert` | Lists the saved versions of an agent kit; saves an earlier version again. |
+| `trigger_add`, `trigger_list`, `trigger_remove`, `trigger_set_enabled` | Register, list, delete, and switch off triggers: programs the body runs when an event arrives. |
+| `wiki_search`, `wiki_read`, `wiki_list` | Search and read the wiki. |
+| `wiki_add_lesson` | Adds a lesson to the wiki, when the body allows writes. |
+
+The MCP server reads the body endpoint on every call. If the body restarts, the MCP server keeps working.
+
+The MCP server asks the body which features it offers: before it connects, and before every tool call. It lists the kit tools only when the body offers kits (`use_kits` only when the set can change, `kit_save`, `kit_remove`, `kit_source`, `kit_try`, `kit_versions`, and `kit_revert` only when agent kits are on), the wiki tools only when the wiki is not `off`, `wiki_add_lesson` only in `write` mode, and the `trigger_*` tools only on a body that has triggers. When the answer changes, tools appear or disappear and the server sends `notifications/tools/list_changed`. The `run_program` and `status` descriptions and `minebot api` describe only the offered features. While the body cannot be reached, the MCP server lists only the base tools: `observe`, `status`, the `notes_*` tools, `run_program`, `api_reference`, `stop_program`, `get_events`, `wait_for`, and `send_chat`.
+
+## Programs
+
+A program is the body of an async function. These globals are available:
+
+- `bot`: the Mineflayer bot, with the pathfinder plugin loaded.
+- `goals`, `Movements`: from `mineflayer-pathfinder`.
+- `Vec3`: the vec3 constructor.
+- `log(...)` and `console.log(...)`: append to the program output.
+- `sleep(ms)`: waits, and rejects when the program is aborted.
+- `signal`: an `AbortSignal` that fires on timeout or stop.
+- `on(event, handler)`: subscribes to a bot event until the program ends.
+- `setTimeout` and `setInterval`: cleared when the program ends.
+- `globalThis`: keeps its values between programs, until the body restarts.
+- `notes`: the agent's persistent notes. See [Long-running bodies](#long-running-bodies).
+- `status()`: resolves to deaths and reconnects, and to progress toward the body's milestones when the body has them.
+- `triggers`: register, list, and remove triggers. Only when the body has triggers. See [Triggers](#triggers).
+- `kit`, `kits`, `wiki`: only when the body offers kits (`kit` and `kits`), agent kits (`kits.save`, `kits.remove`, `kits.source`, `kits.try`, `kits.versions`, `kits.revert`), or the wiki (`wiki`). A program on a body without them finds no such global; calling one fails with `... is not defined`.
+
+Run `npm run minebot -- api` to print the full reference. The MCP tool description contains the same text.
+
+This program walks to the nearest log and breaks it:
+
+```js
+const ids = Object.values(bot.registry.blocksByName)
+  .filter((b) => b.name.endsWith("_log"))
+  .map((b) => b.id);
+const block = bot.findBlock({ matching: ids, maxDistance: 64 });
+if (!block) return "no log nearby";
+await bot.pathfinder.goto(new goals.GoalLookAtBlock(block.position, bot.world));
+await bot.dig(bot.blockAt(block.position));
+return block.name;
+```
+
+The body runs one program at a time. A second request gets HTTP 409. The default timeout is 60 seconds; the maximum is 30 minutes. If a program times out or stops, the body halts pathfinding, digging, item use, and movement keys. JavaScript that is still running after the abort continues, so long loops must check `signal.aborted`.
+
+The body does not add notices to run results. Facts stay in the observation: it keeps the open-sky view and `programsWithoutChange`, and `minebot observe --brief` adds `no change for N programs` when 3 or more programs in a row changed neither position nor inventory.
+
+The observation reports, besides position, vitals, inventory, and nearby creatures: `armor` (head, chest, legs, feet) and `offhand`, `effects` (name, `amplifier` where 0 is level I, seconds `remaining`), the `biome`, the block the player is `standingOn`, the block in the line of sight within 5 blocks (`lookingAt`), and the `light` at the feet. `light.sky` is absent when the chunk has no sky light data. The brief line adds the biome, and lists armor, the offhand item, and effects only while there are some.
+
+Besides chat, damage, and deaths, the event log records what the player does and notices. Events about the player's own actions come from the actions themselves, so other players' actions and world updates do not produce them.
+
+| Event | Data | When |
+| - | - | - |
+| `item_picked_up` | `item`, `count` | The player picks up a dropped item. |
+| `block_broken` | `block`, `position` | A dig of the player finishes. |
+| `block_placed` | `block`, `position` | A placement of the player is confirmed by the server. |
+| `item_crafted` | `item`, `count` | A craft of the player finishes. |
+| `hostile_near` | `name`, `id`, `distance` | A hostile creature comes within 16 blocks. Once per creature: it fires again only after the creature was 32 blocks away or gone. Enderman, zombified piglin, and strider do not count. |
+| `low_health` | `health` | Health falls below 8. It fires again after health was back at 8 or more. |
+| `low_food` | `food` | Food falls below 6. It fires again after food was back at 6 or more. |
+
+## Kits
+
+A kit is a composable library of typed actions. Programs call them namespaced, with one object argument:
+
+```js
+await kit.move.to({ position: [x, y, z], range: 1 });
+await kit.gatherer.gather({ blocks: "*_log", count: 4 });
+```
+
+Every action validates its arguments on every call, nested calls included. A bad call fails with the action's schema. Kits come in two layers:
+
+| Layer | Kit | Actions |
+| - | - | - |
+| Primitives | `move` | `to`, `stop` |
+| Primitives | `sense` | `find`, `look` |
+| Primitives | `dig` | `dig` |
+| Primitives | `place` | `place` |
+| Primitives | `inventory` | `list`, `count`, `equip`, `toss` |
+| Primitives | `craft` | `craft`, `table` |
+| Primitives | `items` | `recipes`, `drops` |
+| Primitives | `furnace` | `smelt`, `take` |
+| Primitives | `container` | `list`, `deposit`, `withdraw` |
+| Primitives | `survival` | `eat`, `sleep`, `wake`, `armor` |
+| Primitives | `combat` | `attack`, `fight`, `retreat` |
+| Primitives | `farm` | `till`, `plant`, `harvest`, `breed` |
+| Primitives | `bucket` | `fill`, `empty` |
+| Routines | `gatherer` (uses move, sense, dig, inventory, items) | `gather`, `collectDrops` |
+| Routines | `crafter` (uses move, sense, place, inventory, craft, items, furnace) | `make` |
+| Routines | `builder` (uses move, sense, dig, place, inventory) | `materials`, `build`, `check` |
+| Routines | `explorer` (uses move, sense, dig) | `scan`, `explore`, `remember`, `places`, `waypoints`, `travel`, `surface` |
+| Routines | `social` (uses move, sense, inventory) | `say`, `waitForChat`, `players`, `follow`, `give` |
+
+Primitives do one thing. Routine kits are built from public primitives through `ctx.kits`, so anything a routine kit does, an agent's own kit can do too. See [docs/sdk.md](docs/sdk.md) for the full model.
+
+The operator decides which kits a body **offers**; the agent picks the **active** set among them:
+
+- At start: `minebot body --bot ana --kits gatherer,crafter`. Without `--kits`, the body offers every built-in kit. Used kits are offered too.
+- From a program: `kits.use("builder", "explorer")`. The next `kit.<kit>.<action>` call uses the new set. `kits.active` and `kits.available()` list both sets.
+- From the CLI: `minebot kits use builder explorer`. Run `minebot kits` to list kits, and `minebot kits docs` to print the reference, which is generated from the action schemas: argument names, types, and defaults.
+- From MCP: the `use_kits` tool.
+
+`--lock-kits` fixes the active set. A locked body hides the kits that are not active: they do not appear in `minebot kits`, `kits docs`, or the MCP tools, and a program finds no `kits.use`. Every benchmark task starts its body with `--lock-kits`. The lock stops an agent that uses the body as intended, but programs run in a `node:vm` context that is not a security boundary, so it is advisory. See [Security](#security) and [bench/README.md](bench/README.md).
+
+Each kit keeps its own JSON store in the body's state directory. The store survives programs, kit swaps, and body restarts, and no kit reads another's. Explorer places, for example, persist across restarts.
+
+The framework counts every call of every action, nested calls included: how often it returned and how often it failed, and the message of the last failure. A call that fails because the program was stopped, timed out, or was preempted does not count as a failure. The counts are per body, live in the state directory (`kit-stats.json`), and survive restarts. `kits.available()` returns them as `stats` on each kit, and `minebot kits` prints them under the kit (`calls: gather: 12 ok / 3 failed`), so an agent can prefer the actions that work. A new source for an agent kit, or removing it, resets that kit's counts. To find an action by what it does, search: `kits.search("collect logs")` in a program, `minebot kits search <query>` in the CLI, or the `kit_search` tool. The search ranks kits and actions by name, kit description, and action doc, and marks the active kits and the actions' counts.
+
+## Agent kits
+
+An agent can save kits of its own, in the same shape as the built-ins: one `export default defineKit({ name, description, uses, actions })` with `action({ doc, args, run })` and the schema builder `z` provided as globals — no imports.
+
+```js
+await kits.save(source);       // in a program
+await kits.source("move");     // a built-in kit's source, the model to start from
+await kits.remove("woodcutter");
+await kits.try(source, { action: "chop", args: { times: 2 } });  // run one action, save nothing
+await kits.versions("woodcutter");
+await kits.revert("woodcutter", 1);
+```
+
+The CLI serves the same over `minebot kits save [file]` (stdin when omitted), `minebot kits rm <kit>`, `minebot kits source <kit>`, `minebot kits try [file] --action <name> [--args <json>]`, `minebot kits versions <kit>`, and `minebot kits revert <kit> <version>`; MCP serves `kit_save`, `kit_remove`, `kit_source`, `kit_try`, `kit_versions`, and `kit_revert`; HTTP serves `POST /kits/save`, `POST /kits/remove`, `GET /kits/source`, `POST /kits/try`, `GET /kits/versions`, and `POST /kits/revert`.
+
+Saving validates before it writes, and nothing is written when the source is rejected: it must compile, pass the escape audit, use only kits this body offers, and not take a built-in kit's name. A saved kit is offered and active immediately. `kits.try` runs the same validation, then calls one action once against the live bot, as part of the current program, and returns the action's result or throws its error. It writes nothing and registers nothing: the `ctx.store` of the tried kit and of every kit it calls is a throwaway, and no call is counted in the statistics. Over MCP, CLI, and HTTP, a try is a program run, so it is recorded in the history like one.
+
+Saving over an existing kit keeps the old source. Each different source is a numbered version, stored with the time and the body that saved it in `.history/<kit>/<n>.ts` and `<n>.json` inside the agent-kit directory. `kits.versions(name)` lists them, and `kits.revert(name, version)` saves an earlier one again as a new version, validated like any save, so the history only grows. Removing a kit keeps its history. Agent kits are a capability of their own: on by default, off with `--no-agent-kits`, and `--agent-kits <dir>` picks the directory (default: the state directory's `agent-kits/`). Several bodies can share the directory; a kit one body saves works on the others without a restart, and they share the history, each version noting which body saved it. A bad file on disk never stops a body: it is skipped and reported as a `kit_error` event.
+
+## Triggers
+
+A program runs when the agent starts it. A trigger is a program that the body starts when an event arrives, so the agent can install reflexes: eat when food is low, flee when hurt, answer a chat. The agent writes every trigger. The body decides nothing that the agent did not register.
+
+```sh
+minebot triggers add eat --bot ana --on low_food --cooldown 10000 eat.js
+minebot triggers --bot ana            # each trigger, and what it did since the body started
+minebot triggers disable eat --bot ana
+minebot triggers rm eat --bot ana
+```
+
+In a program: `triggers.add({ name, on, run, ... })`, `triggers.list()`, `triggers.enable(name)`, `triggers.disable(name)`, `triggers.remove(name)`. MCP serves `trigger_add`, `trigger_list`, `trigger_remove`, and `trigger_set_enabled`. HTTP serves `GET /triggers`, `POST /triggers`, `POST /triggers/remove`, and `POST /triggers/enabled`.
+
+| Field | Meaning |
+| - | - |
+| `name` | 1-48 lowercase letters, digits, `.`, `_`, `-`. Saving a trigger with an existing name replaces it. |
+| `on` | Event types that fire the trigger: any event in the log, such as `hurt`, `chat`, `night`, `low_food`, `hostile_near`. A trigger cannot listen to `trigger_*` events. |
+| `run` | Program source, with the globals of a program plus `event` (`{ seq, type, data }`). It must compile when the trigger is saved. |
+| `when` | A JavaScript expression over `event` and `bot`. The trigger fires only when it is truthy. It is cut off after 100 ms. |
+| `from`, `match` | Filters for `chat` and `whisper` events, as for `wait`. |
+| `cooldownMs` | Least time between two firings. Default 1000. |
+| `timeoutMs` | The run is aborted after this long. Default 30000. |
+| `preempt`, `priority` | Whether the firing may stop the running program, and the order of waiting firings. |
+| `enabled` | Default true. |
+
+The body runs one program at a time, and a trigger run is a program. A firing that arrives while a program runs waits until the program ends. A trigger waits at most once, so repeated events while it waits do not queue repeats. Waiting triggers run highest `priority` first. With `preempt: true`, the firing stops the running program (it ends as `stopped`, like `minebot stop`) and runs at once; it does not stop a running trigger of equal or higher priority. A `run` request that arrives while a trigger runs gets HTTP 409.
+
+Each firing adds a `trigger_fired { name, event }` event and, when the run ends, `trigger_finished { name, status, durationMs, error?, logs? }`. A trigger run ends with `trigger_finished` and not with `program_finished`. A trigger that fails three times in a row (an error or a timeout) disables itself and adds `trigger_disabled { name, failures, reason }`. A failure never affects the body. An event that arrives while the body is not connected fires nothing.
+
+Triggers persist in the state directory (`triggers.json`), so they survive a restart of the body. A body started with `--no-triggers` has none: the agent cannot register them, and the CLI, the MCP tools, the program reference, and the wiki do not mention them. The benchmark starts its bodies with `--no-triggers`, except in `survive-nights`, where reflexes are the task.
+
+The history (`--history`) records a trigger's code when it is saved (status `registered`), with the escape audit over its program and its `when`, and each firing as a program run with the `trigger` name and the `event` that fired it.
+
+## Long-running bodies
+
+A body can run for days or weeks. The agent's context can be reset, the agent harness can change, and the body can restart. These features help an agent continue where it stopped.
+
+| Feature | What it does |
+| - | - |
+| Notes | A notepad for the agent: up to 200 notes of up to 8000 characters. Keys use lowercase letters, digits, and `. _ / -`. |
+| Milestones | An ordered set, in the same format as a benchmark task's `milestones.json`. A body started with `--no-milestones` has none: the agent cannot read, set, or grade them, and `status`, the CLI, the MCP tools, and the wiki do not mention them. |
+| Status | Deaths and reconnects since the body started, and progress toward the milestones. |
+| Brief observation | The observation as one line, to keep the agent's context small. |
+| `kit.explorer.surface()` | Digs a staircase to open sky when the player is trapped underground. It tunnels sideways when a stair step is impossible, swims up through water, and avoids lava. Under water it checks the air supply first: it does not start a dig that the air cannot cover, and swims to air instead. |
+| `kit.explorer.remember()`, `kit.explorer.places()` | Typed place memory. `remember({ name, kind, tags, note, contents })` saves a chest, bed, farm, ore, base, portal, or other place with a note and, for a chest, its contents. `places({ kind, near, radius, limit })` lists them nearest first. `waypoints` and `travel` use the same places, and a store written before places existed loads as places of kind `other`. |
+| Blocking wait | `minebot wait` (also `POST /wait` and the `wait_for` MCP tool) blocks until a matching event arrives: chat or whisper from a player, a system message, `night`, `day`, `hostile_near`, `low_health`, `low_food`, `item_picked_up`, or any other event. Filters: types, sender, a regex over the message. The cheap way to idle. |
+
+```sh
+minebot notes set plan --bot ana "1. wood 2. stone tools 3. shelter"
+minebot notes --bot ana
+minebot milestones set my-milestones.json --bot ana
+minebot status --bot ana
+minebot observe --brief --bot ana
+```
+
+The body keeps notes, milestones, triggers, per-kit stores, and agent kits in its state directory: `--state <dir>`, default `.minebot/state/<bot>/`. Each file is JSON, and the body writes it atomically. Start a body with `--milestones <file>` to replace the stored set.
+
+Status reads the server's statistics for the player. The body asks the server for them, so status works on any server, also on servers you do not run. The benchmark verifier grades the same statistics from the server's stats file.
+
+Milestones count what the player obtained, from the statistics. `picked_up` alone would count an item again each time the player picks it up, so a milestone has a `via`:
+
+- `crafted` counts the `crafted` statistic.
+- `gathered` (the default) counts the smaller of two numbers: blocks dug minus blocks placed (`mined` minus `used`), and items picked up minus items thrown (`picked_up` minus `dropped`). Tossing an item and collecting it again, collecting the drops after a death, and placing a block and digging it again do not raise the count. `blocks` names the blocks to count when they differ from the items, for example `stone` for `cobblestone`.
+
+If the connection drops, the body reconnects after 5 seconds. Each failed attempt doubles the wait, up to 5 minutes. A session that lasted at least 60 seconds resets the wait; a server that kicks the body right after it joins therefore sees the waits grow instead of a reconnect every 5 seconds. The event log records each scheduled reconnect.
+
+## Wiki
+
+The wiki is a set of markdown pages in `wiki/` about game mechanics, step-by-step flows, and quirks of Minecraft 26.1 and Mineflayer. Agents search it before they guess. For example, a search for the error text `Server refused to place crafting_table` finds the page that explains it.
+
+```sh
+minebot wiki search --bot ana "iron pickaxe"
+minebot wiki read --bot ana quirks/drops-fall-out-of-reach
+```
+
+Programs use the `wiki` global: `wiki.search(query)`, `wiki.read(id)`, `wiki.list(section)`, and in `write` mode `wiki.addLesson({ title, tags, body })`. MCP clients use the `wiki_*` tools.
+
+A body without kits does not see kit content: pages about kits are hidden, and the kit shortcuts in other pages are cut from the page and from search results. The same holds for milestones and for agent kits. Pages teach the Mineflayer way first. See [wiki/README.md](wiki/README.md).
+
+Each page shows a status:
+
+- `verified`: someone confirmed the page on the pinned Minecraft version.
+- `stale`: someone confirmed the page on another version.
+- `unverified`: general knowledge that nobody has checked in game.
+- `lesson`: an agent wrote it, and nobody has reviewed it.
+
+The body's `--wiki` option controls access:
+
+- `off`: the wiki is unavailable.
+- `read` (the default): the agent can search and read.
+- `write`: the agent can also add lessons.
+
+Lessons go to `--lessons <dir>` (default `.minebot/lessons/`). Bodies that share the directory share their lessons: a body reads lessons that others add while it runs, and a lesson never overwrites another one (a taken name gets a number). The wiki mentions lessons to an agent only when the body is in `write` mode or lessons exist.
+
+Some pages name a check program in `wiki/checks/`. Run the checks against a live body after you change the Minecraft version or upgrade Mineflayer:
+
+```sh
+npm run wiki:check -- --bot ana
+```
+
+The pages in `wiki/reference/` (recipes, which tool each block needs, drops, foods, mobs, enchantments) are generated, not written. Run `npm run wiki:reference` after you change `MC_VERSION` or upgrade `minecraft-data`. It reads `minecraft-data` and the vanilla server's data generator, so it needs Java and the server jar that `npm run dev-server` downloads.
+
+See [wiki/README.md](wiki/README.md) for the page format and the rules for adding pages.
+
+## CLI
+
+| Command | What it does |
+| - | - |
+| `body` | Starts a body and connects it to a server. Options: `--username`, `--host`, `--port`, `--api-host`, `--api-port`, `--history <file>`, `--kits <a,b>`, `--lock-kits`, `--no-agent-kits`, `--agent-kits <dir>`, `--wiki <off\|read\|write>`, `--wiki-dir <dir>`, `--lessons <dir>`, `--state <dir>`, `--milestones <file>`, `--no-milestones`, `--no-triggers`. |
+| `list` | Lists the running bodies and their connection state. |
+| `observe` | Prints the observation as JSON. `--brief` prints one line. |
+| `status` | Prints deaths, reconnects, and progress toward the body's milestones. |
+| `milestones` | Prints the milestones. `milestones set <file>` replaces them; `milestones clear` removes them. Not on a body with `--no-milestones`. |
+| `notes` | Lists notes. `notes get <key>`, `notes set <key> [text]` (stdin when the text is omitted), `notes rm <key>`. |
+| `run [file]` | Runs a program from a file, or from stdin. Exits with status 2 if the program does not return normally. |
+| `stop` | Aborts the running program. |
+| `events` | Prints buffered events. Use `--since <seq>` to get only newer events. |
+| `wait` | Blocks until a matching event arrives, then prints it as JSON, or `timed out`. Options: `--types a,b`, `--from <name>`, `--match <regex>`, `--since <seq>`, `--timeout <ms>`. |
+| `chat <message>` | Sends a chat message. |
+| `triggers` | Lists triggers. `triggers add <name> --on a,b [file]` saves one (the program comes from stdin when the file is omitted; options `--from`, `--match`, `--when`, `--cooldown`, `--timeout`, `--priority`, `--preempt`). `triggers rm <name>`, `triggers enable <name>`, and `triggers disable <name>`. Only on a body that has triggers. |
+| `kits` | Lists the kits and how often their actions worked. `kits use <kit...>` replaces the active kits (not on a locked body). `kits docs [kit...]` prints the reference. `kits search <query>` finds kits and actions by what they do. `kits save [file]`, `kits rm <kit>`, `kits source <kit>`, `kits try [file] --action <name> [--args <json>]`, `kits versions <kit>`, and `kits revert <kit> <version>` manage agent kits. Only on a body that offers kits. |
+| `wiki` | `wiki search <query>`, `wiki read <page>`, `wiki list [section]`, and in `write` mode `wiki lesson --title <t> [--tags a,b]` with the body text on stdin. Only on a body with the wiki. |
+| `mcp` | Serves the body as MCP tools over stdio. |
+| `api` | Prints the program reference for the body: only the features it offers. |
+
+All commands take `--bot <name>`. The default is `$MINEBOT_BOT`, or `bot` if that variable is not set.
+
+`minebot --help` and the answer to an unknown command show only the commands that the body offers. A command for a feature that the body lacks answers `unknown command`. When no body can be reached, the help shows everything on an install that can start bodies, and only the base commands on a client-only install (the benchmark's `main` image has no `body` command).
+
+To reach a body in another container, set `MINEBOT_URL` and `MINEBOT_TOKEN`. Clients then ignore `--bot`. For `body`, `MINEBOT_TOKEN` sets the API token. A body refuses to serve on a non-loopback `--api-host` without a token.
+
+`--history <file>` appends one JSON line per program run: the code, status, logs, result, duration, and `escapeAttempts`. See [Security](#security).
+
+## How it works
+
+Each body serves its API on `127.0.0.1` with a random bearer token. On start, the body writes its URL and token to `.minebot/<name>.json` with mode 0600. The URL names the address the body listens on (IPv6 addresses in brackets), or loopback when the body listens on a wildcard address. Clients find a body by its name through this file. On SIGINT or SIGTERM, the body disconnects and deletes the file.
+
+If the server disconnects or kicks the body, the body records the event and reconnects, with the waits described in [Long-running bodies](#long-running-bodies). Mineflayer respawns the player after a death.
+
+The body waits 100 ms after each inventory click. Mineflayer 4.39 sends clicks without waiting for the server. On 26.1, the server's resync packets then arrive between clicks and corrupt Mineflayer's model of the inventory. Without the wait, crafting loses or duplicates items. See `CLICK_PACE_MS` in `src/body/connection.ts`.
+
+## Security
+
+A program runs inside the body process in a `node:vm` context. The VM context is not a sandbox. The bearer token is the only barrier, and anyone who has the token can run code as your user. Keep the API on loopback, and keep `.minebot/` private.
+
+A program can leave the context with `bot.constructor.constructor("return process")()`, and then load any module. The body does not try to prevent that. It audits instead: `src/audit.ts` scans the source of every program for `constructor.constructor` (also as `["constructor"]`), `process`, `getBuiltinModule`, `require(`, `import(`, `globalThis.constructor`, and `Function(`. A program that matches has the pattern names in `escapeAttempts` on its history line. The body writes that line before it runs a flagged program, so a program that kills the body is still recorded, and the benchmark verifier fails the trial. The agent is not told mid-run; the audit record is what counts. The scan is an audit, not a security boundary: code that builds the names at run time passes it, and a comment that contains `process` is flagged. Anything that relies on `--lock-kits`, `--no-agent-kits`, or `--no-milestones` for more than fair play needs a real boundary, such as a separate container for the agent, as in the benchmark.
+
+## Development
+
+```sh
+npm run typecheck
+npm test
+```
+
+The tests cover the program runner, the kit framework, agent kits, the wiki, the capability table, the package boundaries, what each kind of body shows an agent, the escape audit, and the benchmark grading. They do not need a Minecraft server.
+
+## Benchmark
+
+`bench/` contains Minecraft tasks in the Harbor format, with server-side verifiers and reference solutions. See [bench/README.md](bench/README.md).

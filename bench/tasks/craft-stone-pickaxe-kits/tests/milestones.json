@@ -1,0 +1,73 @@
+{
+  "player": "agent",
+  "milestones": [
+    {
+      "id": "log",
+      "description": "Obtain a log",
+      "via": "gathered",
+      "obtained": [
+        "*_log"
+      ],
+      "count": 1
+    },
+    {
+      "id": "planks",
+      "description": "Craft planks",
+      "via": "crafted",
+      "obtained": [
+        "*_planks"
+      ],
+      "count": 1
+    },
+    {
+      "id": "crafting_table",
+      "description": "Craft a crafting table",
+      "via": "crafted",
+      "obtained": [
+        "crafting_table"
+      ],
+      "count": 1
+    },
+    {
+      "id": "stick",
+      "description": "Craft sticks",
+      "via": "crafted",
+      "obtained": [
+        "stick"
+      ],
+      "count": 1
+    },
+    {
+      "id": "wooden_pickaxe",
+      "description": "Craft a wooden pickaxe",
+      "via": "crafted",
+      "obtained": [
+        "wooden_pickaxe"
+      ],
+      "count": 1
+    },
+    {
+      "id": "cobblestone",
+      "description": "Obtain three cobblestone",
+      "via": "gathered",
+      "obtained": [
+        "cobblestone"
+      ],
+      "blocks": [
+        "stone",
+        "cobblestone"
+      ],
+      "count": 3
+    },
+    {
+      "id": "stone_pickaxe",
+      "description": "Craft a stone pickaxe",
+      "via": "crafted",
+      "obtained": [
+        "stone_pickaxe"
+      ],
+      "count": 1
+    }
+  ],
+  "checks": []
+}

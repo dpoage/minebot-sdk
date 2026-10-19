@@ -1,0 +1,38 @@
+{
+  "name": "minebot-sdk",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Harness-neutral Minecraft bodies for AI agents, built on Mineflayer.",
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "bin": {
+    "minebot": "src/cli.ts"
+  },
+  "scripts": {
+    "minebot": "node src/cli.ts",
+    "dev-server": "node scripts/dev-server.ts",
+    "typecheck": "tsc",
+    "test": "node --test test/",
+    "wiki:check": "node scripts/wiki-check.ts",
+    "wiki:reference": "node scripts/wiki-reference.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.1",
+    "mineflayer": "^4.39.0",
+    "mineflayer-pathfinder": "^2.4.5",
+    "prismarine-block": "^1.23.0",
+    "prismarine-entity": "^2.6.0",
+    "prismarine-nbt": "^2.8.0",
+    "prismarine-recipe": "^1.5.0",
+    "vec3": "^0.1.10",
+    "yaml": "^2.9.1",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "minecraft-data": "^3.117.0",
+    "typescript": "^7.0.2"
+  }
+}

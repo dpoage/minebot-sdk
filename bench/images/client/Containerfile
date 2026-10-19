@@ -1,0 +1,43 @@
+# The agent's image: the minebot client (CLI and MCP server) and the Mineflayer and pathfinder
+# documentation that the task instructions point to. It has no body, kits, wiki, oracle, or verifier,
+# and none of the libraries a body needs.
+# Build context: the repository root (see bench/build-images.sh).
+FROM docker.io/library/node:24-slim AS deps
+
+WORKDIR /opt/minebot
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev --ignore-scripts \
+ && mkdir /docs \
+ && cp -r node_modules/mineflayer/docs /docs/mineflayer \
+ && cp node_modules/mineflayer-pathfinder/readme.md /docs/pathfinder-readme.md \
+ # The client needs only the MCP SDK and zod. Remove the body's libraries and what only they pulled in.
+ && npm uninstall --no-save --ignore-scripts mineflayer mineflayer-pathfinder prismarine-block prismarine-entity prismarine-recipe vec3 yaml \
+ && find node_modules -maxdepth 2 -type d -empty -delete \
+ && rm -rf /root/.npm
+
+FROM docker.io/library/node:24-slim
+
+# curl, procps: Harbor's installed agents (claude-code, codex, ...) expect them.
+# tmux, asciinema: Terminus 2 drives the agent's terminal through tmux and records it with asciinema.
+# Installing them here avoids an apt install at the start of every trial.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ca-certificates curl procps tmux asciinema \
+ && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /opt/minebot
+COPY --from=deps /opt/minebot/node_modules ./node_modules
+COPY --from=deps /docs/mineflayer ./node_modules/mineflayer/docs
+COPY --from=deps /docs/pathfinder-readme.md ./node_modules/mineflayer-pathfinder/readme.md
+# Node reads .ts files as ES modules because of the package type.
+RUN echo '{"type":"module"}' > package.json
+# Exactly the runtime import closure of src/cli.ts (test/boundaries.test.ts checks this list).
+COPY src/cli.ts ./src/cli.ts
+COPY src/client ./src/client
+COPY src/protocol ./src/protocol
+COPY src/milestones ./src/milestones
+COPY src/mc/names.ts ./src/mc/names.ts
+
+RUN printf '#!/bin/sh\nexec node /opt/minebot/src/cli.ts "$@"\n' > /usr/local/bin/minebot \
+ && chmod +x /usr/local/bin/minebot
+
+WORKDIR /root

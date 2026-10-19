@@ -1,0 +1,25 @@
+# Vanilla Minecraft server for benchmark tasks. Configured at start from environment variables
+# (see entrypoint.sh). The server jar is pinned by its SHA-1, which is also its Mojang object id.
+FROM docker.io/library/eclipse-temurin:25-jre
+
+ARG MC_VERSION=26.1
+ARG SERVER_JAR_SHA1=3872a7f07a1a595e651aef8b058dfc2bb3772f46
+
+# nftables, iproute2: the entrypoint can limit who may connect (see entrypoint.sh).
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends nftables iproute2 \
+ && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /opt/minecraft
+ADD "https://piston-data.mojang.com/v1/objects/${SERVER_JAR_SHA1}/server.jar" server.jar
+# --initSettings unpacks the bundled libraries at build time, so trials start faster.
+RUN echo "${SERVER_JAR_SHA1}  server.jar" | sha1sum -c - \
+ && java -jar server.jar --initSettings --nogui \
+ && rm -f server.properties eula.txt
+
+COPY entrypoint.sh /usr/local/bin/minecraft-entrypoint
+RUN chmod +x /usr/local/bin/minecraft-entrypoint
+
+LABEL org.opencontainers.image.version="${MC_VERSION}"
+EXPOSE 25565 25575
+ENTRYPOINT ["minecraft-entrypoint"]

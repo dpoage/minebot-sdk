@@ -1,0 +1,10 @@
+# Runs the reference solution of every task. Use it to check that tasks and verifiers work.
+#   harbor run -c bench/jobs/oracle.yaml -y
+jobs_dir: bench/runs
+n_concurrent_trials: 3
+environment:
+  type: podman
+datasets:
+  - path: bench/tasks
+agents:
+  - name: oracle

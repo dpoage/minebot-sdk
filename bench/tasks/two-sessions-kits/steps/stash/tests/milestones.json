@@ -1,0 +1,49 @@
+{
+  "player": "agent",
+  "milestones": [
+    {
+      "id": "log_8",
+      "description": "Obtain 8 logs",
+      "via": "gathered",
+      "obtained": [
+        "*_log"
+      ],
+      "count": 8
+    },
+    {
+      "id": "crafting_table",
+      "description": "Craft a crafting table",
+      "via": "crafted",
+      "obtained": [
+        "crafting_table"
+      ],
+      "count": 1
+    },
+    {
+      "id": "chest",
+      "description": "Craft a chest",
+      "via": "crafted",
+      "obtained": [
+        "chest"
+      ],
+      "count": 1
+    }
+  ],
+  "checks": [
+    {
+      "id": "stashed",
+      "description": "Store 8 logs in a chest",
+      "type": "stored",
+      "items": [
+        "*_log"
+      ],
+      "min": 8
+    },
+    {
+      "id": "far_away",
+      "description": "Stand 200 blocks from the chest",
+      "type": "distance",
+      "min": 200
+    }
+  ]
+}

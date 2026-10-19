@@ -1,0 +1,220 @@
+// One Minecraft player: a Mineflayer connection that reconnects, an event log, a program runner,
+// kits, the wiki, and persistent notes and milestones. The composition root (the daemon) injects
+// the kit catalog and the wiki; Body wires them into the program environment.
+import { grade, MilestoneSet, type MilestoneProgress } from "../milestones/milestones.ts";
+import { capabilities, type BodyEvent, type BodyFeatures, type Observation, type RunResult, type StatusResponse, type WikiMode } from "../protocol/index.ts";
+import { BusyError, ProgramRunner } from "../program/runner.ts";
+import type { KitHost } from "../kit/kit.ts";
+import type { Wiki } from "../wiki/wiki.ts";
+import { WikiAccess, wikiView } from "../wiki/access.ts";
+import { Connection } from "./connection.ts";
+import { EventLog } from "./events.ts";
+import type { ProgramHistory } from "./history.ts";
+import { programGlobals, type GlobalsDeps } from "./globals.ts";
+import { briefOf, observation } from "./observation.ts";
+import { Notes } from "./notes.ts";
+import { StallTracker } from "./progress.ts";
+import { requestStats } from "./stats.ts";
+import { BodyState } from "./state.ts";
+import { Triggers, type StoredTrigger } from "./triggers.ts";
+
+export interface BodyOptions {
+  username: string;
+  host: string;
+  port: number;
+  /** Owner of the state directory: notes, per-kit stores, milestones, agent kits. */
+  state: BodyState;
+  /** The kit catalog and active set, built by the composition root. */
+  kits: KitHost;
+  /** Curated wiki pages; null for none. */
+  wiki: Wiki | null;
+  /** What the agent may do with the wiki. */
+  wikiMode: WikiMode;
+  /** Let the agent read, set, and grade milestones. Default: true. A body without them neither mentions nor serves them. */
+  milestonesEnabled?: boolean;
+  /** Whether agents may save and remove their own kits. */
+  agentKits: boolean;
+  /** Re-reads the agent-kit directory before each program run, so kits other bodies save appear. */
+  syncKits?: () => void;
+  /** Authoring hooks for the program globals; wired to the kit library by the daemon. */
+  kitAuthoring?: GlobalsDeps["kitAuthoring"];
+  /** Let the agent register triggers. Default: true. A body without them neither mentions nor serves them. */
+  triggersEnabled?: boolean;
+  /** Where trigger runs and registrations are recorded, as programs are. */
+  history?: ProgramHistory;
+}
+
+/**
+ * One Minecraft player: a Mineflayer connection that reconnects, an event log, a program runner,
+ * kits, the wiki, and persistent notes and milestones.
+ */
+export class Body {
+  readonly events = new EventLog();
+  readonly runner: ProgramRunner;
+  readonly kits: KitHost;
+  readonly wiki: WikiAccess;
+  readonly notes: Notes;
+  /** The agent's triggers; null on a body without them. */
+  readonly triggers: Triggers | null;
+  readonly state: BodyState;
+  readonly #options: BodyOptions;
+  readonly #connection: Connection;
+  readonly #stall = new StallTracker();
+  readonly #startedAt = new Date().toISOString();
+
+  constructor(options: BodyOptions) {
+    this.#options = options;
+    this.state = options.state;
+    this.kits = options.kits;
+    this.notes = options.state.notes;
+    this.#connection = new Connection({ username: options.username, host: options.host, port: options.port, events: this.events });
+    this.wiki = new WikiAccess(options.wiki, options.wikiMode, options.username, () => wikiView(this.features));
+    this.runner = new ProgramRunner({
+      // Only the features the body offers become globals, so a program cannot find the others.
+      globals: (scope) =>
+        programGlobals(scope, {
+          connection: this.#connection,
+          kits: this.kits,
+          wiki: this.wiki,
+          notes: this.notes,
+          features: () => this.features,
+          status: () => this.status(),
+          ...(this.triggers && { triggers: this.triggers }),
+          ...(capabilities(this.features).agentKits && options.kitAuthoring && { kitAuthoring: options.kitAuthoring }),
+        }),
+      events: () => this.#connection.bot ?? undefined,
+      onAbort: () => this.#connection.halt(),
+    });
+    this.triggers =
+      options.triggersEnabled === false
+        ? null
+        : new Triggers({
+            store: options.state.triggers,
+            events: this.events,
+            runner: this.runner,
+            connected: () => this.#connection.spawned,
+            bot: () => this.#connection.bot ?? undefined,
+            run: (trigger, event, started) => this.#runTrigger(trigger, event, started),
+            register: (trigger) =>
+              options.history?.register(`${trigger.run}\n${trigger.when ?? ""}`, { trigger: trigger.name, on: trigger.on, ...(trigger.when !== undefined && { when: trigger.when }) }) ??
+              Promise.resolve(),
+          });
+  }
+
+  /** The optional parts of this body. Everything an agent can see derives from this. */
+  get features(): BodyFeatures {
+    return {
+      kits: this.kits.active,
+      kitsLocked: this.kits.locked,
+      agentKits: this.#options.agentKits,
+      wiki: this.wiki.mode,
+      lessons: this.wiki.lessons,
+      milestones: this.#options.milestonesEnabled ?? true,
+      triggers: this.triggers !== null,
+    };
+  }
+
+  /**
+   * Runs a program and records its end in the event log. The result is exactly what the program
+   * produced: facts such as an unchanged world stay in the observation, read on request.
+   */
+  async run(code: string, timeoutMs?: number): Promise<RunResult> {
+    this.#options.syncKits?.();
+    const result = await this.runner.run(code, timeoutMs);
+    this.events.push("program_finished", { status: result.status, durationMs: result.durationMs });
+    this.triggers?.idle();
+    const bot = this.#connection.bot;
+    if (!bot || !this.#connection.spawned) return result;
+    const inventory: Record<string, number> = {};
+    for (const item of bot.inventory.items()) inventory[item.name] = (inventory[item.name] ?? 0) + item.count;
+    this.#stall.record({ position: bot.entity.position.floored().toString(), inventory });
+    return result;
+  }
+
+  /**
+   * Runs one firing of a trigger through the same runner and history as programs. Its end is a
+   * `trigger_finished` event, not `program_finished`, so an agent waiting on its own programs is not woken by reflexes.
+   */
+  async #runTrigger(trigger: StoredTrigger, event: BodyEvent, started: () => void): Promise<RunResult> {
+    this.#options.syncKits?.();
+    const run = () => {
+      if (this.runner.running) throw new BusyError();
+      started();
+      return this.runner.run(trigger.run, trigger.timeoutMs, { event: structuredClone(event) });
+    };
+    const { history } = this.#options;
+    if (!history) return run();
+    return (await history.record(trigger.run, run, { trigger: trigger.name, event: { seq: event.seq, type: event.type } })) as RunResult;
+  }
+
+  get milestones(): MilestoneSet | null {
+    const parsed = MilestoneSet.safeParse(this.state.milestones);
+    return parsed.success ? parsed.data : null;
+  }
+
+  /** Replaces the milestones; null removes them. */
+  setMilestones(spec: MilestoneSet | null): void {
+    this.state.setMilestones(spec);
+  }
+
+  async status(): Promise<StatusResponse> {
+    const base = {
+      connected: this.#connection.spawned,
+      startedAt: this.#startedAt,
+      deaths: this.#connection.deaths,
+      reconnects: this.#connection.reconnects,
+    };
+    if (!capabilities(this.features).milestones) return base;
+    const spec = this.milestones;
+    const bot = this.#connection.bot;
+    if (!spec || !bot || !this.#connection.spawned) return { ...base, milestones: null };
+    try {
+      const graded: MilestoneProgress = grade(spec, await requestStats(bot));
+      return { ...base, milestones: graded };
+    } catch (err) {
+      return { ...base, milestones: null, milestonesError: err instanceof Error ? err.message : String(err) };
+    }
+  }
+
+  get connected(): boolean {
+    return this.#connection.spawned;
+  }
+
+  start(): void {
+    this.#connection.start();
+  }
+
+  close(): void {
+    this.triggers?.close();
+    this.#connection.close();
+    this.runner.stop();
+  }
+
+  chat(message: string): void {
+    this.#connection.requireBot().chat(message);
+  }
+
+  observe(): Observation {
+    const connection = this.#connection;
+    const bot = connection.bot;
+    if (!bot || !connection.spawned) {
+      return {
+        connected: false,
+        reconnecting: connection.reconnecting,
+        ...(connection.lastDisconnect && { lastDisconnect: connection.lastDisconnect }),
+      };
+    }
+    const running = this.runner.running;
+    const kitsOffered = capabilities(this.features).kits;
+    return observation(bot, {
+      programsWithoutChange: this.#stall.streak,
+      activeKits: kitsOffered ? this.kits.active : undefined,
+      program: running ? { running: true, elapsedMs: running.elapsedMs } : { running: false },
+    });
+  }
+
+  /** The observation as one short line, for agents with small context windows. */
+  brief(): string {
+    return briefOf(this.observe(), this.runner.running);
+  }
+}

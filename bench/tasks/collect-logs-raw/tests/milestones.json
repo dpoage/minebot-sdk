@@ -1,0 +1,33 @@
+{
+  "player": "agent",
+  "milestones": [
+    {
+      "id": "log",
+      "description": "Obtain a log",
+      "via": "gathered",
+      "obtained": [
+        "*_log"
+      ],
+      "count": 1
+    },
+    {
+      "id": "log_4",
+      "description": "Obtain 4 logs",
+      "via": "gathered",
+      "obtained": [
+        "*_log"
+      ],
+      "count": 4
+    },
+    {
+      "id": "log_8",
+      "description": "Obtain 8 logs",
+      "via": "gathered",
+      "obtained": [
+        "*_log"
+      ],
+      "count": 8
+    }
+  ],
+  "checks": []
+}

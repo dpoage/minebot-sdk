@@ -1,0 +1,18 @@
+# The verifier's image: the grading code and zod. It runs after the agent's container is gone,
+# in a container of its own (see bench/gen-tasks.ts). Each task adds its tests/ directory on top.
+# Build context: the repository root (see bench/build-images.sh).
+FROM docker.io/library/node:24-slim
+
+WORKDIR /opt/verifier
+COPY package-lock.json ./
+# Only zod, at the version the lockfile pins.
+RUN npm install --no-save --no-package-lock --omit=dev --ignore-scripts "zod@$(node -p "require('./package-lock.json').packages['node_modules/zod'].version")" \
+ && rm -f package-lock.json
+RUN echo '{"type":"module"}' > package.json
+# Exactly the runtime import closure of bench/verify/check.ts (test/boundaries.test.ts checks this list).
+COPY src/audit.ts ./src/audit.ts
+COPY src/mc/names.ts ./src/mc/names.ts
+COPY src/milestones/milestones.ts ./src/milestones/milestones.ts
+COPY bench/verify/check.ts bench/verify/checks.ts bench/verify/history.ts bench/verify/milestones.ts ./bench/verify/
+
+WORKDIR /tests
