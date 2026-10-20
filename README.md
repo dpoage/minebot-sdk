@@ -354,3 +354,7 @@ The tests cover the program runner, the kit framework, agent kits, the wiki, the
 ## Benchmark
 
 `bench/` contains Minecraft tasks in the Harbor format, with server-side verifiers and reference solutions. See [bench/README.md](bench/README.md).
+
+## License
+
+MIT. See [LICENSE](LICENSE).

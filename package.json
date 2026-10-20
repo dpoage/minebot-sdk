@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "description": "Harness-neutral Minecraft bodies for AI agents, built on Mineflayer.",
+  "license": "MIT",
   "type": "module",
   "engines": {
     "node": ">=24"
