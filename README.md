@@ -392,7 +392,7 @@ See [wiki/README.md](wiki/README.md) for the page format and the rules for addin
 
 | Command | What it does |
 | - | - |
-| `body` | Starts a body and connects it to a server. Options: `--username`, `--host`, `--port`, `--api-host`, `--api-port`, `--history <file>`, `--kits <a,b>`, `--lock-kits`, `--no-agent-kits`, `--agent-kits <dir>`, `--wiki <off\|read\|write>`, `--wiki-dir <dir>`, `--lessons <dir>`, `--state <dir>`, `--milestones <file>`, `--no-milestones`, `--no-triggers`. |
+| `body` | Starts a body and connects it to a server. Options: `--username`, `--auth <offline\|microsoft>`, `--host`, `--port`, `--api-host`, `--api-port`, `--history <file>`, `--kits <a,b>`, `--lock-kits`, `--no-agent-kits`, `--agent-kits <dir>`, `--wiki <off\|read\|write>`, `--wiki-dir <dir>`, `--lessons <dir>`, `--state <dir>`, `--milestones <file>`, `--no-milestones`, `--no-triggers`. |
 | `list` | Lists the running bodies and their connection state. |
 | `init [dir]` | Scaffolds an authoring workspace; see [Authoring workspace](#authoring-workspace). Needs no body. |
 | `observe` | Prints the observation as JSON. `--brief` prints one line. |
@@ -418,6 +418,8 @@ All commands take `--bot <name>`. The default is `$MINEBOT_BOT`, or `bot` if tha
 To reach a body in another container, set `MINEBOT_URL` and `MINEBOT_TOKEN`. Clients then ignore `--bot`. For `body`, `MINEBOT_TOKEN` sets the API token. A body refuses to serve on a non-loopback `--api-host` without a token.
 
 `--history <file>` appends one JSON line per program run: the code, status, logs, result, duration, and `escapeAttempts`. See [Security](#security).
+
+`--auth` defaults to `offline`, which joins servers in offline mode as `--username`. An online-mode server kicks such a player with `multiplayer.disconnect.unverified_username`; use `--auth microsoft` for it. On the first start, the body prints a Microsoft device code to its terminal (`[minebot] Microsoft sign-in: open <url> and enter code <code>`). Sign in with an account that owns Minecraft: Java Edition. The body caches the tokens in `<state>/auth`, so later starts and reconnects sign in without a code. The in-game name is the account's profile name; `--username` only keys the cache.
 
 ## How it works
 

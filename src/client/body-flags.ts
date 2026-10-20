@@ -7,6 +7,7 @@ import { DEFAULT_SERVER_HOST, DEFAULT_SERVER_PORT, RUNTIME_DIR } from "../protoc
 /** The parseArgs rows for `minebot body`; cli.ts merges them into its option set. */
 export const BODY_FLAG_OPTIONS = {
   username: { type: "string" },
+  auth: { type: "string", default: "offline" },
   host: { type: "string", default: DEFAULT_SERVER_HOST },
   port: { type: "string", default: String(DEFAULT_SERVER_PORT) },
   "api-host": { type: "string", default: "127.0.0.1" },
@@ -29,6 +30,7 @@ export const BODY_FLAG_OPTIONS = {
 export const BodyFlags = z
   .object({
     username: z.string().optional(),
+    auth: z.enum(["offline", "microsoft"]),
     host: z.string(),
     port: z.coerce.number().int().positive(),
     apiHost: z.string(),
@@ -55,6 +57,8 @@ export type BodyFlags = z.infer<typeof BodyFlags>;
 export const OPERATOR_FLAG_HELP = [
   "  body:   --username <name> (default: the body name), --host <host> (default " + DEFAULT_SERVER_HOST + "),",
   `          --port <port> (default ${DEFAULT_SERVER_PORT}), --api-host <host> (default 127.0.0.1),`,
+  "          --auth <offline|microsoft> (default offline; microsoft signs in with a device code on first start",
+  "          and caches tokens in <state>/auth; the in-game name is the account's, and --username keys the cache),",
   "          --api-port <port> (default 0, a free port), --history <file> (append each program run as JSON),",
   "          --kits <a,b> (kits the body offers; default: every built-in kit), --lock-kits (fix the active set),",
   "          --no-agent-kits (agents cannot save their own kits), --agent-kits <dir> (default <state>/agent-kits),",
@@ -71,6 +75,7 @@ export const OPERATOR_FLAG_HELP = [
 export function parseBodyFlags(name: string, values: Record<string, string | boolean | undefined>): BodyFlags {
   return BodyFlags.parse({
     username: values.username,
+    auth: values.auth,
     host: values.host,
     port: values.port,
     apiHost: values["api-host"],

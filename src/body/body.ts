@@ -7,7 +7,7 @@ import { BusyError, ProgramRunner } from "../program/runner.ts";
 import type { KitHost } from "../kit/kit.ts";
 import type { Wiki } from "../wiki/wiki.ts";
 import { WikiAccess, wikiView } from "../wiki/access.ts";
-import { Connection } from "./connection.ts";
+import { Connection, type ServerAuth } from "./connection.ts";
 import { EventLog } from "./events.ts";
 import type { ProgramHistory } from "./history.ts";
 import { programGlobals, type GlobalsDeps } from "./globals.ts";
@@ -20,6 +20,9 @@ import { Triggers, type StoredTrigger } from "./triggers.ts";
 
 export interface BodyOptions {
   username: string;
+  auth: ServerAuth;
+  /** Where Microsoft sign-in tokens are cached. */
+  authCacheDir: string;
   host: string;
   port: number;
   /** Owner of the state directory: notes, per-kit stores, milestones, agent kits. */
@@ -67,7 +70,14 @@ export class Body {
     this.state = options.state;
     this.kits = options.kits;
     this.notes = options.state.notes;
-    this.#connection = new Connection({ username: options.username, host: options.host, port: options.port, events: this.events });
+    this.#connection = new Connection({
+      username: options.username,
+      auth: options.auth,
+      authCacheDir: options.authCacheDir,
+      host: options.host,
+      port: options.port,
+      events: this.events,
+    });
     this.wiki = new WikiAccess(options.wiki, options.wikiMode, options.username, () => wikiView(this.features));
     this.runner = new ProgramRunner({
       // Only the features the body offers become globals, so a program cannot find the others.

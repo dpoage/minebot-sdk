@@ -19,6 +19,7 @@ export async function runBody({ name, token, flags }: BodyCommandInput): Promise
   const daemon = await startDaemon({
     name,
     username: parsed.username ?? name,
+    auth: parsed.auth,
     host: parsed.host,
     port: parsed.port,
     apiHost: parsed.apiHost,

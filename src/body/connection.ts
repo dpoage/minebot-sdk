@@ -36,8 +36,15 @@ export class NotConnectedError extends Error {
   }
 }
 
+/** `offline` joins servers in offline mode; `microsoft` signs in to the account for online-mode servers. */
+export type ServerAuth = "offline" | "microsoft";
+
 export interface ConnectionOptions {
+  /** The player name offline; with `microsoft`, the key of the token cache (the in-game name is the account's). */
   username: string;
+  auth: ServerAuth;
+  /** Where Microsoft sign-in tokens are cached between connections and restarts. */
+  authCacheDir: string;
   host: string;
   port: number;
   events: EventLog;
@@ -113,8 +120,20 @@ export class Connection {
   }
 
   #connect(): void {
-    const { username, host, port, events } = this.#options;
-    const bot = mineflayer.createBot({ username, host, port, version: MC_VERSION, auth: "offline" });
+    const { username, auth, authCacheDir, host, port, events } = this.#options;
+    const bot = mineflayer.createBot({
+      username,
+      host,
+      port,
+      version: MC_VERSION,
+      auth,
+      ...(auth === "microsoft" && {
+        profilesFolder: authCacheDir,
+        // The operator, not the agent, signs in: the code goes to the body's terminal.
+        onMsaCode: ({ verification_uri, user_code }: { verification_uri: string; user_code: string }) =>
+          console.error(`[minebot] Microsoft sign-in: open ${verification_uri} and enter code ${user_code}`),
+      }),
+    });
     this.#bot = bot;
     bot.loadPlugin(pathfinder);
     watchGame(bot, events);

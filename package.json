@@ -37,7 +37,7 @@
   },
   "scripts": {
     "minebot": "node --conditions=minebot-sdk:source src/cli.ts",
-    "build": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\" && tsc -p tsconfig.build.json",
+    "build": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\" && tsc -p tsconfig.build.json && node -e \"require('node:fs').chmodSync('dist/cli.js', 0o755)\"",
     "prepack": "npm run build",
     "dev-server": "node scripts/dev-server.ts",
     "typecheck": "tsc",

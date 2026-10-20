@@ -4,6 +4,7 @@
 import { randomBytes } from "node:crypto";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { type AddressInfo, isIPv6 } from "node:net";
+import path from "node:path";
 import type { Bot } from "mineflayer";
 import type { Kit } from "../kit/kit.ts";
 import { KitLockedError, KitHost } from "../kit/kit.ts";
@@ -51,6 +52,7 @@ import {
 import { Wiki } from "../wiki/wiki.ts";
 import { typeCheckKit, typeCheckLog } from "./typecheck.ts";
 import { Body } from "./body.ts";
+import type { ServerAuth } from "./connection.ts";
 import { HttpError, parse, type Route, serveBodyApi } from "./http.ts";
 import { ProgramHistory } from "./history.ts";
 import { BodyState } from "./state.ts";
@@ -58,6 +60,8 @@ import { BodyState } from "./state.ts";
 export interface DaemonOptions {
   name: string;
   username: string;
+  /** How the player logs in to the server. */
+  auth: ServerAuth;
   host: string;
   port: number;
   /** Interface for the body API. Anything other than loopback requires an explicit `token`. */
@@ -234,6 +238,8 @@ export async function startDaemon(options: DaemonOptions): Promise<{ endpoint: E
   await history.start();
   const body = new Body({
     username: options.username,
+    auth: options.auth,
+    authCacheDir: path.join(options.stateDir, "auth"),
     host: options.host,
     port: options.port,
     state,
