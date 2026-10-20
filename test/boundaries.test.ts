@@ -6,18 +6,31 @@ import { describe, it } from "node:test";
 
 const ROOT = path.join(import.meta.dirname, "..");
 
+/** The package's own entry points as the minebot-sdk:source condition resolves them: "minebot-sdk/kit" → src/kit/public.ts. */
+const SELF_EXPORTS = (JSON.parse(readFileSync(path.join(ROOT, "package.json"), "utf8")) as { exports: Record<string, { "minebot-sdk:source"?: string }> }).exports;
+
+/** The source file a local or self-referencing specifier (as `staticImports` returns it) loads. */
+function resolveLocal(from: string, specifier: string): string {
+  if (!specifier.startsWith("minebot-sdk/")) return path.resolve(path.dirname(from), specifier);
+  const source = SELF_EXPORTS[`./${specifier.slice("minebot-sdk/".length)}`]?.["minebot-sdk:source"];
+  if (!source) throw new Error(`${from} imports ${specifier}, which package.json does not export under the minebot-sdk:source condition`);
+  return path.resolve(ROOT, source);
+}
+
 /**
- * The local modules a file loads at runtime. The source is stripped with node's own type
- * stripper first, so exactly what node erases (import type, export type) drops out and
- * everything node keeps — including `export * from` — stays.
+ * The specifiers of the local modules a file loads at runtime: relative paths, and the package's own
+ * `minebot-sdk/...` entry points. The source is stripped with node's own type stripper first, so
+ * exactly what node erases (import type, export type) drops out and everything node keeps —
+ * including `export * from` — stays. Template literals are blanked first: `minebot init` writes
+ * kit and test sources from them, and the imports in that text are not the module's own.
  */
 function staticImports(file: string): string[] {
-  const source = stripTypeScriptTypes(readFileSync(file, "utf8"));
+  const source = stripTypeScriptTypes(readFileSync(file, "utf8")).replace(/`(?:\\[\s\S]|[^`\\])*`/g, "``");
   const specifiers = [
     ...source.matchAll(/(?:^|[;\n])\s*import\s+(?:[\w*{}\s,$]+\s+from\s+)?["']([^"']+)["']/g),
     ...source.matchAll(/(?:^|[;\n])\s*export\s+(?:\*(?:\s+as\s+\w+)?|\{[^}]*\})\s*from\s*["']([^"']+)["']/g),
   ].map((match) => match[1]!);
-  return specifiers.filter((specifier) => specifier.startsWith(".") || specifier.startsWith("/"));
+  return specifiers.filter((specifier) => specifier.startsWith(".") || specifier.startsWith("/") || specifier.startsWith("minebot-sdk/"));
 }
 
 /** The transitive runtime closure of an entry file over local static value imports. */
@@ -29,7 +42,7 @@ function closure(entry: string): string[] {
     if (seen.has(file)) continue;
     seen.add(file);
     for (const specifier of staticImports(file)) {
-      queue.push(path.resolve(path.dirname(file), specifier));
+      queue.push(resolveLocal(file, specifier));
     }
   }
   return [...seen].map((file) => path.relative(ROOT, file)).sort();
@@ -46,9 +59,9 @@ describe("package boundaries", () => {
     const files = closure(path.join(ROOT, "src/cli.ts"));
     // The protocol index re-exports its parts; the closure must follow that into milestones.
     assert.ok(files.includes("src/protocol/schemas.ts") && files.includes("src/milestones/milestones.ts"), `closure too small: ${files.join(", ")}`);
-    // The wire contract carries the milestone schema, which grades with the name matcher.
+    // The wire contract carries the milestone schema, which grades with the name matcher. `minebot init` reads the package manifest through PACKAGE_ROOT.
     const allowed = (file: string) =>
-      file === "src/cli.ts" || file.startsWith("src/client/") || file.startsWith("src/protocol/") || file.startsWith("src/milestones/") || file === "src/mc/names.ts";
+      file === "src/cli.ts" || file.startsWith("src/client/") || file.startsWith("src/protocol/") || file.startsWith("src/milestones/") || file === "src/mc/names.ts" || file === "src/package.ts";
     const outside = files.filter((file) => !allowed(file));
     assert.deepEqual(outside, [], "the client would ship or crash on body-only modules");
     // Dynamic imports are runtime-optional: only the body entry and the MCP adapter may load late.
@@ -96,5 +109,13 @@ describe("package boundaries", () => {
     const extraFiles = [...copied.values()].filter((item) => item.endsWith(".ts") && !closureFiles.includes(item));
     assert.deepEqual(missing, [], "the verifier image misses modules the check needs at runtime");
     assert.deepEqual(extraFiles, [], "the verifier image ships modules outside the verifier closure");
+  });
+
+  it("keeps the testing entry inside the shipped sources, with no body or client code", () => {
+    const files = closure(path.join(ROOT, "src/testing/index.ts"));
+    assert.ok(files.includes("src/testing/bot.ts") && files.includes("src/kit/kit.ts"), `closure too small: ${files.join(", ")}`);
+    // The harness ships in dist/, so it may load the kit framework and the shipped kits, and nothing that starts a body or talks to one.
+    const outside = files.filter((file) => !file.startsWith("src/") || file.startsWith("src/body/") || file.startsWith("src/client/") || file === "src/cli.ts");
+    assert.deepEqual(outside, [], "the testing entry would ship or crash on body or client code");
   });
 });

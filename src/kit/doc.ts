@@ -7,20 +7,27 @@ import type { Kit } from "./kit.ts";
 function typeName(schema: z.ZodType): string {
   if (schema instanceof z.ZodOptional) return typeName(schema.unwrap() as z.ZodType);
   if (schema instanceof z.ZodDefault) return typeName(schema.unwrap() as z.ZodType);
-  if (schema instanceof z.ZodNullable) return typeName(schema.unwrap() as z.ZodType);
+  if (schema instanceof z.ZodNullable) return `${typeName(schema.unwrap() as z.ZodType)} | null`;
   if (schema instanceof z.ZodString) return "string";
   if (schema instanceof z.ZodNumber) return "number";
   if (schema instanceof z.ZodBoolean) return "boolean";
   if (schema instanceof z.ZodLiteral) return JSON.stringify(schema.value);
   if (schema instanceof z.ZodEnum) return schema.options.join(" | ");
-  if (schema instanceof z.ZodArray) return `${typeName(schema.element as z.ZodType)}[]`;
+  if (schema instanceof z.ZodArray) {
+    const element = typeName(schema.element as z.ZodType);
+    return element.includes(" | ") ? `(${element})[]` : `${element}[]`;
+  }
   if (schema instanceof z.ZodTuple) return `[${schema.def.items.map((item) => typeName(item as z.ZodType)).join(", ")}]`;
   if (schema instanceof z.ZodUnion) return schema.options.map((option) => typeName(option as z.ZodType)).join(" | ");
   if (schema instanceof z.ZodObject) {
     return `{ ${Object.entries(schema.shape)
-      .map(([key, value]) => `${key}: ${typeName(value as z.ZodType)}`)
+      .map(([key, value]) => `${key}${(value as z.ZodType).safeParse(undefined).success ? "?" : ""}: ${typeName(value as z.ZodType)}`)
       .join(", ")} }`;
   }
+  if (schema instanceof z.ZodRecord) return `Record<${typeName(schema.keyType as z.ZodType)}, ${typeName(schema.valueType as z.ZodType)}>`;
+  if (schema instanceof z.ZodNull) return "null";
+  if (schema instanceof z.ZodVoid || schema instanceof z.ZodUndefined) return "void";
+  if (schema instanceof z.ZodUnknown || schema instanceof z.ZodAny) return "unknown";
   return "value";
 }
 
@@ -46,6 +53,11 @@ export function actionReference(kitName: string, actionName: string, args: z.Zod
   return [callShape(kitName, actionName, args), ...Object.entries(args.shape).map(([arg, schema]) => argumentLine(arg, schema as z.ZodType))].join("\n");
 }
 
+/** What an action declares it returns, in the notation of its argument lines: `nothing` for a void result. */
+export function returnShape(returns: z.ZodType): string {
+  return returns instanceof z.ZodVoid || returns instanceof z.ZodUndefined ? "nothing" : typeName(returns);
+}
+
 /** The reference for one kit: header, description, uses, and one section per action. */
 export function kitReference(kit: Kit): string {
   const uses = kit.uses.length > 0 ? `Uses: ${kit.uses.join(", ")}.` : "Uses no other kits.";
@@ -54,6 +66,7 @@ export function kitReference(kit: Kit): string {
       `### ${callShape(kit.name, name, action.args)}`,
       action.doc,
       ...Object.entries(action.args.shape).map(([arg, schema]) => argumentLine(arg, schema)),
+      ...(action.returns ? [`Returns: ${returnShape(action.returns)}`] : []),
     ].join("\n"),
   );
   return [`## ${kit.name}`, kit.description, uses, ...sections].join("\n");

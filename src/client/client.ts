@@ -11,6 +11,7 @@ import {
   type KitSearchHit,
   type KitVersion,
   type EventsResponse,
+  type KitSchemasResponse,
   type KitsResponse,
   type MilestoneSet,
   type Note,
@@ -145,6 +146,11 @@ export class BodyClient {
   /** The action reference for the named kits, or for the active kits when `names` is empty. */
   kitDocs(names: string[] = []): Promise<{ docs: string }> {
     return this.#request("GET", `/kits/docs?names=${encodeURIComponent(names.join(","))}`);
+  }
+
+  /** Every listed kit's actions as JSON Schemas; the input of `minebot types`. */
+  kitSchemas(): Promise<KitSchemasResponse> {
+    return this.#request("GET", "/kits/schemas");
   }
 
   /** A kit's source: a built-in kit's file, or an agent's saved one. */

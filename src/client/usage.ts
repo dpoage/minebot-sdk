@@ -3,8 +3,8 @@
 import { existsSync } from "node:fs";
 import { CAPABILITY_GATES, type BodyFeatures } from "../protocol/index.ts";
 
-/** A client-only install leaves out src/body/, and with it the `body` command. */
-export const HAS_BODY = existsSync(new URL("../body/daemon.ts", import.meta.url));
+/** A client-only install leaves out the body modules, and with it the `body` command. Looks for the daemon with this file's own extension: `.ts` from source, `.js` from a build. */
+export const HAS_BODY = existsSync(new URL(`../body/daemon${import.meta.url.slice(import.meta.url.lastIndexOf("."))}`, import.meta.url));
 
 /** What the usage text shows when no body can be asked: everything on an install that can start bodies, nothing optional otherwise. */
 const EVERYTHING: BodyFeatures = { kits: ["move"], kitsLocked: false, agentKits: true, wiki: "write", lessons: true, milestones: true, triggers: true };
@@ -22,13 +22,14 @@ export function usageFor(features: BodyFeatures | null, hasBody = HAS_BODY, oper
   const operator = hasBody && features === null;
   const commands = [
     ...(operator ? ["  body                 Start a body daemon and connect it to a server (foreground)."] : []),
+    "  init [dir]           Scaffold a TypeScript authoring workspace in dir (default: the current directory).",
     "  list                 List running bodies.",
     "  observe              Print the body's observation as JSON. --brief prints one short line.",
     `  status               Print deaths and reconnects${caps.milestones ? ", and progress toward the body's milestones" : ""}.`,
     ...(caps.milestones ? [`  milestones           Print the body's milestones. "milestones set <file>" replaces them; "milestones clear" removes them.`] : []),
     `  notes                List the body's notes. "notes get <key>", "notes set <key> [text]" (text from stdin`,
     `                       when omitted), "notes rm <key>". Notes persist across body restarts.`,
-    `  run [file]           Run a program from a file, or from stdin when file is omitted or "-".`,
+    `  run [file]           Run a program from a file, or from stdin when file is omitted or "-". A .ts file has its types stripped first.`,
     ...(caps.triggers
       ? [
           `  triggers             List the body's triggers: programs that run when an event arrives. "triggers add <name> --on <a,b> [file]"`,
@@ -40,6 +41,7 @@ export function usageFor(features: BodyFeatures | null, hasBody = HAS_BODY, oper
     "  events               Print buffered events as JSON.",
     "  wait                 Block until a matching event arrives (chat, nightfall, a death, a hostile nearby, low health...), then print it.",
     "  chat <message>       Send a chat message.",
+    `  types                Print TypeScript declarations for the program globals${caps.kits ? " and kits" : ""} of this body (--out <file> writes them); \`tsc\` then checks what you write.`,
     ...(caps.kits
       ? [
           "  kits                 List kits, their uses, and their actions, marking the active ones.",

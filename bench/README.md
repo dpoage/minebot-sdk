@@ -185,7 +185,7 @@ Run `harbor view bench/runs` to browse the results.
 
 1. Add the task to `TASKS` in `bench/gen-tasks.ts`. It has one stage for each agent session (several stages make a multi-step task). A stage has the goal, the milestones (`gathered` for items from the world, `crafted` for items that are made) or checks, the agent timeout, and the `TARGET` for the reference solution. A task can add kits to the kits tiers (`extraKits`) and enable triggers (`triggers`); say in the task's goal text what the agent needs to know about them.
 2. Teach `oracle/progression.js` the new `TARGET`, and add it to the `OracleTarget` type in the generator.
-3. Run `node bench/gen-tasks.ts`. It rewrites `bench/tasks/`.
+3. Run `node --conditions=minebot-sdk:source bench/gen-tasks.ts`. It rewrites `bench/tasks/`.
 4. Run the oracle job, and confirm that every tier of the new task gets a reward of 1.
 
 ## The reference solution

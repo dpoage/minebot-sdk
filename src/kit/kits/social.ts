@@ -1,7 +1,8 @@
 // The social kit: talk to, wait for, follow, and hand items to other players — built from
 // the move, sense, and inventory primitives, with the pathfinder's follow goal for tagging along.
-import { z } from "zod";
-import { action, defineKit, type Entity, goals, type KitContext } from "../kit.ts";
+import { action, defineKit, type Entity, goals, type KitContext, Point, z } from "minebot-sdk/kit";
+
+const USES = ["move", "sense", "inventory"] as const;
 
 function playerEntity(ctx: KitContext, username: string): Entity {
   const entity = ctx.bot.players[username]?.entity;
@@ -40,28 +41,29 @@ export async function waitForChat(
   }
 }
 
-export const social = defineKit({
-  name: "social",
-  description: "Talk to, wait for, follow, and hand items to other players.",
-  uses: ["move", "sense", "inventory"],
-  actions: {
+export const social = defineKit(
+  { name: "social", description: "Talk to, wait for, follow, and hand items to other players.", uses: USES },
+  {
     say: action({
-      doc: "Send a public chat `message`. Other players and agents read chat. Returns nothing.",
+      doc: "Send a public chat `message`. Other players and agents read chat.",
       args: z.object({ message: z.string().min(1).max(256) }),
+      returns: z.void(),
       run: (ctx, { message }) => ctx.bot.chat(message),
     }),
     waitForChat: action({
-      doc: "Wait for the next chat message from another player. `from` (username), `match` (regex, case-insensitive), `timeoutMs` (default 60000). Returns { from, message }.",
+      doc: "Wait for the next chat message from another player. `from` (username), `match` (regex, case-insensitive), `timeoutMs` (default 60000).",
       args: z.object({
         from: z.string().optional(),
         match: z.string().optional(),
         timeoutMs: z.number().int().positive().default(60_000),
       }),
+      returns: z.object({ from: z.string(), message: z.string() }),
       run: (ctx, options) => waitForChat(ctx, options),
     }),
     players: action({
       doc: "Other online players: [{ username, distance, position }] (distance and position are null when out of view).",
       args: z.object({}),
+      returns: z.array(z.object({ username: z.string(), distance: z.number().nullable(), position: Point.nullable() })),
       run: (ctx) =>
         Object.values(ctx.bot.players)
           .filter((p) => p.username !== ctx.bot.username)
@@ -72,12 +74,13 @@ export const social = defineKit({
           })),
     }),
     follow: action({
-      doc: "Follow a `player` for `durationMs` (default 30000), staying within `distance` (default 2) blocks. Returns nothing.",
+      doc: "Follow a `player` for `durationMs` (default 30000), staying within `distance` (default 2) blocks.",
       args: z.object({
         player: z.string().min(1),
         distance: z.number().positive().default(2),
         durationMs: z.number().int().positive().default(30_000),
       }),
+      returns: z.void(),
       run: async (ctx, { player, distance, durationMs }) => {
         ctx.bot.pathfinder.setGoal(new goals.GoalFollow(playerEntity(ctx, player), distance), true);
         try {
@@ -88,15 +91,16 @@ export const social = defineKit({
       },
     }),
     give: action({
-      doc: "Walk to a `player` and toss them `count` (default 1) of `item`. Returns nothing.",
+      doc: "Walk to a `player` and toss them `count` (default 1) of `item`.",
       args: z.object({ player: z.string().min(1), item: z.string().min(1), count: z.number().int().positive().default(1) }),
+      returns: z.void(),
       run: async (ctx, { player, item, count }) => {
         const target = playerEntity(ctx, player);
-        await ctx.kits.move!.to!({ position: target.position.floored(), range: 1, timeoutMs: 30_000 });
+        await ctx.kits.move.to({ position: target.position.floored(), range: 1, timeoutMs: 30_000 });
         // A tossed stack flies about two blocks; aim low so it lands at the recipient's feet.
         await ctx.bot.lookAt(playerEntity(ctx, player).position.offset(0, 0.2, 0), true);
-        await ctx.kits.inventory!.toss!({ item, count });
+        await ctx.kits.inventory.toss({ item, count });
       },
     }),
   },
-});
+);

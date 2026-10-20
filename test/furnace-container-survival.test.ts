@@ -1,12 +1,8 @@
 import assert from "node:assert/strict";
-import { createRequire } from "node:module";
 import { describe, it } from "node:test";
-import minecraftData from "minecraft-data";
-import type { Recipe as RecipeClass } from "prismarine-recipe";
-import { Vec3 } from "vec3";
-import type { Item, KitContext } from "../src/kit/kit.ts";
+import { type Item, type Vec3 } from "minebot-sdk/kit";
+import { createKitHarness, type KitHarness } from "minebot-sdk/testing";
 import { roomFor } from "../src/kit/kits/container.ts";
-import { make } from "../src/kit/kits/crafter.ts";
 import { armorSlotOf, armorTier, canSleep, chooseFood } from "../src/kit/kits/survival.ts";
 import { burnTicks, fuelItemsFor, pickFuel, smeltInputs, smeltOutput, withoutReserved } from "../src/mc/smelting.ts";
 
@@ -158,146 +154,73 @@ describe("armor", () => {
   });
 });
 
-/** A crafter context over a fake inventory: crafting recipes absent, one furnace at (1,2,3), smelting 1:1. */
-function smeltingContext(held: Record<string, number>, options: { furnace: boolean }) {
-  const smelts: { item: string; count: number; at: unknown }[] = [];
-  const names = ["iron_ingot", "raw_iron", "iron_ore", "deepslate_iron_ore", "coal", "furnace"];
-  const itemsByName = Object.fromEntries(names.map((name, id) => [name, { id, name }]));
-  const furnacePos = { x: 1, y: 2, z: 3 };
-  const ctx = {
-    bot: {
-      registry: { itemsByName, items: {}, blocksByName: { furnace: { id: 99 }, crafting_table: { id: 98 } } },
-      recipesAll: () => [],
-      recipesFor: () => [],
-      findBlock: ({ matching }: { matching: number }) => (matching === 99 && options.furnace ? { position: furnacePos } : null),
-      blockAt: () => null,
-    },
-    kits: {
-      inventory: { count: ({ items }: { items: string }) => held[items] ?? 0 },
-      move: { to: async () => furnacePos },
-      furnace: {
-        smelt: async ({ item, count, at }: { item: string; count: number; at: unknown }) => {
-          smelts.push({ item, count, at });
-          held[item] = (held[item] ?? 0) - count;
-          held.iron_ingot = (held.iron_ingot ?? 0) + count;
-        },
-      },
-    },
-    log: () => {},
-    sleep: async () => {},
-    signal: new AbortController().signal,
-  } as unknown as KitContext;
-  return { ctx, smelts };
+/** A harness with a furnace at (1, 64, 3), within reach of the bot's start. */
+function smeltingHarness(inventory: Record<string, number>) {
+  return createKitHarness({ inventory, blocks: [{ name: "furnace", at: [1, 64, 3], properties: { lit: false } }] });
+}
+
+/** The furnace.smelt calls the crafter made, in order. */
+function smelts(h: KitHarness): { item: string; count: number; at: unknown }[] {
+  return h.calls
+    .filter((call) => call.kit === "furnace" && call.action === "smelt")
+    .map(({ args }) => {
+      const { item, count, at } = args as { item: string; count: number; at: Vec3 };
+      return { item, count, at: { x: at.x, y: at.y, z: at.z } };
+    });
 }
 
 describe("crafter.make smelting", () => {
   it("smelts a furnace output from the inputs the inventory holds", async () => {
-    const held = { raw_iron: 2, iron_ore: 1 };
-    const { ctx, smelts } = smeltingContext(held, { furnace: true });
-    assert.equal(await make(ctx, "iron_ingot", 3), 3);
-    assert.deepEqual(smelts, [
-      { item: "raw_iron", count: 2, at: { x: 1, y: 2, z: 3 } },
-      { item: "iron_ore", count: 1, at: { x: 1, y: 2, z: 3 } },
+    const h = smeltingHarness({ raw_iron: 2, iron_ore: 1, coal: 1 });
+    assert.equal(await h.kit.crafter.make({ item: "iron_ingot", count: 3 }), 3);
+    assert.deepEqual(smelts(h), [
+      { item: "raw_iron", count: 2, at: { x: 1, y: 64, z: 3 } },
+      { item: "iron_ore", count: 1, at: { x: 1, y: 64, z: 3 } },
     ]);
+    assert.equal(h.count("iron_ingot"), 3);
   });
 
   it("smelts only what is missing", async () => {
-    const { ctx, smelts } = smeltingContext({ raw_iron: 5, iron_ingot: 1 }, { furnace: true });
-    assert.equal(await make(ctx, "iron_ingot", 3), 3);
-    assert.deepEqual(smelts.map((s) => s.count), [2]);
+    const h = smeltingHarness({ raw_iron: 5, iron_ingot: 1, coal: 1 });
+    assert.equal(await h.kit.crafter.make({ item: "iron_ingot", count: 3 }), 3);
+    assert.deepEqual(smelts(h).map((s) => s.count), [2]);
+    assert.equal(h.count("raw_iron"), 3);
   });
 
   it("names the inputs to gather when the inventory holds none", async () => {
-    const { ctx, smelts } = smeltingContext({}, { furnace: true });
-    await assert.rejects(make(ctx, "iron_ingot", 1), /which a furnace makes from raw_iron, iron_ore, deepslate_iron_ore/);
-    assert.deepEqual(smelts, []);
+    const h = smeltingHarness({});
+    await assert.rejects(h.kit.crafter.make({ item: "iron_ingot" }), /a furnace makes it from (?=.*\braw_iron\b)(?=.*\biron_ore\b).*, which the inventory lacks/);
+    assert.deepEqual(smelts(h), []);
   });
 
   it("reports an item that nothing makes as one to gather", async () => {
-    const { ctx } = smeltingContext({}, { furnace: true });
-    await assert.rejects(make(ctx, "coal", 1), /which cannot be crafted; gather it/);
+    const h = smeltingHarness({});
+    await assert.rejects(h.kit.crafter.make({ item: "cobblestone" }), /which cannot be crafted; gather it/);
+  });
+
+  it("names the inputs to gather for an item only a furnace makes, when the inventory holds none", async () => {
+    const h = smeltingHarness({});
+    await assert.rejects(h.kit.crafter.make({ item: "glass" }), /need 1 more glass, which a furnace makes from .*\bsand\b.*the inventory holds none of them, gather some/);
+    assert.deepEqual(smelts(h), []);
   });
 });
 
-// prismarine-recipe ships CommonJS with a typing that claims a default export.
-const loadRecipes = createRequire(import.meta.url)("prismarine-recipe") as (version: string) => { Recipe: typeof RecipeClass };
-
-/**
- * A crafter context over real 26.1 recipes and a one-block world: stone ground at y 63, air above,
- * no crafting table until the kit places one. The inventory is a name -> count map.
- */
-function craftingContext(held: Record<string, number>) {
-  const registry = minecraftData("26.1");
-  const { Recipe } = loadRecipes("26.1");
-  const state = { tablePlaced: false, held: undefined as { name: string } | undefined };
-  const ground = new Vec3(0, 63, 0);
-  const itemId = (name: string) => registry.itemsByName[name]!.id;
-  const nameOf = (id: number) => registry.items[id]!.name;
-  const enough = (recipe: RecipeClass, times: number) => recipe.delta.every((d) => (held[nameOf(d.id)] ?? 0) + d.count * times >= 0);
-  const bot = {
-    registry,
-    entity: { position: new Vec3(5, 64, 5) },
-    get heldItem() {
-      return state.held;
-    },
-    recipesAll: (id: number, _meta: null, table: boolean) => Recipe.find(id, null).filter((r) => !r.requiresTable || table),
-    recipesFor: (id: number, _meta: null, min: number, table: boolean) =>
-      Recipe.find(id, null).filter((r) => (!r.requiresTable || table) && enough(r, Math.ceil(min / r.result.count))),
-    inventory: { items: () => Object.entries(held).filter(([, n]) => n > 0).map(([name, count]) => ({ name, count })) },
-    findBlock: () => (state.tablePlaced ? { name: "crafting_table", position: new Vec3(0, 64, 0) } : null),
-    findBlocks: () => [ground],
-    blockAt: (p: Vec3) => {
-      if (p.equals(new Vec3(0, 64, 0)) && state.tablePlaced) return { name: "crafting_table", position: p };
-      return p.y === 63 ? { name: "stone", boundingBox: "block", position: p } : { name: "air", position: p };
-    },
-    equip: async (item: { name: string }) => {
-      state.held = item;
-    },
-    placeBlock: async () => {
-      assert.equal(state.held?.name, "crafting_table");
-      held.crafting_table = (held.crafting_table ?? 0) - 1;
-      state.tablePlaced = true;
-    },
-  };
-  const ctx = {
-    bot,
-    kits: {
-      inventory: { count: ({ items }: { items: string }) => held[items] ?? 0 },
-      move: { to: async () => bot.entity.position },
-      craft: {
-        craft: async ({ item, count }: { item: string; count: number }) => {
-          const recipe = Recipe.find(itemId(item), null).find((r) => (!r.requiresTable || state.tablePlaced) && enough(r, Math.ceil(count / r.result.count)));
-          if (!recipe) throw new Error(`not enough ingredients for ${count} ${item}`);
-          const times = Math.ceil(count / recipe.result.count);
-          for (const d of recipe.delta) held[nameOf(d.id)] = (held[nameOf(d.id)] ?? 0) + d.count * times;
-        },
-      },
-    },
-    log: () => {},
-    sleep: async () => {},
-    signal: new AbortController().signal,
-  } as unknown as KitContext;
-  return { ctx, state };
-}
-
 describe("crafter.make crafting table", () => {
   it("pays for the table's planks before it makes the ingredients (a wooden pickaxe from 7 logs)", async () => {
-    const held: Record<string, number> = { oak_log: 7 };
-    const { ctx, state } = craftingContext(held);
-    assert.equal(await make(ctx, "wooden_pickaxe"), 1);
-    assert.equal(state.tablePlaced, true);
-    assert.equal(held.crafting_table, 0);
+    const h = createKitHarness({ inventory: { oak_log: 7 } });
+    assert.equal(await h.kit.crafter.make({ item: "wooden_pickaxe" }), 1);
+    assert.equal(h.bot.findBlock({ matching: h.bot.registry.blocksByName.crafting_table!.id, maxDistance: 8 })?.name, "crafting_table");
+    assert.equal(h.count("crafting_table"), 0);
   });
 
   it("makes the table from planks it already holds", async () => {
-    const held: Record<string, number> = { oak_planks: 9 };
-    const { ctx, state } = craftingContext(held);
-    assert.equal(await make(ctx, "wooden_pickaxe"), 1);
-    assert.equal(state.tablePlaced, true);
+    const h = createKitHarness({ inventory: { oak_planks: 9 } });
+    assert.equal(await h.kit.crafter.make({ item: "wooden_pickaxe" }), 1);
+    assert.equal(h.bot.findBlock({ matching: h.bot.registry.blocksByName.crafting_table!.id, maxDistance: 8 })?.name, "crafting_table");
   });
 
   it("fails when the table and the pickaxe together need more logs than it holds", async () => {
-    const { ctx } = craftingContext({ oak_log: 1 });
-    await assert.rejects(make(ctx, "wooden_pickaxe"), /cannot make 1 wooden_pickaxe/);
+    const h = createKitHarness({ inventory: { oak_log: 1 } });
+    await assert.rejects(h.kit.crafter.make({ item: "wooden_pickaxe" }), /cannot make 1 wooden_pickaxe/);
   });
 });

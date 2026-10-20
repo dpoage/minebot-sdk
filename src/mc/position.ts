@@ -3,10 +3,11 @@ import { Vec3 } from "vec3";
 import { z } from "zod";
 import type { Vec } from "../protocol/index.ts";
 
-export const Position = z.union([
-  z.object({ x: z.number(), y: z.number(), z: z.number() }),
-  z.tuple([z.number(), z.number(), z.number()]),
-]);
+/** A point as the wire carries it: what actions that return a location declare in `returns` (a Vec3 satisfies it). */
+export const Point = z.object({ x: z.number(), y: z.number(), z: z.number() });
+export type Point = z.infer<typeof Point>;
+
+export const Position = z.union([Point, z.tuple([z.number(), z.number(), z.number()])]);
 export type Position = z.infer<typeof Position>;
 
 export function toVec3(p: Position): Vec3 {

@@ -1,5 +1,5 @@
 // Generates bench/tasks/ from the task catalog below: one Harbor task directory per task and tier.
-//   node bench/gen-tasks.ts
+//   node --conditions=minebot-sdk:source bench/gen-tasks.ts
 // Edit this file, not the generated directories; the generator deletes and rewrites bench/tasks/.
 import { chmod, copyFile, mkdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";

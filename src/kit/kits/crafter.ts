@@ -1,26 +1,27 @@
 // The crafter kit: plan recipe chains and make sure a crafting table or a furnace is there to
 // craft and smelt them at — built from the move, sense, place, inventory, craft, items, and
 // furnace primitives.
-import { Vec3 } from "vec3";
-import { z } from "zod";
-import { action, type Block, defineKit, isAir, type KitContext, smeltInputs } from "../kit.ts";
+import { action, type Block, defineKit, isAir, type KitContext, smeltInputs, Vec3, z } from "minebot-sdk/kit";
+
+const USES = ["move", "sense", "place", "inventory", "craft", "items", "furnace"] as const;
+type Ctx = KitContext<typeof USES>;
 
 const MAX_MAKE_DEPTH = 4;
 const TABLE_SEARCH_RADIUS = 32;
 const FURNACE_SEARCH_RADIUS = 32;
 
-function countOf(ctx: KitContext, name: string): number {
-  return ctx.kits.inventory!.count!({ items: name }) as number;
+function countOf(ctx: Ctx, name: string): Promise<number> {
+  return ctx.kits.inventory.count({ items: name });
 }
 
-function itemId(ctx: KitContext, name: string): number {
+function itemId(ctx: Ctx, name: string): number {
   const item = ctx.bot.registry.itemsByName[name.replace(/^minecraft:/, "")];
   if (!item) throw new Error(`unknown item "${name}"`);
   return item.id;
 }
 
 /** Holds `name` from the inventory, confirming the hand actually changed. */
-async function holdItem(ctx: KitContext, name: string): Promise<void> {
+async function holdItem(ctx: Ctx, name: string): Promise<void> {
   const { bot } = ctx;
   for (let attempt = 0; attempt < 3; attempt++) {
     const item = bot.inventory.items().find((i) => i.name === name);
@@ -33,12 +34,12 @@ async function holdItem(ctx: KitContext, name: string): Promise<void> {
 }
 
 /** Places a `name` block (crafting_table or furnace) from the inventory on open natural ground within 8 blocks. */
-async function placeNearby(ctx: KitContext, name: string): Promise<Block> {
+async function placeNearby(ctx: Ctx, name: string): Promise<Block> {
   const { bot } = ctx;
   const blockId = bot.registry.blocksByName[name]!.id;
   const nearby = bot.findBlock({ matching: blockId, maxDistance: 4 });
   if (nearby) return nearby;
-  if (countOf(ctx, name) === 0) throw new Error(`no ${name} in inventory`);
+  if ((await countOf(ctx, name)) === 0) throw new Error(`no ${name} in inventory`);
   // Only air is safe: thin blocks such as leaf_litter have no collision box, but the server
   // does not replace them, so placing into them fails.
   const free = (b: Block | null) => b !== null && isAir(b);
@@ -70,54 +71,52 @@ async function placeNearby(ctx: KitContext, name: string): Promise<Block> {
  * from planks the inventory holds or the logs it holds). Callers that go on to make ingredients
  * ensure the table first: its 4 planks would otherwise come out of the ingredients' planks.
  */
-async function ensureTable(ctx: KitContext, depth: number): Promise<Block> {
+async function ensureTable(ctx: Ctx, depth: number): Promise<Block> {
   const { bot } = ctx;
   const tableId = bot.registry.blocksByName.crafting_table!.id;
   const near = bot.findBlock({ matching: tableId, maxDistance: 4 });
   if (near) return near;
   const known = bot.findBlock({ matching: tableId, maxDistance: TABLE_SEARCH_RADIUS });
   if (known) {
-    await ctx.kits.move!.to!({ position: known.position, range: 2, timeoutMs: 30_000 });
+    await ctx.kits.move.to({ position: known.position, range: 2, timeoutMs: 30_000 });
     return bot.blockAt(known.position) ?? known;
   }
-  if (countOf(ctx, "crafting_table") === 0) await make(ctx, "crafting_table", 1, depth + 1);
+  if ((await countOf(ctx, "crafting_table")) === 0) await make(ctx, "crafting_table", 1, depth + 1);
   return placeNearby(ctx, "crafting_table");
 }
 
 /** A furnace to smelt at: an existing one within 32 blocks, else one placed from the inventory, else one crafted from cobblestone. */
-async function ensureFurnace(ctx: KitContext, depth: number): Promise<Block> {
+async function ensureFurnace(ctx: Ctx, depth: number): Promise<Block> {
   const { bot } = ctx;
   const furnaceId = bot.registry.blocksByName.furnace!.id;
   const near = bot.findBlock({ matching: furnaceId, maxDistance: 4 });
   if (near) return near;
   const known = bot.findBlock({ matching: furnaceId, maxDistance: FURNACE_SEARCH_RADIUS });
   if (known) {
-    await ctx.kits.move!.to!({ position: known.position, range: 2, timeoutMs: 30_000 });
+    await ctx.kits.move.to({ position: known.position, range: 2, timeoutMs: 30_000 });
     return bot.blockAt(known.position) ?? known;
   }
-  if (countOf(ctx, "furnace") === 0) await make(ctx, "furnace", 1, depth + 1);
+  if ((await countOf(ctx, "furnace")) === 0) await make(ctx, "furnace", 1, depth + 1);
   return placeNearby(ctx, "furnace");
 }
 
 /** The held items that smelt into `name`, most plentiful first. */
-function heldSmeltInputs(ctx: KitContext, name: string): { input: string; count: number }[] {
-  return smeltInputs(name, Object.keys(ctx.bot.registry.itemsByName))
-    .map((input) => ({ input, count: countOf(ctx, input) }))
-    .filter((held) => held.count > 0)
-    .sort((a, b) => b.count - a.count);
+async function heldSmeltInputs(ctx: Ctx, name: string): Promise<{ input: string; count: number }[]> {
+  const held = await Promise.all(smeltInputs(name, Object.keys(ctx.bot.registry.itemsByName)).map(async (input) => ({ input, count: await countOf(ctx, input) })));
+  return held.filter((h) => h.count > 0).sort((a, b) => b.count - a.count);
 }
 
 /**
  * Smelts up to `missing` of `name` from the inputs the inventory holds, one smelt per input
  * kind, at a furnace it finds, places, or crafts. Smelting is one item for one item.
  */
-async function smeltMissing(ctx: KitContext, name: string, missing: number, depth: number): Promise<void> {
+async function smeltMissing(ctx: Ctx, name: string, missing: number, depth: number): Promise<void> {
   let left = missing;
-  for (const { input, count } of heldSmeltInputs(ctx, name)) {
+  for (const { input, count } of await heldSmeltInputs(ctx, name)) {
     if (left <= 0) return;
     const n = Math.min(left, count);
     const furnace = await ensureFurnace(ctx, depth);
-    await ctx.kits.furnace!.smelt!({ item: input, count: n, at: furnace.position });
+    await ctx.kits.furnace.smelt({ item: input, count: n, at: furnace.position });
     left -= n;
   }
 }
@@ -127,18 +126,18 @@ async function smeltMissing(ctx: KitContext, name: string, missing: number, dept
  * inventory holds when it is a furnace output, and crafting missing intermediate items
  * recursively from what the inventory holds. Does not gather raw materials.
  */
-export async function make(ctx: KitContext, name: string, count = 1, depth = 0): Promise<number> {
+export async function make(ctx: Ctx, name: string, count = 1, depth = 0): Promise<number> {
   const { bot } = ctx;
-  const have = countOf(ctx, name);
+  const have = await countOf(ctx, name);
   if (have >= count) return have;
   const id = itemId(ctx, name);
   const failures: string[] = [];
   // Smelting first: a smelted item such as iron_ingot also has a crafting recipe (from nuggets or a block) that the inventory rarely satisfies.
   const smeltable = smeltInputs(name, Object.keys(bot.registry.itemsByName));
-  if (smeltable.length > 0 && heldSmeltInputs(ctx, name).length > 0) {
+  if (smeltable.length > 0 && (await heldSmeltInputs(ctx, name)).length > 0) {
     try {
       await smeltMissing(ctx, name, count - have, depth);
-      if (countOf(ctx, name) >= count) return countOf(ctx, name);
+      if ((await countOf(ctx, name)) >= count) return countOf(ctx, name);
     } catch (err) {
       failures.push(err instanceof Error ? err.message : String(err));
     }
@@ -150,35 +149,37 @@ export async function make(ctx: KitContext, name: string, count = 1, depth = 0):
     if (depth < MAX_MAKE_DEPTH && failures.length === 0) {
       for (const input of smeltable.filter((i) => smeltInputs(i, Object.keys(bot.registry.itemsByName)).length > 0)) {
         try {
-          await make(ctx, input, count - countOf(ctx, name), depth + 1);
-          await smeltMissing(ctx, name, count - countOf(ctx, name), depth);
-          if (countOf(ctx, name) >= count) return countOf(ctx, name);
+          await make(ctx, input, count - (await countOf(ctx, name)), depth + 1);
+          await smeltMissing(ctx, name, count - (await countOf(ctx, name)), depth);
+          if ((await countOf(ctx, name)) >= count) return countOf(ctx, name);
         } catch (err) {
           failures.push(err instanceof Error ? err.message : String(err));
         }
       }
     }
     const reason = failures.length > 0 ? `: ${[...new Set(failures)].slice(0, 3).join("; ")}` : `; the inventory holds none of them, gather some`;
-    throw new Error(`need ${count - countOf(ctx, name)} more ${name}, which a furnace makes from ${smeltable.slice(0, 4).join(", ")}${reason}`);
+    throw new Error(`need ${count - (await countOf(ctx, name))} more ${name}, which a furnace makes from ${smeltable.slice(0, 4).join(", ")}${reason}`);
   }
   if (depth >= MAX_MAKE_DEPTH) throw new Error(`gave up making ${name}: recipe chain deeper than ${MAX_MAKE_DEPTH}`);
   // Tagged ingredients expand to one recipe per variant (oak planks, birch planks, ...).
   // Try first the recipes whose ingredients the inventory holds or can craft directly.
-  const ranked = recipes
-    .map((recipe) => {
-      const times = Math.ceil((count - have) / recipe.result.count);
-      let shortfall = 0;
-      for (const d of recipe.delta) {
-        if (d.count >= 0) continue;
-        const ingredient = bot.registry.items[d.id]?.name ?? `#${d.id}`;
-        const missing = -d.count * times - countOf(ctx, ingredient);
-        if (missing <= 0) continue;
-        const smeltHeld = heldSmeltInputs(ctx, ingredient).reduce((n, held) => n + held.count, 0);
-        shortfall += bot.recipesFor(d.id, null, missing, true).length > 0 || smeltHeld >= missing ? 1 : 10 + missing;
-      }
-      return { recipe, times, shortfall };
-    })
-    .sort((a, b) => a.shortfall - b.shortfall);
+  const ranked = (
+    await Promise.all(
+      recipes.map(async (recipe) => {
+        const times = Math.ceil((count - have) / recipe.result.count);
+        let shortfall = 0;
+        for (const d of recipe.delta) {
+          if (d.count >= 0) continue;
+          const ingredient = bot.registry.items[d.id]?.name ?? `#${d.id}`;
+          const missing = -d.count * times - (await countOf(ctx, ingredient));
+          if (missing <= 0) continue;
+          const smeltHeld = (await heldSmeltInputs(ctx, ingredient)).reduce((n, held) => n + held.count, 0);
+          shortfall += bot.recipesFor(d.id, null, missing, true).length > 0 || smeltHeld >= missing ? 1 : 10 + missing;
+        }
+        return { recipe, times, shortfall };
+      }),
+    )
+  ).sort((a, b) => a.shortfall - b.shortfall);
   for (const { recipe, times } of ranked.slice(0, 4)) {
     try {
       const ingredients = recipe.delta
@@ -189,31 +190,31 @@ export async function make(ctx: KitContext, name: string, count = 1, depth = 0):
       if (recipe.requiresTable) await ensureTable(ctx, depth);
       // Making one ingredient can consume another (sticks use planks), so repeat until all are present at once.
       for (let pass = 0; pass < 3; pass++) {
-        const short = ingredients.filter((i) => countOf(ctx, i.name) < i.need);
+        const short: typeof ingredients = [];
+        for (const i of ingredients) if ((await countOf(ctx, i.name)) < i.need) short.push(i);
         if (short.length === 0) break;
         for (const i of short) await make(ctx, i.name, i.need, depth + 1);
       }
       // Making ingredients can walk away from the table (to a furnace), so bring it back within reach.
       if (recipe.requiresTable) await ensureTable(ctx, depth);
-      await ctx.kits.craft!.craft!({ item: name, count: count - countOf(ctx, name) });
+      await ctx.kits.craft.craft({ item: name, count: count - (await countOf(ctx, name)) });
       return countOf(ctx, name);
     } catch (err) {
       failures.push(err instanceof Error ? err.message : String(err));
     }
   }
-  const hint = smeltable.length > 0 && heldSmeltInputs(ctx, name).length === 0 ? `a furnace makes it from ${smeltable.slice(0, 3).join(", ")}, which the inventory lacks; ` : "";
+  const hint = smeltable.length > 0 && (await heldSmeltInputs(ctx, name)).length === 0 ? `a furnace makes it from ${smeltable.slice(0, 3).join(", ")}, which the inventory lacks; ` : "";
   throw new Error(`cannot make ${count} ${name}: ${hint}${[...new Set(failures)].slice(0, 3).join("; ")}`);
 }
 
-export const crafter = defineKit({
-  name: "crafter",
-  description: "Craft and smelt item chains from the inventory, finding or placing a crafting table or furnace when needed.",
-  uses: ["move", "sense", "place", "inventory", "craft", "items", "furnace"],
-  actions: {
+export const crafter = defineKit(
+  { name: "crafter", description: "Craft and smelt item chains from the inventory, finding or placing a crafting table or furnace when needed.", uses: USES },
+  {
     make: action({
       doc: "Make sure the inventory holds at least `count` (default 1) of `item`, crafting intermediate items (planks, sticks, tables) as needed and finding or placing a crafting table. An item that a furnace makes (iron_ingot, glass, stone, charcoal, cooked food) is smelted from the matching input the inventory holds, at a furnace within 32 blocks, else one placed from the inventory, else one crafted from 8 cobblestone; fuel is coal, charcoal, planks, or logs from the inventory. Fails with the missing raw material, which you must gather. Returns the count held.",
       args: z.object({ item: z.string().min(1), count: z.number().int().positive().default(1) }),
+      returns: z.number(),
       run: (ctx, { item, count }) => make(ctx, item, count),
     }),
   },
-});
+);

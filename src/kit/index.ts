@@ -1,5 +1,9 @@
-// Every built-in kit. One file per kit in kits/, all written with the same defineKit/action
-// API an agent uses; `minebot kits source <kit>` prints the file unchanged.
+// Every built-in kit. One file per kit in kits/, all written against `minebot-sdk/kit` exactly
+// as an agent writes a kit; `minebot kits source <kit>` prints the file unchanged, and an agent
+// can save that source under a new name as it is (compileKit takes `export const <name> = defineKit(...)`).
+// A kit added here also joins `KitRegistry` in registry.ts, which types `ctx.kits` and programs' `kit`.
+import path from "node:path";
+import { PACKAGE_ROOT } from "../package.ts";
 import type { Kit } from "./kit.ts";
 import { bucket } from "./kits/bucket.ts";
 import { builder } from "./kits/builder.ts";
@@ -24,4 +28,4 @@ import { survival } from "./kits/survival.ts";
 export const BUILTIN_KITS: readonly Kit[] = [move, sense, dig, place, inventory, craft, items, furnace, container, survival, combat, farm, bucket, gatherer, crafter, builder, explorer, social];
 
 /** Where the built-in kits' sources live, for `kits source`. */
-export const BUILTIN_KIT_DIR = new URL("./kits", import.meta.url).pathname;
+export const BUILTIN_KIT_DIR = path.join(PACKAGE_ROOT, "src/kit/kits");

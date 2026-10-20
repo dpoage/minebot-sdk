@@ -28,6 +28,12 @@ describe("findEscapeAttempts", () => {
     assert.ok(findEscapeAttempts('bot["constructor"]["constructor"]("x")').includes("constructor.constructor"));
   });
 
+  it("sees a call through the comments JavaScript allows before its parenthesis", () => {
+    assert.ok(findEscapeAttempts('await import/**/("node:os")').includes("import("));
+    assert.ok(findEscapeAttempts('await import//x\n("node:os")').includes("import("));
+    assert.ok(findEscapeAttempts('require /* a */ ("fs")').includes("require("));
+  });
+
   it("leaves ordinary programs alone", () => {
     const code = `
       const logs = bot.findBlocks({ matching: bot.registry.blocksByName.oak_log.id, maxDistance: 32, count: 4 });

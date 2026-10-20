@@ -11,7 +11,7 @@ RUN npm ci --omit=dev --ignore-scripts \
  && cp -r node_modules/mineflayer/docs /docs/mineflayer \
  && cp node_modules/mineflayer-pathfinder/readme.md /docs/pathfinder-readme.md \
  # The client needs only the MCP SDK and zod. Remove the body's libraries and what only they pulled in.
- && npm uninstall --no-save --ignore-scripts mineflayer mineflayer-pathfinder prismarine-block prismarine-entity prismarine-recipe vec3 yaml \
+ && npm uninstall --no-save --ignore-scripts mineflayer mineflayer-pathfinder prismarine-block prismarine-entity prismarine-recipe prismarine-item prismarine-registry minecraft-data vec3 yaml \
  && find node_modules -maxdepth 2 -type d -empty -delete \
  && rm -rf /root/.npm
 
@@ -28,16 +28,17 @@ WORKDIR /opt/minebot
 COPY --from=deps /opt/minebot/node_modules ./node_modules
 COPY --from=deps /docs/mineflayer ./node_modules/mineflayer/docs
 COPY --from=deps /docs/pathfinder-readme.md ./node_modules/mineflayer-pathfinder/readme.md
-# Node reads .ts files as ES modules because of the package type.
-RUN echo '{"type":"module"}' > package.json
+# The package manifest: Node reads .ts files as ES modules because of its "type", and `minebot init` reads the version from it.
+COPY --from=deps /opt/minebot/package.json ./package.json
 # Exactly the runtime import closure of src/cli.ts (test/boundaries.test.ts checks this list).
 COPY src/cli.ts ./src/cli.ts
 COPY src/client ./src/client
 COPY src/protocol ./src/protocol
 COPY src/milestones ./src/milestones
 COPY src/mc/names.ts ./src/mc/names.ts
+COPY src/package.ts ./src/package.ts
 
-RUN printf '#!/bin/sh\nexec node /opt/minebot/src/cli.ts "$@"\n' > /usr/local/bin/minebot \
+RUN printf '#!/bin/sh\nexec node --conditions=minebot-sdk:source /opt/minebot/src/cli.ts "$@"\n' > /usr/local/bin/minebot \
  && chmod +x /usr/local/bin/minebot
 
 WORKDIR /root

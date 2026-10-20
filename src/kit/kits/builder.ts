@@ -1,8 +1,9 @@
 // The builder kit: build structures from blueprints — built from the move, sense, dig, place,
 // and inventory primitives. The blueprint format lives here because it is this kit's argument.
-import { Vec3 } from "vec3";
-import { z } from "zod";
-import { action, defineKit, type KitContext, Position, toVec3 } from "../kit.ts";
+import { action, defineKit, type KitContext, Point, Position, toVec3, Vec3, z } from "minebot-sdk/kit";
+
+const USES = ["move", "sense", "dig", "place", "inventory"] as const;
+type Ctx = KitContext<typeof USES>;
 
 /**
  * A structure to build. `layers` go bottom to top. In each layer, rows run along +z and
@@ -64,15 +65,15 @@ export interface BuildResult {
   failed: { position: Vec3; block: string; reason: string }[];
 }
 
-export async function build(ctx: KitContext, blueprint: Blueprint, origin: Vec3, partial = false): Promise<BuildResult> {
+export async function build(ctx: Ctx, blueprint: Blueprint, origin: Vec3, partial = false): Promise<BuildResult> {
   const { bot } = ctx;
   const targets = blueprintBlocks(blueprint).map((b) => ({ position: origin.offset(b.dx, b.dy, b.dz), block: b.block }));
   const todo = targets.filter((t) => bot.blockAt(t.position)?.name !== t.block);
   const needed: Record<string, number> = {};
   for (const t of todo) needed[t.block] = (needed[t.block] ?? 0) + 1;
-  const short = Object.entries(needed)
-    .map(([block, n]) => [block, n - (ctx.kits.inventory!.count!({ items: block }) as number)] as const)
-    .filter(([, missing]) => missing > 0);
+  const short = (
+    await Promise.all(Object.entries(needed).map(async ([block, n]) => [block, n - (await ctx.kits.inventory.count({ items: block }))] as const))
+  ).filter(([, missing]) => missing > 0);
   if (short.length > 0 && !partial) {
     throw new Error(`missing materials: ${short.map(([b, n]) => `${b} x${n}`).join(", ")} (pass { partial: true } to build what you can)`);
   }
@@ -82,7 +83,7 @@ export async function build(ctx: KitContext, blueprint: Blueprint, origin: Vec3,
   for (const t of todo) {
     if (ctx.signal.aborted) throw ctx.signal.reason;
     try {
-      if ((await ctx.kits.place!.place!({ at: t.position, item: t.block })) as boolean) result.placed++;
+      if (await ctx.kits.place.place({ at: t.position, item: t.block })) result.placed++;
     } catch (err) {
       result.failed.push({ position: t.position, block: t.block, reason: err instanceof Error ? err.message : String(err) });
     }
@@ -97,7 +98,7 @@ export interface BuildCheck {
   mismatches: { position: Vec3; expected: string; actual: string }[];
 }
 
-export function checkBuild(ctx: KitContext, blueprint: Blueprint, origin: Vec3): BuildCheck {
+export function checkBuild(ctx: Ctx, blueprint: Blueprint, origin: Vec3): BuildCheck {
   const blocks = blueprintBlocks(blueprint);
   const mismatches: BuildCheck["mismatches"] = [];
   for (const b of blocks) {
@@ -108,14 +109,13 @@ export function checkBuild(ctx: KitContext, blueprint: Blueprint, origin: Vec3):
   return { correct: blocks.length - mismatches.length, total: blocks.length, mismatches: mismatches.slice(0, 20) };
 }
 
-export const builder = defineKit({
-  name: "builder",
-  description: "Place blocks and build structures from blueprints. Blueprints: { palette: { '#': 'oak_planks' }, layers: [layer, ...] }; layers go bottom to top, rows run along +z, characters along +x, '.' or space skips.",
-  uses: ["move", "sense", "dig", "place", "inventory"],
-  actions: {
+export const builder = defineKit(
+  { name: "builder", description: "Place blocks and build structures from blueprints. Blueprints: { palette: { '#': 'oak_planks' }, layers: [layer, ...] }; layers go bottom to top, rows run along +z, characters along +x, '.' or space skips.", uses: USES },
+  {
     materials: action({
       doc: "Block counts the `blueprint` needs, e.g. { oak_planks: 24 }.",
       args: z.object({ blueprint: Blueprint }),
+      returns: z.record(z.string(), z.number()),
       run: (_, { blueprint }) => blueprintMaterials(blueprint),
     }),
     build: action({
@@ -125,12 +125,22 @@ export const builder = defineKit({
         origin: Position,
         partial: z.boolean().default(false),
       }),
+      returns: z.object({
+        placed: z.number(),
+        alreadyCorrect: z.number(),
+        failed: z.array(z.object({ position: Point, block: z.string(), reason: z.string() })),
+      }),
       run: (ctx, { blueprint, origin, partial }) => build(ctx, blueprint, toVec3(origin).floored(), partial),
     }),
     check: action({
       doc: "Compare the world with the `blueprint` at `origin`: { correct, total, mismatches (first 20) }.",
       args: z.object({ blueprint: Blueprint, origin: Position }),
+      returns: z.object({
+        correct: z.number(),
+        total: z.number(),
+        mismatches: z.array(z.object({ position: Point, expected: z.string(), actual: z.string() })),
+      }),
       run: (ctx, { blueprint, origin }) => checkBuild(ctx, blueprint, toVec3(origin).floored()),
     }),
   },
-});
+);

@@ -4,19 +4,21 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, it } from "node:test";
 import { writeFile, unlink } from "node:fs/promises";
+import { findEscapeAttempts } from "../src/audit.ts";
 import { compileKit, KitSourceError } from "../src/kit/agent.ts";
+import { BUILTIN_KIT_DIR, BUILTIN_KITS } from "../src/kit/index.ts";
 import { KitLibrary } from "../src/kit/library.ts";
 import { KitHost, type KitCalls } from "../src/kit/kit.ts";
 import { KitStats } from "../src/kit/stats.ts";
 import { JsonStore } from "../src/store.ts";
 
-const GOOD_SOURCE = `
+const IMPORTS = 'import { defineKit, action, z } from "minebot-sdk/kit";\n';
+
+const GOOD_SOURCE = `${IMPORTS}
 // A kit an agent might save: dig from above, then walk home.
-export default defineKit({
-  name: "woodcutter",
-  description: "Chops a tree by digging its log blocks and walking back.",
-  uses: ["move", "dig"],
-  actions: {
+export default defineKit(
+  { name: "woodcutter", description: "Chops a tree by digging its log blocks and walking back.", uses: ["move", "dig"] },
+  {
     chop: action({
       doc: "Digs the block at the bot's head height and returns where it stands.",
       args: z.object({ times: z.number().int().positive().default(1) }),
@@ -29,7 +31,7 @@ export default defineKit({
       },
     }),
   },
-});
+);
 `;
 
 function library(dir: string, problems: { file: string; error: string }[] = []): KitLibrary {
@@ -60,24 +62,98 @@ describe("compileKit", () => {
     assert.deepEqual(Object.keys(kit.actions), ["chop"]);
   });
 
-  it("rejects imports and requires", () => {
-    assert.throws(() => compileKit(`import { z } from "zod";\nexport default defineKit({ name: "a", description: "x", actions: {} });`), /cannot import or require/);
-    assert.throws(() => compileKit(`const fs = require("fs");\nexport default defineKit({ name: "a", description: "x", actions: {} });`), /cannot import or require/);
+  it("binds named imports from minebot-sdk/kit, aliases and type imports included", () => {
+    const kit = compileKit(
+      `import { defineKit as define, action, z, nameMatcher } from "minebot-sdk/kit";\nimport type { Vec3 } from "vec3";\nimport { type Block, Point } from "minebot-sdk/kit";\n` +
+        `const matches = nameMatcher("*_log");\nexport default define({ name: "tagged", description: "x" }, { a: action({ doc: "d", args: z.object({}), returns: Point, run: () => ({ x: matches("oak_log") ? 1 : 0, y: 0, z: 0 }) }) });`,
+    );
+    assert.deepEqual(Object.keys(kit.actions), ["a"]);
+  });
+
+  it("rejects every other import, naming the one allowed", () => {
+    const help = /import \{ defineKit, action, z \} from "minebot-sdk\/kit"/;
+    assert.throws(() => compileKit(`import { z } from "zod";\n${IMPORTS}export default defineKit({ name: "a", description: "x" }, {});`), /cannot import "zod"/);
+    assert.throws(() => compileKit(`import { readFileSync } from "node:fs";\n${IMPORTS}export default defineKit({ name: "a", description: "x" }, {});`), /cannot import "node:fs"/);
+    assert.throws(() => compileKit(`import fs from "node:fs";\n${IMPORTS}export default defineKit({ name: "a", description: "x" }, {});`), help);
+    assert.throws(() => compileKit(`import * as sdk from "minebot-sdk/kit";\n${IMPORTS}export default defineKit({ name: "a", description: "x" }, {});`), help);
+    assert.throws(() => compileKit(`import "node:fs";\n${IMPORTS}export default defineKit({ name: "a", description: "x" }, {});`), help);
+    assert.throws(() => compileKit(`${IMPORTS}const fs = require("fs");\nexport default defineKit({ name: "a", description: "x" }, {});`), /dynamic import\(\), import\.meta, or require\(\)/);
+    assert.throws(() => compileKit(`${IMPORTS}const fs = await import("node:fs");\nexport default defineKit({ name: "a", description: "x" }, {});`), /dynamic import\(\), import\.meta, or require\(\)/);
+    assert.throws(() => compileKit(`import { defineKit, bogus } from "minebot-sdk/kit";\nexport default defineKit({ name: "a", description: "x" }, {});`), /has no export "bogus"/);
+  });
+
+  it("rejects the globals form, naming the import line to add", () => {
+    const globals = `export default defineKit({ name: "a", description: "x" }, { a: action({ doc: "d", args: z.object({}), run: () => 1 }) });`;
+    assert.throws(() => compileKit(globals), /import \{ defineKit, action, z \} from "minebot-sdk\/kit"/);
+    assert.throws(() => compileKit(`import { defineKit } from "minebot-sdk/kit";\n${globals}`), /action is not defined; import it: import \{ action \} from "minebot-sdk\/kit"/);
+    assert.throws(
+      () => compileKit(`${IMPORTS}export default defineKit({ name: "a", description: "x", actions: {} });`),
+      /needs an actions object as the second argument: defineKit\(\{ name, description, uses \}, \{ actionName: action\(\{ \.\.\. \}\) \}\)/,
+    );
   });
 
   it("rejects syntax errors, missing or extra default exports, and bad shapes", () => {
     assert.throws(() => compileKit("export default defineKit({"), KitSourceError);
-    assert.throws(() => compileKit("const x = 1;"), /exactly one/);
+    assert.throws(() => compileKit(`${IMPORTS}const x = 1;`), /export exactly one kit/);
     assert.throws(
       () =>
         compileKit(
-          "export default defineKit({ name: 'a', description: 'x', actions: {} });\nexport default defineKit({ name: 'b', description: 'x', actions: {} });",
+          "import { defineKit } from \"minebot-sdk/kit\";\nexport default defineKit({ name: 'a', description: 'x' }, {});\nexport default defineKit({ name: 'b', description: 'x' }, {});",
         ),
-      /exactly one/,
+      /export exactly one kit/,
     );
-    assert.throws(() => compileKit(`export const helper = 1;\nexport default defineKit({ name: "a", description: "x", actions: {} });`), /only "export default/);
     assert.throws(() => compileKit(`export default { name: "a" };`), KitSourceError);
-    assert.throws(() => compileKit(`export default defineKit({ name: "Bad", description: "x", actions: {} });`), /kit name "Bad"/);
+    assert.throws(() => compileKit(`${IMPORTS}export default { name: "a" };`), /export exactly one kit/);
+    assert.throws(() => compileKit(`${IMPORTS}export default defineKit({ name: "Bad", description: "x" }, {});`), /kit name "Bad"/);
+  });
+
+  it("accepts the built-in shape: one exported kit, other exports ignored", () => {
+    const named = compileKit(`${IMPORTS}export const helper = 1;\nexport async function walk() {}\nexport const mine = defineKit({ name: "mine", description: "x" }, {});`);
+    assert.equal(named.name, "mine");
+    const mixed = compileKit(`${IMPORTS}export const helper = 1;\nexport default defineKit({ name: "a", description: "x" }, {});`);
+    assert.equal(mixed.name, "a");
+    const twoKits = `${IMPORTS}export const a = defineKit({ name: "a", description: "x" }, {});\nexport const b = defineKit({ name: "b", description: "x" }, {});`;
+    assert.throws(() => compileKit(twoKits), /exports 2 kits \(a, b\)/);
+    assert.throws(() => compileKit(`${IMPORTS}export const n = 1;`), /export exactly one kit/);
+    assert.throws(() => compileKit(`${IMPORTS}export { defineKit };\nexport default defineKit({ name: "a", description: "x" }, {});`), /export exactly one kit/);
+  });
+
+  it("compiles the source of every built-in kit, submitted verbatim under a new name", () => {
+    const files = readdirSync(BUILTIN_KIT_DIR).filter((f) => f.endsWith(".ts"));
+    assert.equal(files.length, BUILTIN_KITS.length);
+    for (const file of files) {
+      const source = readFileSync(path.join(BUILTIN_KIT_DIR, file), "utf8");
+      const renamed = source.replace(/(defineKit\(\s*\{\s*name: )"[a-z_]+"/, '$1"copy"');
+      assert.notEqual(renamed, source, `${file}: kit name not found`);
+      assert.equal(compileKit(renamed).name, "copy", file);
+      assert.deepEqual(findEscapeAttempts(renamed), [], file);
+    }
+  });
+
+  it("rejects a dynamic import however it is spelled, and import.meta", () => {
+    const kit = (body: string) => `${IMPORTS}${body}\nexport default defineKit({ name: "a", description: "x" }, {});`;
+    for (const spelling of ['import/**/("node:os")', 'import//x\n("node:os")', 'import /* a */ // b\n ("node:os")', 'import ("node:os")', "import.meta.url"]) {
+      assert.throws(() => compileKit(kit(`const loaded = ${spelling};`)), /dynamic import\(\), import\.meta, or require\(\)/, spelling);
+    }
+    assert.throws(() => compileKit(kit('const r = require/**/("fs");')), /dynamic import\(\), import\.meta, or require\(\)/);
+    assert.throws(() => compileKit(`import/**/{ defineKit } from "minebot-sdk/kit";\nexport default defineKit({ name: "a", description: "x" }, {});`), /cannot import/);
+  });
+
+  it("leaves the words import, require, and export alone inside strings, comments, and templates", () => {
+    const kit = compileKit(
+      `${IMPORTS}// import("node:os") require("fs") export default\n/* import("node:os") */\n` +
+        'const text = "import(x) require(y) export default" + `import(${1 + 1}) ${"export"}`;\nconst pattern = /import\\("x"\\)/;\n' +
+        `export default defineKit({ name: "words", description: text.length > 0 && pattern ? "mentions import and require" : "x" }, {});`,
+    );
+    assert.equal(kit.name, "words");
+  });
+
+  it("blocks import() at run time even when the source scan is fooled", async () => {
+    // After `if (1)` a slash starts a regex, which the scan reads as division; the quote then hides the import() from it.
+    const kit = compileKit(
+      `${IMPORTS}export default defineKit({ name: "sneaky", description: "x" }, { a: action({ doc: "d", args: z.object({}), run: async () => { if (1)\n/"/.test("x"); return await import("node:os"); } }) });`,
+    );
+    await assert.rejects(async () => kit.actions.a!.invoke({} as never, {}, "sneaky.a"), /ERR_VM_DYNAMIC_IMPORT_CALLBACK_MISSING|dynamic import callback/i);
   });
 });
 
@@ -100,12 +176,12 @@ describe("KitLibrary", () => {
     const dir = mkdtempSync(path.join(tmpdir(), "minebot-agentkits-"));
     const lib = library(dir);
     const rejects: [string, RegExp][] = [
-      ["export default defineKit({ name: \"bad\", description: \"x\", actions: ", /not valid TypeScript|failed to run/], // syntax error
-      [`import x from "y";\nexport default defineKit({ name: "b", description: "x", actions: {} });`, /cannot import or require/],
-      [`export default defineKit({ name: "move", description: "steal", actions: {} });`, /taken by a built-in/],
-      [`export default defineKit({ name: "lonely", description: "x", uses: ["nothere"], actions: {} });`, /does not offer/],
-      [`export default defineKit({ name: "selfish", description: "x", uses: ["selfish"], actions: {} });`, /cannot use itself/],
-      [`export default defineKit({ name: "sneaky", description: "x", actions: { a: action({ doc: "d", args: z.object({}), run: () => globalThis.constructor.constructor("return process")() }) } });`, /escape audit/],
+      [IMPORTS + "export default defineKit({ name: \"bad\", description: \"x\" }, ", /not valid TypeScript|failed to run/], // syntax error
+      [`import x from "y";\n${IMPORTS}export default defineKit({ name: "b", description: "x" }, {});`, /cannot import "y"/],
+      [`${IMPORTS}export default defineKit({ name: "move", description: "steal" }, {});`, /taken by a built-in/],
+      [`${IMPORTS}export default defineKit({ name: "lonely", description: "x", uses: ["nothere"] }, {});`, /does not offer/],
+      [`${IMPORTS}export default defineKit({ name: "selfish", description: "x", uses: ["selfish"] }, {});`, /cannot use itself/],
+      [`${IMPORTS}export default defineKit({ name: "sneaky", description: "x" }, { a: action({ doc: "d", args: z.object({}), run: () => globalThis.constructor.constructor("return process")() }) });`, /escape audit/],
     ];
     const offered = (name: string) => name === "move" || name === "dig";
     for (const [source, pattern] of rejects) {
@@ -149,7 +225,7 @@ describe("KitLibrary", () => {
     const problems: { file: string; error: string }[] = [];
     const lib = library(dir, problems);
     const writes = (name: string, uses: readonly string[]) =>
-      `export default defineKit({ name: "${name}", description: "chain", uses: [${uses.map((u) => `"${u}"`).join(", ")}], actions: {} });`;
+      `${IMPORTS}export default defineKit({ name: "${name}", description: "chain", uses: [${uses.map((u) => `"${u}"`).join(", ")}] }, {});`;
     await writeFile(path.join(dir, "aaa.ts"), writes("aaa", ["bbb", "move"]));
     await writeFile(path.join(dir, "bbb.ts"), writes("bbb", ["move"]));
     await bump();
@@ -200,15 +276,31 @@ describe("agent kits in a host", () => {
     assert.throws(() => kit.woodcutter!.chop!({ times: "many" }), /kit\.woodcutter\.chop arguments/);
   });
 
+  it("fail a call whose result violates the declared returns, naming the action", async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "minebot-agentkits-"));
+    const lib = library(dir);
+    await lib.save(
+      `${IMPORTS}export default defineKit({ name: "liar", description: "returns the wrong shape" }, {\n` +
+        `  honest: action({ doc: "d", args: z.object({}), returns: z.object({ n: z.number() }), run: () => ({ n: 1 }) }),\n` +
+        `  lies: action({ doc: "d", args: z.object({}), returns: z.object({ n: z.number() }), run: async () => ({ n: "one" } as unknown as { n: number }) }),\n` +
+        `});`,
+      () => true,
+    );
+    const host = hostOver(lib, dir);
+    const kit = host.api({ log: () => {}, sleep: () => Promise.resolve(), signal: new AbortController().signal, on: () => {} }, {} as Parameters<KitHost["api"]>[1]);
+    assert.deepEqual(kit.liar!.honest!({}), { n: 1 });
+    await assert.rejects(async () => kit.liar!.lies!({}), /kit\.liar\.lies returned a value that does not match its returns schema[\s\S]*returns: \{ n: number \}/);
+  });
+
   it("save against the daemon's resolvable predicate", async () => {
     const dir = mkdtempSync(path.join(tmpdir(), "minebot-agentkits-"));
     const lib = library(dir);
     const offered = new Set(["move", "dig", "sense"]);
     await assert.rejects(
-      () => lib.save(`export default defineKit({ name: "far", description: "x", uses: ["craft"], actions: {} });`, (name) => offered.has(name)),
+      () => lib.save(`${IMPORTS}export default defineKit({ name: "far", description: "x", uses: ["craft"] }, {});`, (name) => offered.has(name)),
       /uses "craft", which this body does not offer/,
     );
-    const kit = await lib.save(`export default defineKit({ name: "near", description: "x", uses: ["move"], actions: {} });`, (name) => offered.has(name));
+    const kit = await lib.save(`${IMPORTS}export default defineKit({ name: "near", description: "x", uses: ["move"] }, {});`, (name) => offered.has(name));
     assert.equal(kit.name, "near");
   });
 
@@ -217,7 +309,7 @@ describe("agent kits in a host", () => {
     const lib = library(dir);
     await lib.save(GOOD_SOURCE, () => true);
     const second = await lib.save(
-      `export default defineKit({ name: "haul", description: "x", uses: ["woodcutter", "move"], actions: {} });`,
+      `${IMPORTS}export default defineKit({ name: "haul", description: "x", uses: ["woodcutter", "move"] }, {});`,
       (name) => name === "woodcutter" || name === "move",
     );
     assert.equal(second.name, "haul");
@@ -238,8 +330,8 @@ describe("kit check", () => {
     const lib = library(dir);
     assert.equal(lib.check(GOOD_SOURCE, () => true).name, "woodcutter");
     assert.throws(() => lib.check(GOOD_SOURCE, () => false), /does not offer/);
-    assert.throws(() => lib.check(`export default defineKit({ name: "move", description: "x", actions: {} });`, () => true), /taken by a built-in/);
-    assert.throws(() => lib.check(`export default defineKit({ name: "a", description: "x", actions: { b: action({ doc: "d", args: z.object({}), run: () => process.exit() }) } });`, () => true), /escape audit/);
+    assert.throws(() => lib.check(`${IMPORTS}export default defineKit({ name: "move", description: "x" }, {});`, () => true), /taken by a built-in/);
+    assert.throws(() => lib.check(`${IMPORTS}export default defineKit({ name: "a", description: "x" }, { b: action({ doc: "d", args: z.object({}), run: () => process.exit() }) });`, () => true), /escape audit/);
     assert.deepEqual(readdirSync(dir), []);
   });
 });
@@ -362,18 +454,17 @@ describe("kit versions", () => {
   });
 });
 
-const COUNTER_SOURCE = `
-export default defineKit({
-  name: "counter",
-  description: "Counts how it is called and fails on demand.",
-  actions: {
+const COUNTER_SOURCE = `${IMPORTS}
+export default defineKit(
+  { name: "counter", description: "Counts how it is called and fails on demand." },
+  {
     ok: action({ doc: "Returns 1.", args: z.object({}), run: () => 1 }),
     later: action({ doc: "Returns 2 after a tick.", args: z.object({}), run: async () => 2 }),
     fail: action({ doc: "Throws.", args: z.object({ why: z.string().default("because") }), run: (_ctx, { why }) => { throw new Error(why + "\\nsecond line"); } }),
     failLater: action({ doc: "Rejects.", args: z.object({}), run: async () => { throw new Error("late"); } }),
     remember: action({ doc: "Stores a value in the kit's store and returns the store's keys.", args: z.object({}), run: (ctx) => { ctx.store.set("seen", true); return ctx.store.keys(); } }),
   },
-});
+);
 `;
 
 const fakeScope = { log: () => {}, sleep: () => Promise.resolve(), signal: new AbortController().signal, on: () => {} };
@@ -512,29 +603,29 @@ describe("kit search", () => {
 });
 
 const TINY = (name: string, description: string) =>
-  `export default defineKit({ name: "${name}", description: "${description}", actions: { a: action({ doc: "d", args: z.object({}), run: () => 1 }) } });`;
+  `${IMPORTS}export default defineKit({ name: "${name}", description: "${description}" }, { a: action({ doc: "d", args: z.object({}), run: () => 1 }) });`;
 
 describe("kit try with used kits", () => {
   it("gives the kits a trial calls throwaway stores and counts none of their calls", async () => {
     const dir = mkdtempSync(path.join(tmpdir(), "minebot-agentkits-"));
     const lib = library(path.join(dir, "agent-kits"));
     await lib.save(
-      `export default defineKit({ name: "base", description: "Saved.", actions: {
+      `${IMPORTS}export default defineKit({ name: "base", description: "Saved." }, {
         remember: action({ doc: "Stores.", args: z.object({}), run: (ctx) => { ctx.store.set("seen", true); return ctx.store.keys(); } }),
         strict: action({ doc: "Needs n.", args: z.object({ n: z.number() }), run: () => 1 }),
-      } });`,
+      });`,
       () => true,
     );
     const stats = new KitStats(new JsonStore(path.join(dir, "kit-stats.json")));
     const host = new KitHost({ kits: lib.list(), stores: (name) => new JsonStore(path.join(dir, "stores", `${name}.json`)), stats });
     const tried = lib.check(
-      `export default defineKit({ name: "exp", description: "Tried.", uses: ["base"], actions: {
+      `${IMPORTS}export default defineKit({ name: "exp", description: "Tried.", uses: ["base"] }, {
         go: action({ doc: "Calls base.", args: z.object({}), run: async (ctx) => {
           const first = ctx.kits.base.remember({});
           try { ctx.kits.base.strict({}); } catch {}
           return [first, ctx.kits.base.remember({})];
         } }),
-      } });`,
+      });`,
       () => true,
     );
     // The two calls share one throwaway store within the trial.

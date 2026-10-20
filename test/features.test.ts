@@ -84,7 +84,8 @@ describe("tier visibility in the program reference", () => {
 });
 
 describe("tier visibility on a running body", () => {
-  const CLI = path.join(import.meta.dirname, "..", "src", "cli.ts");
+  /** The node arguments that run the CLI: this run's own flags (`--conditions=minebot-sdk:source`) carry over, so the CLI resolves `minebot-sdk/kit` to the source tree too. */
+  const CLI = [...process.execArgv, path.join(import.meta.dirname, "..", "src", "cli.ts")];
   const runtime = mkdtempSync(path.join(tmpdir(), "minebot-features-"));
   const children: ChildProcess[] = [];
 
@@ -94,7 +95,7 @@ describe("tier visibility on a running body", () => {
     const stateDir = path.join(runtime, `${name}-state`);
     const child = spawn(
       "node",
-      [CLI, "body", "--bot", name, "--host", "127.0.0.1", "--port", "1", "--state", stateDir, "--lessons", path.join(stateDir, "lessons"), "--lock-kits", ...flags],
+      [...CLI, "body", "--bot", name, "--host", "127.0.0.1", "--port", "1", "--state", stateDir, "--lessons", path.join(stateDir, "lessons"), "--lock-kits", ...flags],
       { env, stdio: "ignore" },
     );
     children.push(child);
@@ -107,7 +108,7 @@ describe("tier visibility on a running body", () => {
   async function cli(client: BodyClient, ...args: string[]): Promise<{ code: number; out: string }> {
     const env = { ...process.env, MINEBOT_RUNTIME_DIR: runtime, MINEBOT_URL: client.endpoint.url, MINEBOT_TOKEN: client.endpoint.token };
     try {
-      const { stdout, stderr } = await exec("node", [CLI, ...args], { env });
+      const { stdout, stderr } = await exec("node", [...CLI, ...args], { env });
       return { code: 0, out: stdout + stderr };
     } catch (err) {
       const failed = err as { code: number; stdout: string; stderr: string };

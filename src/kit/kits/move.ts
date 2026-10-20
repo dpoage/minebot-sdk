@@ -1,6 +1,5 @@
 // The move kit: walking with the pathfinder. The primitive every routine kit builds on.
-import { z } from "zod";
-import { action, defineKit, goals, type KitContext, Movements, Position, toVec3, type Vec3 } from "../kit.ts";
+import { action, defineKit, goals, type KitContext, Movements, Point, Position, toVec3, Vec3, z } from "minebot-sdk/kit";
 
 const DEFAULT_GOTO_TIMEOUT_MS = 60_000;
 const STUCK_RESETS_BEFORE_FALLBACK = 2;
@@ -36,11 +35,9 @@ export async function walkTo(ctx: KitContext, target: Vec3, range: number, timeo
   return ctx.bot.entity.position.floored();
 }
 
-export const move = defineKit({
-  name: "move",
-  description: "Walk the player with the pathfinder, with a time limit and a fallback for stuck paths.",
-  uses: [],
-  actions: {
+export const move = defineKit(
+  { name: "move", description: "Walk the player with the pathfinder, with a time limit and a fallback for stuck paths." },
+  {
     to: action({
       doc: "Walk within `range` blocks of `position` ({x,y,z} or [x,y,z]) and stop. Gives up (and stops pathfinding) after `timeoutMs`. Returns where the player then stands.",
       args: z.object({
@@ -48,15 +45,17 @@ export const move = defineKit({
         range: z.number().min(0).default(1),
         timeoutMs: z.number().int().positive().default(DEFAULT_GOTO_TIMEOUT_MS),
       }),
+      returns: Point,
       run: (ctx, { position, range, timeoutMs }) => walkTo(ctx, toVec3(position).floored(), range, timeoutMs),
     }),
     stop: action({
-      doc: "Stop pathfinding and clear the movement keys. Returns nothing.",
+      doc: "Stop pathfinding and clear the movement keys.",
       args: z.object({}),
+      returns: z.void(),
       run: (ctx) => {
         ctx.bot.pathfinder.setGoal(null);
         ctx.bot.clearControlStates();
       },
     }),
   },
-});
+);

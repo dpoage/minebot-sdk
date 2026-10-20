@@ -394,6 +394,12 @@ export async function startDaemon(options: DaemonOptions): Promise<{ endpoint: E
     },
     {
       method: "GET",
+      path: "/kits/schemas",
+      capability: "kits",
+      handler: () => (syncKits(), { kits: host.schemas() }),
+    },
+    {
+      method: "GET",
       path: "/kits/source",
       capability: "agentKits",
       handler: async ({ url }) => {

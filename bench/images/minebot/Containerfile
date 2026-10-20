@@ -11,7 +11,7 @@ COPY src ./src
 COPY bench/verify ./bench/verify
 COPY wiki ./wiki
 
-RUN printf '#!/bin/sh\nexec node /opt/minebot/src/cli.ts "$@"\n' > /usr/local/bin/minebot \
+RUN printf '#!/bin/sh\nexec node --conditions=minebot-sdk:source /opt/minebot/src/cli.ts "$@"\n' > /usr/local/bin/minebot \
  && chmod +x /usr/local/bin/minebot
 
 WORKDIR /root

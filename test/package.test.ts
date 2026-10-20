@@ -1,0 +1,40 @@
+import assert from "node:assert/strict";
+import { existsSync, readFileSync } from "node:fs";
+import path from "node:path";
+import { describe, it } from "node:test";
+import { BUILTIN_KIT_DIR } from "../src/kit/index.ts";
+import { PACKAGE_ROOT } from "../src/package.ts";
+import { WIKI_DIR } from "../src/wiki/wiki.ts";
+
+const ROOT = path.join(import.meta.dirname, "..");
+const manifest = JSON.parse(readFileSync(path.join(ROOT, "package.json"), "utf8")) as {
+  name: string;
+  private?: boolean;
+  bin: Record<string, string>;
+  files: string[];
+  exports: Record<string, string | { "minebot-sdk:source": string; types: string; default: string }>;
+};
+
+describe("package layout", () => {
+  it("publishes an entry for each public specifier, as source, types, and build", () => {
+    assert.equal(manifest.private, undefined);
+    assert.deepEqual(Object.keys(manifest.exports).sort(), ["./client", "./kit", "./package.json", "./testing"]);
+    for (const [key, entry] of Object.entries(manifest.exports)) {
+      if (typeof entry === "string") continue;
+      const stem = entry["minebot-sdk:source"].replace(/^\.\/src\//, "").replace(/\.ts$/, "");
+      assert.ok(existsSync(path.join(ROOT, entry["minebot-sdk:source"])), `${key}: ${entry["minebot-sdk:source"]} is missing`);
+      assert.deepEqual(entry, { "minebot-sdk:source": `./src/${stem}.ts`, types: `./dist/${stem}.d.ts`, default: `./dist/${stem}.js` }, key);
+      // Conditions match in order: the `minebot-sdk:source` condition has to come before the types it would otherwise lose to.
+      assert.deepEqual(Object.keys(entry), ["minebot-sdk:source", "types", "default"], key);
+    }
+  });
+
+  it("runs the built CLI and ships the assets that the runtime reads", () => {
+    assert.equal(manifest.bin.minebot, "dist/cli.js");
+    assert.ok(manifest.files.includes("dist") && manifest.files.includes("src/kit/kits") && manifest.files.includes("wiki"));
+    assert.equal(PACKAGE_ROOT, ROOT + path.sep);
+    assert.equal(BUILTIN_KIT_DIR, path.join(ROOT, "src/kit/kits"));
+    assert.ok(existsSync(path.join(BUILTIN_KIT_DIR, "move.ts")));
+    assert.ok(existsSync(path.join(WIKI_DIR, "README.md")));
+  });
+});

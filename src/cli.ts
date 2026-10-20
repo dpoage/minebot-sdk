@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // The `minebot` command: a thin client. Everything heavy loads on demand — the body for
 // `minebot body`, the MCP server for `minebot mcp` — so a client-only install works without them.
-import { readdir, readFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { stripTypeScriptTypes } from "node:module";
 import path from "node:path";
 import { text } from "node:stream/consumers";
 import { parseArgs } from "node:util";
@@ -9,6 +10,8 @@ import { BodyClient } from "./client/client.ts";
 import { formatKitHits, formatKits, formatKitVersions, formatRun, formatStatus, formatTriggers } from "./client/render.ts";
 import { HAS_BODY, usageFor } from "./client/usage.ts";
 import { BODY_FLAG_OPTIONS, OPERATOR_FLAG_HELP } from "./client/body-flags.ts";
+import { ENV_FILE, initWorkspace } from "./client/init.ts";
+import { generateEnv } from "./client/types-gen.ts";
 import { CAPABILITY_GATES, DEFAULT_SERVER_HOST, DEFAULT_SERVER_PORT, type BodyFeatures, RUNTIME_DIR } from "./protocol/index.ts";
 
 const { values: opts, positionals } = parseArgs({
@@ -26,6 +29,7 @@ const { values: opts, positionals } = parseArgs({
     match: { type: "string" },
     action: { type: "string" },
     args: { type: "string" },
+    out: { type: "string" },
     on: { type: "string" },
     when: { type: "string" },
     cooldown: { type: "string" },
@@ -181,7 +185,9 @@ async function main(): Promise<number> {
     }
     case "run": {
       const file = rest[0];
-      const code = !file || file === "-" ? await text(process.stdin) : await readFile(file, "utf8");
+      const source = !file || file === "-" ? await text(process.stdin) : await readFile(file, "utf8");
+      // A .ts program is checked by tsc in a workspace; the body runs JavaScript, so its types come off here.
+      const code = file?.endsWith(".ts") ? stripTypeScriptTypes(source) : source;
       const client = await BodyClient.connect(opts.bot);
       const run = await client.run(code, opts.timeout === undefined ? undefined : Number(opts.timeout));
       console.log(formatRun(run));
@@ -210,6 +216,28 @@ async function main(): Promise<number> {
       const message = rest.join(" ");
       if (!message) throw new Error("chat needs a message");
       print(await (await BodyClient.connect(opts.bot)).chat(message));
+      return 0;
+    }
+    case "init": {
+      const dir = rest[0] ?? ".";
+      const written = await initWorkspace(dir);
+      for (const file of written) console.log(`wrote ${path.join(dir, file)}`);
+      if (written.length === 0) console.log(`${dir} already has every workspace file`);
+      console.log(`\nNext: cd ${dir} && npm install, run a body with --agent-kits ./kits, then \`minebot types --out ${ENV_FILE}\` and \`npx tsc\`.`);
+      return 0;
+    }
+    case "types": {
+      const client = await BodyClient.connect(opts.bot);
+      const bodyFeatures = await client.features();
+      // Kits are an optional capability: a body without them has no schemas route, and the globals are typed without them.
+      const kits = CAPABILITY_GATES.kits(bodyFeatures) ? (await client.kitSchemas()).kits : [];
+      const env = generateEnv(bodyFeatures, kits);
+      if (opts.out === undefined) process.stdout.write(env);
+      else {
+        await mkdir(path.dirname(path.resolve(opts.out)), { recursive: true });
+        await writeFile(opts.out, env);
+        console.error(`wrote ${opts.out}`);
+      }
       return 0;
     }
     case "kits": {

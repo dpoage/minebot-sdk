@@ -3,6 +3,7 @@
     "target": "esnext",
     "module": "nodenext",
     "moduleResolution": "nodenext",
+    "customConditions": ["minebot-sdk:source"],
     "types": ["node"],
     "strict": true,
     "noEmit": true,

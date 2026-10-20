@@ -21,7 +21,9 @@ flowchart LR
   E[Bench: tasks, verifier] -.-> B
 ```
 
-One module map holds the boundaries: `src/protocol/` is the whole wire contract (zod schemas for every request, the response types, the endpoint file, and the capability table); `src/mc/` holds neutral Mineflayer helpers; `src/milestones/` is pure grading; `src/program/` runs programs; `src/kit/` is the kit framework and the kits; `src/body/` is the body and its daemon; `src/wiki/` serves pages; `src/client/` is the CLI, the MCP server, and the renderers. The client loads only `src/protocol/` and what the protocol itself needs (`src/milestones/` and `src/mc/names.ts`). A test resolves the runtime import closure of the client and of the verifier, fails when either leaves its set, and checks that the image copy lists match it.
+One module map holds the boundaries: `src/protocol/` is the whole wire contract (zod schemas for every request, the response types, the endpoint file, and the capability table); `src/mc/` holds neutral Mineflayer helpers; `src/milestones/` is pure grading; `src/program/` runs programs; `src/kit/` is the kit framework and the kits; `src/body/` is the body and its daemon; `src/wiki/` serves pages; `src/client/` is the CLI, the MCP server, and the renderers. The client loads only `src/protocol/` and what the protocol itself needs (`src/milestones/` and `src/mc/names.ts`) plus `src/package.ts`, which `minebot init` uses to find the package manifest. A test resolves the runtime import closure of the client and of the verifier, fails when either leaves its set, and checks that the image copy lists match it.
+
+The npm package `minebot-sdk` is the authoring library plus the CLI; the body stays a separate runtime process that the CLI starts and that every other layer reaches over HTTP. Three entry points are public: `minebot-sdk/kit` (`src/kit/public.ts`, the one surface that built-in and agent kits write against), `minebot-sdk/client` (`src/client/public.ts`, the typed HTTP client and the wire types, with no CLI or MCP code), and `minebot-sdk/testing` (`src/testing/index.ts`, the kit test harness). Each export has a package-scoped `minebot-sdk:source` condition that resolves to the TypeScript under `src/`, and a default that resolves to the compiled `dist/`. The repository runs with `--conditions=minebot-sdk:source` and a published package without it, so a specifier such as `minebot-sdk/kit` means the same module in both. A test that resolves import closures follows these self-references to their `source` files. Kit sources (`src/kit/kits/`) and the wiki ship beside `dist/`, found through `PACKAGE_ROOT` (`src/package.ts`), so `kits source` and the default wiki directory work from either layout.
 
 ## The boundary between the SDK and a harness
 
@@ -47,30 +49,33 @@ State that must outlive a harness session belongs to the body. The body is the o
 A kit is a composable library of typed actions. One authoring model covers the built-in kits and the kits agents write: every kit is a file that declares itself with `defineKit`, and every action with `action`.
 
 ```ts
-export default defineKit({
-  name: "woodcutter",
-  description: "Chops a tree and walks back to base.",
-  uses: ["move", "dig"],
-  actions: {
+import { action, defineKit, Point, z } from "minebot-sdk/kit";
+
+export default defineKit(
+  { name: "woodcutter", description: "Chops the nearest logs and reports where the player ends up.", uses: ["move", "sense", "dig"] },
+  {
     chop: action({
-      doc: "Digs the log at head height, then returns where the player stands.",
+      doc: "Walks to each of the `times` nearest logs within 16 blocks and digs it. Returns how many it dug and where the player then stands.",
       args: z.object({ times: z.number().int().positive().default(1) }),
+      returns: z.object({ chopped: z.number(), standingAt: Point }),
       run: async (ctx, { times }) => {
-        for (let i = 0; i < times; i++) {
-          const head = ctx.bot.entity.position.offset(0, 1, 0);
-          await ctx.kits.dig.dig({ at: { x: head.x, y: head.y, z: head.z } });
+        const logs = await ctx.kits.sense.find({ blocks: "*_log", radius: 16, count: times });
+        for (const log of logs) {
+          await ctx.kits.move.to({ position: log, range: 3 });
+          await ctx.kits.dig.dig({ at: log });
         }
-        return ctx.kits.move.to({ position: [0, 64, 0] });
+        const here = ctx.bot.entity.position.floored();
+        return { chopped: logs.length, standingAt: { x: here.x, y: here.y, z: here.z } };
       },
     }),
   },
-});
+);
 ```
 
 ### Units
 
-- **Action**: `action({ doc, args, run })`. `args` is a zod object schema; `doc` says what the action does and returns. Every action takes one object argument, validated on every call — nested calls included. A bad call fails with the action's schema in the error.
-- **Kit**: `defineKit({ name, description, uses, actions })`. `uses` names the kits this kit calls; nothing else is reachable.
+- **Action**: `action({ doc, args, returns, run })`. `args` is a zod object schema; `doc` says what the action does. Every action takes one object argument, validated on every call — nested calls included. A bad call fails with the action's schema in the error. `returns` is a zod schema of the result: `run` must return a value that fits it (checked by the type system), the result is validated on every call, and a mismatch fails the call naming `kit.<kit>.<action>` and the schema. Callers get the validated value, typed. Every built-in action declares `returns`.
+- **Kit**: `defineKit({ name, description, uses }, actions)`. `uses` names the kits this kit calls; nothing else is reachable. It is the first argument, apart from the actions, so that `ctx.kits` in every action is typed from it.
 - **`ctx`**: what `run` receives. It holds `bot`, `log`, `sleep`, `signal`, and `on` from the calling program (so cancellation propagates into nested actions), a time-limit helper `within`, the kits named in `uses` as `ctx.kits.<kit>.<action>({ ... })`, and `store` — persistent JSON scoped to this kit alone.
 
 ### Layers
@@ -111,13 +116,13 @@ Programs call actions as `kit.<kit>.<action>({ ... })`, so no two kits can colli
 
 The operator decides which kits a body **offers** with `--kits <a,b>`; without the flag, every built-in kit is offered, plus saved agent kits. The agent picks the **active** set among the offered kits with `kits.use(...)`; a call to an offered but inactive kit names the kit to activate. `--lock-kits` fixes the active set: the other kits disappear from every surface, and a program finds no `kits.use`. On a locked body a saved kit is offered but not active; it joins the active set on the next start without the lock.
 
-Docs come from the kits themselves: `kits.docs()` (and `minebot kits docs`) render each action's call shape, argument types, and defaults from its zod schema, next to its `doc`.
+Docs come from the kits themselves: `kits.docs()` (and `minebot kits docs`) render each action's call shape, argument types and defaults, and return shape from its zod schemas, next to its `doc`.
 
 Search and statistics help an agent choose. `kits.search(query, limit?)` ranks the kits and actions the body lists by name, kit description, and action doc (`minebot kits search`, `kit_search`, `GET /kits/search`). The framework counts every call of every action, nested calls included — returned, failed, and the message of the last failure — in `kit-stats.json` in the state directory. The counts are per body and survive restarts; `kits.available()` and `minebot kits` show them, so an agent prefers the actions that work.
 
 ### Agent kits
 
-An agent saves a kit as TypeScript source: `kits.save(source)` in a program, `minebot kits save [file]` in the CLI, `kit_save { source }` over MCP, or `POST /kits/save` over HTTP. The source uses the shape above with `defineKit`, `action`, and `z` as globals — no imports; a source that imports or requires is rejected. Types are stripped with node's own stripper.
+An agent saves a kit as TypeScript source: `kits.save(source)` in a program, `minebot kits save [file]` in the CLI, `kit_save { source }` over MCP, or `POST /kits/save` over HTTP. The source uses the shape above, with one import from `minebot-sdk/kit`: the body binds the named imports to the real module's values and injects nothing else. `import type` from any specifier is erased; every other import, `require`, `import()`, and `import.meta` is rejected, and so is the old form with `defineKit`, `action`, and `z` as globals (the error names the import line to add). The scan for these skips comments, strings, and templates, and `import()` is blocked again when the kit runs, so a spelling the scan misses still cannot load a module. The source exports exactly one kit: `export default defineKit(...)` or `export const <name> = defineKit(...)`, the form the built-ins use; other `export const` and `export function` declarations are ignored, so `kits.source("move")` can be saved under a new name unchanged. Types are stripped with node's own stripper; the body does not type-check a save, a workspace's `tsc` does (see Authoring workspace).
 
 Saving validates before it writes, and writes atomically: the source must compile, pass the escape audit, use only kits this body offers, and not take a built-in kit's name. Nothing is written when the source is rejected. A saved kit is offered and active at once. `kits.remove(name)` deletes it; `kits.source(name)` prints any kit's source, starting point included.
 
@@ -126,6 +131,22 @@ Trying comes before saving. `kits.try(source, { action, args })` (`minebot kits 
 Saving over a kit keeps the old source as a numbered version: `.history/<kit>/<n>.ts` and `<n>.json` (`version`, `savedAt`, `savedBy` — the body's name) inside the agent-kit directory. A save of the source that is already saved adds no version. `kits.versions(name)` lists the versions and marks the current one; `kits.revert(name, version)` saves an earlier version again as a new version, validated like any save, so the history only grows. A removed kit keeps its history. Saving a different source for a kit, and removing it, resets that kit's counts, whichever body did it.
 
 Several bodies may share the agent-kit directory (`--agent-kits <dir>`, default the state directory's `agent-kits/`); each re-reads it when it changes, so a kit one body saves works on the others without a restart, and the history is shared the same way: a version's number is claimed with an exclusive file create, so two bodies saving at once get different numbers. A bad file on disk never stops a body: it is skipped and reported as a `kit_error` event.
+
+### Authoring workspace
+
+`minebot init [dir]` scaffolds a workspace: `package.json` (dependency `minebot-sdk`, dev dependency `typescript`), a strict `tsconfig.json` that includes `kits/`, `programs/`, `test/`, and the generated declarations, an example kit, an example program, an example kit test (`test/hello.test.ts`, below), and a README. The body is not part of the workspace; it runs as a separate process with `--agent-kits ./kits`, so saving a kit file reloads it there.
+
+`minebot types [--out <file>]` generates the declarations. It asks the body for the JSON Schema of every listed kit action (`GET /kits/schemas`, only on a body that offers kits, from zod 4's `toJSONSchema`: the argument as callers write it, the result as callers read it) and prints TypeScript for them. The file is a module with two parts: `declare module "minebot-sdk/kit" { interface KitRegistry { ... } }` for the kits the package does not ship, and `declare global { ... }` for the program globals. The globals follow the capability table (`CAPABILITY_GATES`): no `kit` or `kits` without kits, no `wiki.addLesson` without lessons, no `kits.use` on a locked body, and so on. `kit` is typed against `KitRegistry` for the active kits. Output is sorted and stable. A schema the printer cannot express becomes `unknown`.
+
+Programs checked this way are `.ts` files: `minebot run file.ts` strips the types and sends JavaScript. They are function bodies, so they use top-level `await` (the tsconfig sets `moduleDetection: "force"`) and never a top-level `return`.
+
+### Testing kits
+
+`minebot-sdk/testing` (`src/testing/index.ts`) is the kit test harness. `createKitHarness({ kits, inventory, blocks, entities, position, time, ... })` builds the real `KitHost` around a fake Mineflayer bot, so an action runs through the same code as in a body: arguments and results are validated, `ctx.kits` offers only the kits in `uses`, each kit gets an in-memory store, and the active set applies. `h.call("kit.action", args)` runs one action; `h.kit` is the typed `kit` object a program sees; `h.calls` records every call, nested ones with the caller's arguments; `h.abort()` fires the program's signal.
+
+The bot is built on the registry that `prismarine-registry` loads for `MC_VERSION`, with real prismarine blocks, items, entities, and recipes. It implements a slice of Mineflayer on purpose: a block world over a ground layer (`blockAt`, `findBlock`, `findBlocks`, `dig` with drops, `placeBlock`), an inventory with Mineflayer's slot layout (`equip`, `toss`, crafting through the real recipes), entities and the day clock, furnaces that cook on the clock, and a pathfinder whose `goto` and `setGoal` teleport to the nearest standable spot that satisfies the goal. The harness tests decision logic, not physics. Every other Mineflayer member is wrapped so that calling it throws `UnsupportedApiError`: `not supported by minebot-sdk/testing: bot.attack`. A kit never continues with an `undefined` from an API the harness does not model, and a missing capability shows up as a named failure, not a wrong answer.
+
+The harness imports the framework and the shipped kits from the package itself, so it ships in `dist/testing/` and runs the same from a checkout and from an installed package. The repository's own kit tests use it where they exercise a kit (`crafter.make` from seven logs, smelting, the framework's call, signal, and uses tests); helper-level tests of pure functions stay as they are.
 
 ## Triggers
 

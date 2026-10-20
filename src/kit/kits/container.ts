@@ -1,7 +1,6 @@
 // The container kit: looking into chests, barrels, and shulker boxes, and moving items between
 // them and the inventory.
-import { z } from "zod";
-import { action, type Block, type Chest, defineKit, goals, type Item, type KitContext, NamePattern, nameMatcher, Position, toVec3 } from "../kit.ts";
+import { action, type Block, type Chest, defineKit, goals, type Item, type KitContext, nameMatcher, NamePattern, Position, toVec3, z } from "minebot-sdk/kit";
 
 /** Survival players interact with blocks up to 4.5 blocks from the eyes. */
 const REACH = 4.5;
@@ -110,19 +109,19 @@ async function transfer(ctx: KitContext, at: Position, pattern: NamePattern, cou
   return { moved, total, full };
 }
 
-export const container = defineKit({
-  name: "container",
-  description: "Look into chests, barrels, and shulker boxes, and move items between them and the inventory.",
-  uses: [],
-  actions: {
+export const container = defineKit(
+  { name: "container", description: "Look into chests, barrels, and shulker boxes, and move items between them and the inventory." },
+  {
     list: action({
       doc: "What the chest, barrel, shulker box, hopper, dispenser, or dropper at `at` ({x,y,z} or [x,y,z]) holds, walking next to it first. Returns { block, items: { name: count }, emptySlots }.",
       args: z.object({ at: Position }),
+      returns: z.object({ block: z.string(), items: z.record(z.string(), z.number()), emptySlots: z.number() }),
       run: (ctx, { at }) => listContainer(ctx, at),
     }),
     deposit: action({
       doc: "Put inventory items matching `items` ('cobblestone', '*_log', or a list) into the container at `at`, up to `count` in total (default all that match), as many as fit. Returns { deposited: { name: count }, total, full }; `full` is true when the container had no room for some of it. Fails when nothing in the inventory matches.",
       args: z.object({ at: Position, items: NamePattern, count: z.number().int().positive().optional() }),
+      returns: z.object({ deposited: z.record(z.string(), z.number()), total: z.number(), full: z.boolean() }),
       run: async (ctx, { at, items, count }) => {
         const { moved, total, full } = await transfer(ctx, at, items, count, "inventory");
         return { deposited: moved, total, full };
@@ -131,10 +130,11 @@ export const container = defineKit({
     withdraw: action({
       doc: "Take items matching `items` ('iron_ingot', '*_planks', or a list) out of the container at `at` into the inventory, up to `count` in total (default all that match), as many as fit. Returns { withdrawn: { name: count }, total, full }; `full` is true when the inventory had no room for some of it. Fails when the container holds nothing that matches.",
       args: z.object({ at: Position, items: NamePattern, count: z.number().int().positive().optional() }),
+      returns: z.object({ withdrawn: z.record(z.string(), z.number()), total: z.number(), full: z.boolean() }),
       run: async (ctx, { at, items, count }) => {
         const { moved, total, full } = await transfer(ctx, at, items, count, "container");
         return { withdrawn: moved, total, full };
       },
     }),
   },
-});
+);

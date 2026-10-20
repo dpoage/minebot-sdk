@@ -4,93 +4,116 @@
 // agent's own kits are. This module imports no body code; the composition root injects the
 // catalog, the per-kit stores, and the bot.
 import type { Bot } from "mineflayer";
-import pathfinderPkg from "mineflayer-pathfinder";
 import { z } from "zod";
 import type { Within } from "../mc/within.ts";
-import { biomeAt } from "../mc/biome.ts";
 import { within } from "../mc/within.ts";
-import { isHostile } from "../mc/hostile.ts";
-import { NamePattern, nameMatcher } from "../mc/names.ts";
-import { isAir, type SkyView, skyAbove } from "../mc/sky.ts";
-import { burnTicks, pickFuel, SMELT_TICKS, smeltInputs, smeltOutput, withoutReserved } from "../mc/smelting.ts";
-import { Position, toVec3 } from "../mc/position.ts";
-import { KitName, type KitInfo, type KitSearchHit } from "../protocol/index.ts";
+import { KitName, type KitInfo, type KitSchema, type KitSearchHit } from "../protocol/index.ts";
 import type { ProgramScope } from "../program/scope.ts";
 import { JsonStore } from "../store.ts";
-import { actionReference, kitReference } from "./doc.ts";
+import { actionReference, kitReference, returnShape } from "./doc.ts";
 import { documentsOf, rank } from "./search.ts";
+import type { KitRegistry } from "./registry.ts";
 import type { KitStats } from "./stats.ts";
 
-// What a kit file may import, beyond zod and vec3: the framework itself. Everything else a kit
-// needs arrives through the action context. `minebot kits source <kit>` shows this working.
-const { goals, Movements } = pathfinderPkg;
-export { goals, Movements };
-export { NamePattern, nameMatcher };
-export { Position, toVec3 };
-export { isAir, skyAbove, type SkyView };
-export { biomeAt };
-export { isHostile };
-export { burnTicks, pickFuel, SMELT_TICKS, smeltInputs, smeltOutput, withoutReserved };
-export { within, type Within };
-export type { Block } from "prismarine-block";
-export type { Chest, Furnace } from "mineflayer";
-export type { Item } from "prismarine-item";
-export type { Entity } from "prismarine-entity";
-export type { Vec3 } from "vec3";
-/** One kit's actions as a caller sees them: `kits.move.to({ ... })`. Only the kits a kit declared in `uses` (or the active kits, for programs) appear. */
+export type { KitRegistry } from "./registry.ts";
+
+/** One kit's actions as a caller sees them when the kit's types are not known: any arguments, an unknown result. */
+export type UntypedKit = Readonly<Record<string, { call(args: unknown): Promise<unknown> }["call"]>>;
+
+/** The kits a program or a host hands out, namespaced: `kit.move.to({ ... })`. The runtime shape; types come from `KitRegistry`. */
 export type KitCalls = Readonly<Record<string, Readonly<Record<string, (args: unknown) => unknown>>>>;
 
+/** The kits a kit declared in `uses`, as `ctx.kits` types them: registered kits fully typed, kits not in the registry loosely. */
+export type KitsOf<Uses extends readonly string[]> = {
+  readonly [K in Uses[number]]: K extends keyof KitRegistry ? KitRegistry[K] : UntypedKit;
+};
+
 /** What a kit action receives: the calling program's scope, the bot, a time limit, the kits this kit uses, and this kit's own store. */
-export interface KitContext extends ProgramScope {
+export interface KitContext<Uses extends readonly string[] = readonly string[]> extends ProgramScope {
   readonly bot: Bot;
   /** Rejects work that runs longer than `ms` after running `cancel`; pathfinding and digging can otherwise wait forever. */
   readonly within: Within;
   /** The kits listed in this kit's `uses`, namespaced: `ctx.kits.move.to({ position })`. */
-  readonly kits: KitCalls;
+  readonly kits: KitsOf<Uses>;
   /** JSON state scoped to this kit alone; it survives programs, kit swaps, and body restarts, and no other kit can read it. */
   readonly store: JsonStore;
 }
 
-export interface KitAction {
+/** What a caller reads from an action that declares `returns`: the schema's output. */
+type Returned<R> = R extends z.ZodType ? z.output<R> : unknown;
+/** What an action's `run` must produce: the schema's input. */
+type Produced<R> = R extends z.ZodType ? z.input<R> : unknown;
+
+export interface KitAction<S extends z.ZodObject = z.ZodObject, R extends z.ZodType | undefined = z.ZodType | undefined, C = KitContext> {
   readonly doc: string;
-  readonly args: z.ZodObject;
-  invoke(ctx: KitContext, args: unknown, label: string): unknown;
+  readonly args: S;
+  /** What a call resolves to; when present, every result is validated against it. */
+  readonly returns: R;
+  invoke(ctx: C, args: unknown, label: string): unknown;
 }
 
 /**
  * Declares one action. Every action takes a single object argument described by a zod object
  * schema; the argument is validated on every call, nested calls included, and a bad call fails
- * with the schema in the error. `doc` documents what the action does and returns.
+ * with the schema in the error. `doc` documents what the action does; `returns` is a zod
+ * schema of what it returns: `run` must return a value that satisfies it, callers get the
+ * validated result typed, and a result that violates it fails the call.
  */
-export function action<S extends z.ZodObject>(spec: {
+export function action<S extends z.ZodObject, R extends z.ZodType | undefined = undefined, C extends KitContext = KitContext>(spec: {
   doc: string;
   args: S;
-  run: (ctx: KitContext, args: z.output<S>) => unknown;
-}): KitAction {
+  returns?: R;
+  run: (ctx: C, args: z.output<S>) => Produced<R> | Promise<Produced<R>>;
+}): KitAction<S, R, C> {
   if (!(spec.args instanceof z.ZodObject)) throw new Error("action args must be a z.object(...)");
+  if (spec.returns !== undefined && !(spec.returns instanceof z.ZodType)) throw new Error("action returns must be a zod schema");
+  const returns = spec.returns;
   return {
     doc: spec.doc,
     args: spec.args,
+    returns: returns as R,
     invoke(ctx, args, label) {
+      const [kitName = "", actionName = ""] = label.split(".");
       // Actions take one object argument; a call with none reads as the empty object, and any
       // argument the schema requires is then reported by the schema itself.
       const parsed = spec.args.safeParse(args ?? {});
       if (!parsed.success) {
-        const [kitName = "", actionName = ""] = label.split(".");
         throw new Error(`kit.${label} arguments: ${z.prettifyError(parsed.error)}\nexpected:\n${actionReference(kitName, actionName, spec.args)}`);
       }
-      return spec.run(ctx, parsed.data);
+      const result = spec.run(ctx, parsed.data);
+      if (returns === undefined) return result;
+      const checked = (value: unknown) => {
+        const valid = returns.safeParse(value);
+        if (!valid.success) {
+          throw new Error(`kit.${label} returned a value that does not match its returns schema: ${z.prettifyError(valid.error)}\nreturns: ${returnShape(returns)}`);
+        }
+        return valid.data;
+      };
+      return isPromiseLike(result) ? result.then(checked) : checked(result);
     },
   };
 }
 
-export interface Kit {
+function isPromiseLike(value: unknown): value is PromiseLike<unknown> {
+  return typeof value === "object" && value !== null && "then" in value && typeof value.then === "function";
+}
+
+/** A declared kit: what `defineKit` returns and what a body offers. */
+export interface Kit<Uses extends readonly string[] = readonly string[], Actions extends Readonly<Record<string, KitAction>> = Readonly<Record<string, KitAction>>> {
   readonly name: string;
   readonly description: string;
   /** Kits whose actions this kit calls; activating this kit activates them. */
-  readonly uses: readonly string[];
-  readonly actions: Readonly<Record<string, KitAction>>;
+  readonly uses: Uses;
+  readonly actions: Actions;
 }
+
+/** The call `kit.<k>.<a>(args)` as callers see it: the arguments as written (`z.input`), optional when the schema requires no key, resolving to the validated result (`z.output` of `returns`, `unknown` without one). */
+export type KitCall<S extends z.ZodObject, R> = {} extends z.input<S> ? (args?: z.input<S>) => Promise<Returned<R>> : (args: z.input<S>) => Promise<Returned<R>>;
+
+/** One kit's actions as callers see them. */
+export type KitApi<K extends Kit> = {
+  readonly [A in keyof K["actions"]]: K["actions"][A] extends KitAction<infer S, infer R, infer _C> ? KitCall<S, R> : never;
+};
 
 /** True for values defineKit produced: the shape a compiled kit must have. */
 export function isKit(value: unknown): value is Kit {
@@ -113,13 +136,20 @@ function isKitAction(value: unknown): value is KitAction {
     typeof value.invoke === "function"
   );
 }
-export function defineKit(spec: {
-  name: string;
-  description: string;
-  /** Kits this kit calls through `ctx.kits`; they activate together with this kit. */
-  uses?: readonly string[];
-  actions: Record<string, unknown>;
-}): Kit {
+/**
+ * Declares a kit: its identity and the kits it calls, then its actions. `uses` is a separate
+ * first argument so that `ctx.kits` inside every action is typed from it: the kits listed
+ * there, and only those, with their arguments and results.
+ */
+export function defineKit<const Uses extends readonly string[] = readonly [], const A extends Readonly<Record<string, KitAction<z.ZodObject, z.ZodType | undefined, KitContext<Uses>>>> = Readonly<Record<string, KitAction>>>(
+  spec: {
+    name: string;
+    description: string;
+    /** Kits this kit calls through `ctx.kits`; they activate together with this kit. */
+    uses?: Uses;
+  },
+  actionSet: A,
+): Kit<Uses, A> {
   const name = KitName.safeParse(spec.name);
   if (!name.success) throw new Error(`kit name "${String(spec.name)}": ${name.error.issues[0]?.message ?? "invalid"}`);
   if (typeof spec.description !== "string" || spec.description.length === 0 || spec.description.length > 400) {
@@ -130,16 +160,16 @@ export function defineKit(spec: {
     throw new Error(`kit "${spec.name}" uses must be a list of kit names`);
   }
   if (new Set(uses).size !== uses.length) throw new Error(`kit "${spec.name}" lists a kit in uses twice`);
-  if (typeof spec.actions !== "object" || spec.actions === null || Array.isArray(spec.actions)) {
-    throw new Error(`kit "${spec.name}" needs an actions object`);
+  if (typeof actionSet !== "object" || actionSet === null || Array.isArray(actionSet)) {
+    throw new Error(`kit "${spec.name}" needs an actions object as the second argument: defineKit({ name, description, uses }, { actionName: action({ ... }) })`);
   }
   const actions: Record<string, KitAction> = {};
-  for (const [name, value] of Object.entries(spec.actions)) {
+  for (const [name, value] of Object.entries(actionSet)) {
     if (!ACTION_NAME_PATTERN.test(name)) throw new Error(`kit "${spec.name}" action name "${name}" must match ${ACTION_NAME_PATTERN}`);
-    if (!isKitAction(value)) throw new Error(`kit "${spec.name}" action "${name}" must be declared with action({ doc, args, run })`);
+    if (!isKitAction(value)) throw new Error(`kit "${spec.name}" action "${name}" must be declared with action({ doc, args, returns, run })`);
     actions[name] = value;
   }
-  return Object.freeze({ name: spec.name, description: spec.description, uses: Object.freeze([...uses]), actions: Object.freeze(actions) });
+  return Object.freeze({ name: spec.name, description: spec.description, uses: Object.freeze([...uses]), actions: Object.freeze(actions) }) as unknown as Kit<Uses, A>;
 }
 
 /** The throwaway store of one kit in a trial: created on first use, shared by every call of that kit within the trial, never written to disk. */
@@ -308,6 +338,27 @@ export class KitHost {
     return selected.map((name) => kitReference(this.#kits.get(name)!)).join("\n\n");
   }
 
+  /** The JSON Schemas of every listed kit's actions: arguments as callers write them, results as callers read them. Declarations for `minebot types` derive from these. */
+  schemas(): KitSchema[] {
+    const json = (schema: unknown, io: "input" | "output"): Record<string, unknown> =>
+      z.toJSONSchema(schema as z.ZodType, { io, unrepresentable: "any" });
+    return [...this.#kits.values()]
+      .filter((kit) => this.#listed(kit.name))
+      .map((kit) => ({
+        name: kit.name,
+        description: kit.description,
+        uses: [...kit.uses],
+        active: this.#active.includes(kit.name),
+        agent: this.#agent(kit.name),
+        actions: Object.fromEntries(
+          Object.entries(kit.actions).map(([name, act]) => {
+            const returns = "returns" in act ? act.returns : undefined;
+            return [name, { doc: act.doc, args: json(act.args, "input"), ...(returns !== undefined && { returns: json(returns, "output") }) }];
+          }),
+        ),
+      }));
+  }
+
   /** The context one kit's actions run with: the caller's scope, the bot, this kit's store, and only the kits it uses. In a trial, every kit's store is a throwaway. */
   #contextFor(kit: Kit, scope: ProgramScope, bot: Bot, trial?: Map<string, JsonStore>): KitContext {
     const host = this;
@@ -327,7 +378,8 @@ export class KitHost {
             : undefined,
       },
     );
-    return { ...scope, bot, within, store: trial ? trialStore(trial, kit.name) : this.#stores(kit.name), kits };
+    // The proxy hands out every used kit's actions; what each takes and returns is typed per kit by KitRegistry, which the runtime cannot see.
+    return { ...scope, bot, within, store: trial ? trialStore(trial, kit.name) : this.#stores(kit.name), kits: kits as unknown as KitContext["kits"] };
   }
 
   /**

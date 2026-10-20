@@ -18,7 +18,35 @@ return kits.search("collect logs");
 
 ## Write it
 
-A kit is one file: `export default defineKit({ name, description, uses, actions })`, with `action({ doc, args, run })` for each action. `defineKit`, `action`, and `z` are globals; the source cannot import anything. `uses` names the kits `run` calls through `ctx.kits`; `ctx` also holds `bot`, `log`, `sleep`, `signal`, `on`, `within`, and `store`, a JSON store that only this kit reads. Print a built-in kit with `kits.source("move")` and start from it. Write each `doc` to say what the action does and what it returns, because `kits.search` and `kits.docs()` show it.
+A kit is one file: an import, then one exported kit.
+
+```ts
+import { action, defineKit, Point, z } from "minebot-sdk/kit";
+
+export default defineKit(
+  { name: "woodcutter", description: "Chops the nearest logs and reports where the player ends up.", uses: ["move", "sense", "dig"] },
+  {
+    chop: action({
+      doc: "Walks to each of the `times` nearest logs within 16 blocks and digs it. Returns how many it dug and where the player then stands.",
+      args: z.object({ times: z.number().int().positive().default(1) }),
+      returns: z.object({ chopped: z.number(), standingAt: Point }),
+      run: async (ctx, { times }) => {
+        const logs = await ctx.kits.sense.find({ blocks: "*_log", radius: 16, count: times });
+        for (const log of logs) {
+          await ctx.kits.move.to({ position: log, range: 3 });
+          await ctx.kits.dig.dig({ at: log });
+        }
+        const here = ctx.bot.entity.position.floored();
+        return { chopped: logs.length, standingAt: { x: here.x, y: here.y, z: here.z } };
+      },
+    }),
+  },
+);
+```
+
+`import { ... } from "minebot-sdk/kit"` is the only import a kit may have, and it is the whole authoring surface: `defineKit`, `action`, `z`, and the helpers the built-in kits use (`nameMatcher`, `NamePattern`, `Position`, `Point`, `toVec3`, `Vec3`, `goals`, `Movements`, `isAir`, `within`, and more). Only named imports work; `import type` from anywhere is erased; any other specifier, `require`, `import()`, and `import.meta` are rejected (the scan skips comments, strings, and templates, and `import()` is blocked again when the kit runs), and so is the old form that used `defineKit`, `action`, and `z` as globals. The source exports exactly one kit: `export default defineKit(...)`, or `export const <name> = defineKit(...)` as the built-in kits are written. Other `export const` and `export function` declarations are allowed and ignored, so a built-in kit's source, printed by `kits.source("move")`, can be saved under a new name as it is. `defineKit({ name, description, uses }, actions)` takes the identity first and the actions second, so that `ctx.kits` inside every action is typed from `uses`. `uses` names the kits `run` calls through `ctx.kits`; `ctx` also holds `bot`, `log`, `sleep`, `signal`, `on`, `within`, and `store`, a JSON store that only this kit reads. Every call through `ctx.kits` returns a promise: `await` it.
+
+`returns` is a zod schema of what the action returns. `run` must produce a value that fits it, callers get the validated result (zod strips keys the schema does not list), and a result that does not fit fails the call with `kit.<kit>.<action> returned a value that does not match its returns schema`. Use `z.void()` for an action that returns nothing, `Point` for a position, and an object schema for anything with fields. `kits.docs()` shows each action's `Returns:` shape. Print a built-in kit with `kits.source("move")` and start from it. Write each `doc` to say what the action does, because `kits.search` and `kits.docs()` show it.
 
 ## Try it first
 
@@ -39,6 +67,26 @@ await kits.revert("woodcutter", 1);  // saves version 1 again, as version 3
 ```
 
 Every save of a different source is a new version, and a revert is a save, so a revert can be reverted. `savedBy` is the name of the body that saved it. The versions sit in `.history/<kit>/` inside the agent-kit directory, so bodies that share the directory share the history, and a kit you remove can still be reverted to. From the terminal: `minebot kits versions woodcutter` and `minebot kits revert woodcutter 1`.
+
+## Check it with a type checker
+
+A harness with a file system can write kits in a workspace instead: `minebot init ws` scaffolds one, the body loads `ws/kits/*.ts` when it runs with `--agent-kits ./kits`, and `minebot types --out minebot-env.d.ts` writes declarations for this body's kits and program globals, so `npx tsc` reports a wrong argument before you try or save anything. A saved kit and a try are not type-checked by the body.
+
+## Test it without a server
+
+A harness with a file system can also test a kit before the body loads it. `minebot-sdk/testing` runs the kit's actions through the real kit framework (argument and result validation, `uses`, stores) against a fake bot on the real 26.1 registry, with no Minecraft server:
+
+```ts
+import { createKitHarness } from "minebot-sdk/testing";
+import woodcutter from "../kits/woodcutter.ts";
+
+const h = createKitHarness({ kits: [woodcutter], blocks: [{ name: "oak_log", from: [6, 64, 0], to: [6, 66, 0] }] });
+await h.call("woodcutter.chop", { times: 2 }); // { chopped: 2, standingAt: { x: 5, y: 64, z: 0 } }
+h.count("oak_log"); // 2: the drops are in the inventory
+h.blockAt([6, 64, 0]).name; // "air"
+```
+
+It tests decisions, not physics: digging is instant, pathfinding teleports next to the goal, and a Mineflayer API it does not implement (`bot.attack`, `bot.sleep`, `bot.openContainer`) throws `not supported by minebot-sdk/testing: <api>` instead of returning `undefined`. A passing test shows the kit's logic holds; `kits.try` shows how the live body behaves.
 
 ## Prefer the actions that work
 

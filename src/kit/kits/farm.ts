@@ -1,7 +1,5 @@
 // The farm kit: tilling soil, planting seeds, harvesting ripe crops, breeding animals.
-import { Vec3 } from "vec3";
-import { z } from "zod";
-import { action, type Block, defineKit, type Entity, goals, isAir, type KitContext, NamePattern, nameMatcher, Position, toVec3 } from "../kit.ts";
+import { action, type Block, defineKit, type Entity, goals, isAir, type KitContext, nameMatcher, NamePattern, Position, toVec3, Vec3, z } from "minebot-sdk/kit";
 
 // Survival players interact with blocks up to 4.5 blocks from the eyes, and with entities up to 3.
 const BLOCK_REACH = 4.5;
@@ -348,19 +346,19 @@ export async function breedAnimals(ctx: KitContext, animal: string, food: string
   return { fed: 2, baby: false, babyId: null };
 }
 
-export const farm = defineKit({
-  name: "farm",
-  description: "Till soil, plant seeds, harvest ripe crops, and breed animals.",
-  uses: [],
-  actions: {
+export const farm = defineKit(
+  { name: "farm", description: "Till soil, plant seeds, harvest ripe crops, and breed animals." },
+  {
     till: action({
       doc: "Hoe the dirt, grass_block, or dirt_path block at `at` ({x,y,z} or [x,y,z]) into farmland, walking close and holding a hoe from the inventory. Digs out wild plants above it (grass, ferns, dead bush, flowers); fails when any other block is above, such as a torch, a sapling, or a crop. Farmland dries out and turns back to dirt unless water lies within 4 blocks. Returns { tilled, hydrated } — tilled is false when it already was farmland.",
       args: z.object({ at: Position }),
+      returns: z.object({ tilled: z.boolean(), hydrated: z.boolean() }),
       run: (ctx, { at }) => tillAt(ctx, toVec3(at).floored()),
     }),
     plant: action({
       doc: "Plant `seed` ('wheat_seeds', 'carrot', 'potato', 'beetroot_seeds', 'melon_seeds', 'pumpkin_seeds', 'torchflower_seeds', 'pitcher_pod', 'nether_wart', or the crop name such as 'wheat') on the farmland at `at` ({x,y,z} or [x,y,z]); `at` may also be the empty block above the farmland. Nether wart needs soul_sand. Walks close and takes the seed from the inventory. Returns true when it planted, false when that crop already grows there.",
       args: z.object({ at: Position, seed: z.string().min(1) }),
+      returns: z.boolean(),
       run: (ctx, { at, seed }) => plantAt(ctx, toVec3(at).floored(), seed),
     }),
     harvest: action({
@@ -371,6 +369,7 @@ export const farm = defineKit({
         replant: z.boolean().default(true),
         timeoutMs: z.number().int().positive().default(DEFAULT_HARVEST_TIMEOUT_MS),
       }),
+      returns: z.object({ harvested: z.number(), replanted: z.number(), skipped: z.number(), gained: z.record(z.string(), z.number()) }),
       run: (ctx, { radius, crops, replant, timeoutMs }) => harvestCrops(ctx, radius, crops, replant, timeoutMs),
     }),
     breed: action({
@@ -381,7 +380,8 @@ export const farm = defineKit({
         radius: z.number().positive().default(16),
         timeoutMs: z.number().int().positive().default(DEFAULT_BREED_TIMEOUT_MS),
       }),
+      returns: z.object({ fed: z.number(), baby: z.boolean(), babyId: z.number().nullable() }),
       run: (ctx, { animal, food, radius, timeoutMs }) => breedAnimals(ctx, animal, food, radius, timeoutMs),
     }),
   },
-});
+);

@@ -1,7 +1,6 @@
 // The combat kit: hitting creatures, fighting hostiles until none are left, backing away.
 // Attacks use the pathfinder to close in and the held weapon's cooldown to pace each hit.
-import { z } from "zod";
-import { action, defineKit, type Entity, goals, isHostile, type KitContext, NamePattern, nameMatcher, Position, toVec3, type Vec3 } from "../kit.ts";
+import { action, defineKit, type Entity, goals, isHostile, type KitContext, nameMatcher, NamePattern, Point, Position, toVec3, Vec3, z } from "minebot-sdk/kit";
 
 // The server accepts melee hits within 3 blocks of the target's hitbox; aim from the eyes to its middle.
 const REACH = 3;
@@ -182,14 +181,13 @@ export async function retreatFrom(ctx: KitContext, from: Vec3, distance: number,
 
 const Target = z.union([z.number().int(), z.string().min(1)]);
 
-export const combat = defineKit({
-  name: "combat",
-  description: "Attack creatures with the best weapon, fight hostiles until none are near, and back away.",
-  uses: [],
-  actions: {
+export const combat = defineKit(
+  { name: "combat", description: "Attack creatures with the best weapon, fight hostiles until none are near, and back away." },
+  {
     attack: action({
       doc: "Hit one creature until it dies. `target` is an entity id or a name ('zombie'; the nearest match, a player's username works too). Walks up to it, holds the best sword or axe from the inventory, and hits once per weapon cooldown. Gives up after `timeoutMs` (default 20000). Returns { target, killed, damageTaken, weapon }.",
       args: z.object({ target: Target, timeoutMs: z.number().int().positive().default(TARGET_TIMEOUT_MS) }),
+      returns: z.object({ target: z.string(), killed: z.boolean(), damageTaken: z.number(), weapon: z.string().nullable() }),
       run: async (ctx, { target, timeoutMs }) => {
         const entity = findEntity(ctx, target);
         if (!entity) throw new Error(`no entity matches ${JSON.stringify(target)}`);
@@ -209,6 +207,7 @@ export const combat = defineKit({
         targets: NamePattern.optional(),
         timeoutMs: z.number().int().positive().default(60_000),
       }),
+      returns: z.object({ kills: z.number(), damageTaken: z.number(), weapon: z.string().nullable(), remaining: z.number(), timedOut: z.boolean() }),
       run: (ctx, { radius, targets, timeoutMs }) => fightAll(ctx, radius, targets, timeoutMs),
     }),
     retreat: action({
@@ -218,6 +217,7 @@ export const combat = defineKit({
         distance: z.number().positive().default(DEFAULT_RETREAT_DISTANCE),
         timeoutMs: z.number().int().positive().default(RETREAT_TIMEOUT_MS),
       }),
+      returns: z.object({ position: Point, distance: z.number() }),
       run: (ctx, { from, distance, timeoutMs }) => {
         let source: Vec3 | undefined;
         if (from === undefined) source = nearby(ctx, isHostile, 32)[0]?.position.clone();
@@ -228,4 +228,4 @@ export const combat = defineKit({
       },
     }),
   },
-});
+);

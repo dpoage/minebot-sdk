@@ -1,7 +1,6 @@
 // The furnace kit: smelting at a furnace that is within reach — loading fuel and input, waiting
 // for the output, and taking it. Finding or placing a furnace is the crafter kit's work.
-import { z } from "zod";
-import { action, type Block, burnTicks, defineKit, type Furnace, goals, type Item, type KitContext, pickFuel, Position, SMELT_TICKS, smeltOutput, toVec3, type Vec3, withoutReserved } from "../kit.ts";
+import { action, type Block, burnTicks, defineKit, type Furnace, goals, type Item, type KitContext, pickFuel, Point, Position, SMELT_TICKS, smeltOutput, toVec3, Vec3, withoutReserved, z } from "minebot-sdk/kit";
 
 /** Survival players interact with blocks up to 4.5 blocks from the eyes. */
 const REACH = 4.5;
@@ -223,11 +222,9 @@ export async function takeFurnaceOutput(ctx: KitContext, at: Position | undefine
   }
 }
 
-export const furnace = defineKit({
-  name: "furnace",
-  description: "Smelt at a furnace within reach: load fuel and input, wait, take the output.",
-  uses: [],
-  actions: {
+export const furnace = defineKit(
+  { name: "furnace", description: "Smelt at a furnace within reach: load fuel and input, wait, take the output." },
+  {
     smelt: action({
       doc: "Smelt `count` (default 1) of `item` (an input such as raw_iron, sand, cobblestone, beef, or a log) at the nearest furnace within 4.5 blocks, or at `at` ({x,y,z} or [x,y,z]), walking next to it first. Loads `fuel` (an item name) or else the first of charcoal, coal, planks, logs, sticks that the inventory holds in enough quantity; waits 10 s per item; takes the output. Fails with the missing item or fuel, or when no furnace is there. Returns { input, output, count, fuel, at }.",
       args: z.object({
@@ -236,12 +233,24 @@ export const furnace = defineKit({
         fuel: z.string().min(1).optional(),
         at: Position.optional(),
       }),
+      returns: z.object({
+        input: z.string(),
+        output: z.string(),
+        count: z.number(),
+        fuel: z.record(z.string(), z.number()),
+        at: Point,
+      }),
       run: (ctx, { item, count, fuel, at }) => smelt(ctx, item, count, fuel, at),
     }),
     take: action({
       doc: "Collect the output of the furnace within 4.5 blocks, or at `at`, without waiting for it. Returns { item, count, smelting }: what was taken (item null when the slot was empty) and what the furnace is still smelting, or null.",
       args: z.object({ at: Position.optional() }),
+      returns: z.object({
+        item: z.string().nullable(),
+        count: z.number(),
+        smelting: z.object({ item: z.string(), count: z.number() }).nullable(),
+      }),
       run: (ctx, { at }) => takeFurnaceOutput(ctx, at),
     }),
   },
-});
+);

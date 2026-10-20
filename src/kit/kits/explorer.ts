@@ -1,8 +1,9 @@
 // The explorer kit: explore new ground, summarize surroundings, remember named places, and
 // climb out of holes to open sky — built from the move, sense, and dig primitives.
-import { Vec3 } from "vec3";
-import { z } from "zod";
-import { action, biomeAt, type Block, defineKit, type KitContext, Position, skyAbove, toVec3 } from "../kit.ts";
+import { action, biomeAt, type Block, defineKit, type KitContext, Point, Position, skyAbove, toVec3, Vec3, z } from "minebot-sdk/kit";
+
+const USES = ["move", "sense", "dig"] as const;
+type Ctx = KitContext<typeof USES>;
 
 const CELL = 16;
 const VISITED_KEY = "visited";
@@ -19,6 +20,8 @@ export interface Waypoint {
   z: number;
   dimension: string;
 }
+
+const WaypointSchema = z.object({ x: z.number(), y: z.number(), z: z.number(), dimension: z.string() });
 
 const PLACE_KINDS = ["chest", "bed", "farm", "ore", "base", "portal", "other"] as const;
 
@@ -81,6 +84,13 @@ export interface ScanResult {
   entities: { name: string; count: number; nearestDistance: number }[];
 }
 
+const ScanResultSchema = z.object({
+  position: Point,
+  biome: z.string(),
+  blocks: z.array(z.object({ name: z.string(), count: z.number(), nearest: Point })),
+  entities: z.array(z.object({ name: z.string(), count: z.number(), nearestDistance: z.number() })),
+});
+
 /** Summarizes uncommon blocks and entities within `radius` (vertical range is half the radius). */
 export function scan(ctx: KitContext, radius = 16): ScanResult {
   const { bot } = ctx;
@@ -136,8 +146,10 @@ export interface ExploreResult {
   cellsVisited: number;
 }
 
+const ExploreResultSchema = z.object({ from: Point, to: Point, reached: z.boolean(), cellsVisited: z.number() });
+
 /** Walks about `distance` blocks toward the direction whose destination cell is least explored. */
-export async function explore(ctx: KitContext, distance = 48, timeoutMs = 90_000): Promise<ExploreResult> {
+export async function explore(ctx: Ctx, distance = 48, timeoutMs = 90_000): Promise<ExploreResult> {
   const { bot } = ctx;
   const from = bot.entity.position.floored();
   const cells = markVisited(ctx, from);
@@ -157,7 +169,7 @@ export async function explore(ctx: KitContext, distance = 48, timeoutMs = 90_000
   const { target } = scored.sort((a, b) => b.score - a.score)[0]!;
   let reached = true;
   try {
-    await ctx.kits.move!.to!({ position: target, range: 1, timeoutMs });
+    await ctx.kits.move.to({ position: target, range: 1, timeoutMs });
   } catch (err) {
     reached = false;
     ctx.log(`explore: stopped short of ${target.x},${target.z}: ${err instanceof Error ? err.message : String(err)}`);
@@ -195,12 +207,12 @@ function checkAir(ctx: KitContext, block: Block): void {
 }
 
 /** Digs one cell, refusing first when under water and the air cannot cover the dig. */
-async function clearCell(ctx: KitContext, pos: Vec3): Promise<void> {
+async function clearCell(ctx: Ctx, pos: Vec3): Promise<void> {
   const block = ctx.bot.blockAt(pos);
   if (!block) throw new Error(`${pos} is not loaded`);
   if (block.boundingBox !== "block") return;
   checkAir(ctx, block);
-  await ctx.kits.dig!.dig!({ at: pos });
+  await ctx.kits.dig.dig({ at: pos });
 }
 
 /**
@@ -272,7 +284,7 @@ function waterOnTop(ctx: KitContext, cells: Vec3[]): boolean {
  * When the player is in water, swims to the nearest dry spot under open sky within 48 blocks.
  * Holding jump only keeps the player at the surface while jump is held; the pathfinder swims to land.
  */
-async function toDryLand(ctx: KitContext): Promise<void> {
+async function toDryLand(ctx: Ctx): Promise<void> {
   const { bot } = ctx;
   if (bot.blockAt(bot.entity.position)?.name !== "water" && bot.blockAt(bot.entity.position.offset(0, 1, 0))?.name !== "water") return;
   const air = (p: Vec3) => bot.blockAt(p)?.boundingBox === "empty" && bot.blockAt(p)?.name !== "water";
@@ -292,7 +304,7 @@ async function toDryLand(ctx: KitContext): Promise<void> {
   });
   for (const spot of spots.slice(0, 5)) {
     try {
-      await ctx.kits.move!.to!({ position: spot.offset(0, 1, 0), range: 0, timeoutMs: 45_000 });
+      await ctx.kits.move.to({ position: spot.offset(0, 1, 0), range: 0, timeoutMs: 45_000 });
       return;
     } catch (err) {
       ctx.log(`surface: could not reach dry land at ${spot.offset(0, 1, 0)}: ${err instanceof Error ? err.message : String(err)}`);
@@ -305,21 +317,21 @@ async function toDryLand(ctx: KitContext): Promise<void> {
  * Digs the cells for one move from `here` in `dir` and walks into it. An "up" move is one stair step:
  * the block above the head and the two blocks of the next step. A "level" move is a tunnel step.
  */
-async function digMove(ctx: KitContext, here: Vec3, dir: Vec3, kind: "up" | "level"): Promise<void> {
+async function digMove(ctx: Ctx, here: Vec3, dir: Vec3, kind: "up" | "level"): Promise<void> {
   const feet = kind === "up" ? here.plus(dir).offset(0, 1, 0) : here.plus(dir);
   const cells = kind === "up" ? [here.offset(0, 2, 0), feet, feet.offset(0, 1, 0)] : [feet, feet.offset(0, 1, 0)];
   if (nearLava(ctx, cells)) throw new Error("lava next to the cells to dig");
   if (waterOnTop(ctx, cells)) throw new Error("water above the cells to dig");
   if (ctx.bot.blockAt(feet.offset(0, -1, 0))?.boundingBox !== "block") throw new Error("no floor");
   for (const cell of cells) await clearCell(ctx, cell);
-  await ctx.kits.move!.to!({ position: feet, range: 0, timeoutMs: 10_000 });
+  await ctx.kits.move.to({ position: feet, range: 0, timeoutMs: 10_000 });
 }
 
 /**
  * In water: swims up one block, digging the block above the head first if it is solid.
  * Jump is held from the start: without it the player sinks while the ceiling is dug, and the head leaves the air it was in.
  */
-async function swimUp(ctx: KitContext, here: Vec3): Promise<void> {
+async function swimUp(ctx: Ctx, here: Vec3): Promise<void> {
   const { bot } = ctx;
   const above = here.offset(0, 2, 0);
   bot.setControlState("jump", true);
@@ -349,6 +361,8 @@ export interface SurfaceResult {
   steps: number;
 }
 
+const SurfaceResultSchema = z.object({ surfaced: z.boolean(), from: Point, to: Point, steps: z.number() });
+
 /**
  * Climbs to open sky by digging a staircase: each step clears the space above the head and the
  * two blocks of the next step up, then walks up. When a stair step is impossible in a direction
@@ -357,7 +371,7 @@ export interface SurfaceResult {
  * it swims to the nearest dry land. Needs no blocks in the inventory. Without a pickaxe, each
  * stone block takes about 7 seconds.
  */
-export async function surface(ctx: KitContext, maxSteps = 120): Promise<SurfaceResult> {
+export async function surface(ctx: Ctx, maxSteps = 120): Promise<SurfaceResult> {
   const { bot } = ctx;
   const from = bot.entity.position.floored();
   let side = 0;
@@ -406,14 +420,13 @@ export async function surface(ctx: KitContext, maxSteps = 120): Promise<SurfaceR
   return { surfaced: true, from, to, steps };
 }
 
-export const explorer = defineKit({
-  name: "explorer",
-  description: "Explore new ground, summarize surroundings, remember named places, and climb out of holes to open sky.",
-  uses: ["move", "sense", "dig"],
-  actions: {
+export const explorer = defineKit(
+  { name: "explorer", description: "Explore new ground, summarize surroundings, remember named places, and climb out of holes to open sky.", uses: USES },
+  {
     scan: action({
       doc: "Summarize the area within `radius` (default 16): biome, uncommon blocks with counts and nearest positions (ores, logs, water, chests...), and nearby entities.",
       args: z.object({ radius: z.number().int().positive().max(32).default(16) }),
+      returns: ScanResultSchema,
       run: (ctx, { radius }) => scan(ctx, radius),
     }),
     explore: action({
@@ -422,6 +435,7 @@ export const explorer = defineKit({
         distance: z.number().positive().default(48),
         timeoutMs: z.number().int().positive().default(90_000),
       }),
+      returns: ExploreResultSchema,
       run: (ctx, { distance, timeoutMs }) => explore(ctx, distance, timeoutMs),
     }),
     remember: action({
@@ -434,6 +448,7 @@ export const explorer = defineKit({
         note: z.string().max(500).optional(),
         contents: z.record(z.string(), z.number().int().nonnegative()).optional(),
       }),
+      returns: Place,
       run: (ctx, { name, at, kind, tags, note, contents }) => {
         const known = places(ctx);
         const before = known[name];
@@ -460,6 +475,7 @@ export const explorer = defineKit({
         radius: z.number().positive().optional(),
         limit: z.number().int().positive().default(20),
       }),
+      returns: z.array(Place.extend({ distance: z.number().optional() })),
       run: (ctx, { kind, near, radius, limit }) => {
         const origin = near ? toVec3(near) : ctx.bot.entity.position;
         const found = Object.values(places(ctx))
@@ -479,25 +495,28 @@ export const explorer = defineKit({
     waypoints: action({
       doc: "Every saved place by name as { x, y, z, dimension }. `places` lists them with their kind, tags, note, and contents.",
       args: z.object({}),
+      returns: z.record(z.string(), WaypointSchema),
       run: (ctx): Record<string, Waypoint> =>
         Object.fromEntries(Object.entries(places(ctx)).map(([name, { position, dimension }]) => [name, { ...position, dimension }])),
     }),
     travel: action({
       doc: "Walk to a saved place, stopping within `range` (default 2) blocks. Gives up after `timeoutMs` (default 120000). Returns where the player then stands.",
       args: z.object({ name: z.string().min(1), range: z.number().min(0).default(2), timeoutMs: z.number().int().positive().default(120_000) }),
+      returns: Point,
       run: (ctx, { name, range, timeoutMs }) => {
         const known = places(ctx);
         const place = known[name];
         if (!place) throw new Error(`no place "${name}"; known: ${Object.keys(known).join(", ") || "none"}`);
         if (place.dimension !== ctx.bot.game.dimension) throw new Error(`place "${name}" is in ${place.dimension}`);
         const { x, y, z } = place.position;
-        return ctx.kits.move!.to!({ position: new Vec3(x, y, z), range, timeoutMs });
+        return ctx.kits.move.to({ position: new Vec3(x, y, z), range, timeoutMs });
       },
     }),
     surface: action({
       doc: "Climb to open sky by digging a staircase; use it when trapped underground or in a pit. Needs no blocks; slow without a pickaxe, so pass a long program timeout (e.g. --timeout 600000). Under water it checks the air supply: it does not dig what the air cannot cover and swims to air first. `maxSteps` (default 120) bounds the climb. Returns { surfaced, from, to, steps }.",
       args: z.object({ maxSteps: z.number().int().positive().default(120) }),
+      returns: SurfaceResultSchema,
       run: (ctx, { maxSteps }) => surface(ctx, maxSteps),
     }),
   },
-});
+);

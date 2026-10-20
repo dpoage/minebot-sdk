@@ -1,7 +1,6 @@
 // The survival kit: eating, sleeping, and wearing armor — the actions that keep a player alive.
 // It acts only when called; nothing here eats or sleeps on its own.
-import { z } from "zod";
-import { action, defineKit, goals, isHostile, type KitContext, Position, toVec3 } from "../kit.ts";
+import { action, defineKit, goals, isHostile, type KitContext, Point, Position, toVec3, z } from "minebot-sdk/kit";
 
 /** Foods the kit never picks on its own: they poison, starve, teleport, or are too valuable to waste. Name one to eat it. */
 const AVOIDED_FOODS = [
@@ -162,30 +161,35 @@ async function wearBestArmor(ctx: KitContext) {
   return { equipped, wearing };
 }
 
-export const survival = defineKit({
-  name: "survival",
-  description: "Eat, sleep in a bed, wake up, and wear the best armor in the inventory.",
-  uses: [],
-  actions: {
+export const survival = defineKit(
+  { name: "survival", description: "Eat, sleep in a bed, wake up, and wear the best armor in the inventory." },
+  {
     eat: action({
       doc: "Eat `item`, or the best safe food in the inventory when omitted: the one that restores the most without overshooting the missing food points. Rotten flesh, spider eyes, pufferfish, poisonous potatoes, raw chicken, suspicious stew, chorus fruit, and golden apples are never picked on their own; name one to eat it. Fails when the food bar is full. Returns { item, food, saturation } after the meal.",
       args: z.object({ item: z.string().min(1).optional() }),
+      returns: z.object({ item: z.string(), food: z.number(), saturation: z.number() }),
       run: (ctx, { item }) => eat(ctx, item),
     }),
     sleep: action({
       doc: "Go to bed at `at` ({x,y,z} or [x,y,z]), or the nearest bed within 16 blocks, and sleep. Works at night (time of day 12541 to 23458) and in thunderstorms; fails with the reason otherwise, or when monsters are near the bed or the bed is occupied. Returns { sleeping, at } once asleep. Call `wake` or wait for morning to get up.",
       args: z.object({ at: Position.optional() }),
+      returns: z.object({ sleeping: z.boolean(), at: Point }),
       run: (ctx, { at }) => sleepAt(ctx, at),
     }),
     wake: action({
       doc: "Get out of bed. Fails when the player is not sleeping. Returns { sleeping } after waking.",
       args: z.object({}),
+      returns: z.object({ sleeping: z.boolean() }),
       run: (ctx) => wake(ctx),
     }),
     armor: action({
       doc: "Wear the best armor the inventory holds in each slot, by material: leather, copper, golden, chainmail, iron, diamond, netherite (turtle helmets rank between golden and chainmail). Leaves better armor already worn, and an elytra, on. Returns { equipped: { slot: item }, wearing: { head, torso, legs, feet } }.",
       args: z.object({}),
+      returns: z.object({
+        equipped: z.record(z.string(), z.string()),
+        wearing: z.record(z.string(), z.string().nullable()),
+      }),
       run: (ctx) => wearBestArmor(ctx),
     }),
   },
-});
+);

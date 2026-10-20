@@ -1,6 +1,5 @@
 // The dig kit: digging one block with the right tool, keeping falling blocks from refilling it.
-import { z } from "zod";
-import { action, defineKit, type KitContext, Position, toVec3, type Vec3 } from "../kit.ts";
+import { action, defineKit, type KitContext, Position, toVec3, Vec3, z } from "minebot-sdk/kit";
 
 export interface DigResult {
   /** The last block that was dug, or null when the position was already clear. */
@@ -33,15 +32,14 @@ export async function digAt(ctx: KitContext, pos: Vec3): Promise<DigResult> {
   throw new Error(`${pos} keeps refilling`);
 }
 
-export const dig = defineKit({
-  name: "dig",
-  description: "Dig one block with the right tool; falling blocks that refill the hole are dug too.",
-  uses: [],
-  actions: {
+export const dig = defineKit(
+  { name: "dig", description: "Dig one block with the right tool; falling blocks that refill the hole are dug too." },
+  {
     dig: action({
       doc: "Dig the block at `at` ({x,y,z} or [x,y,z]), equipping the best tool and failing with the tools it needs when the inventory lacks them. Digs on while gravel or sand refills the position. Returns { block } — the last block dug, or null when the position was already clear.",
       args: z.object({ at: Position }),
+      returns: z.object({ block: z.string().nullable() }),
       run: (ctx, { at }) => digAt(ctx, toVec3(at).floored()),
     }),
   },
-});
+);

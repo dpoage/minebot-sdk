@@ -183,9 +183,10 @@ describe("watchGame", () => {
 describe("explorer places", () => {
   const scratch = () => new JsonStore(path.join(mkdtempSync(path.join(tmpdir(), "minebot-places-")), "explorer.json"));
   const at = new Vec3(100, 64, 0);
+  type ExplorerContext = Parameters<typeof explorer.actions.scan.invoke>[0];
   const contextOf = (store: JsonStore, dimension = "minecraft:overworld") =>
-    ({ store, bot: { entity: { position: at }, game: { dimension } } }) as unknown as KitContext;
-  const call = (ctx: KitContext, name: string, args: unknown = {}) => explorer.actions[name]!.invoke(ctx, args, `explorer.${name}`);
+    ({ store, bot: { entity: { position: at }, game: { dimension } } }) as unknown as ExplorerContext;
+  const call = (ctx: ExplorerContext, name: keyof typeof explorer.actions, args: unknown = {}) => explorer.actions[name].invoke(ctx, args, `explorer.${name}`);
 
   it("converts stored waypoints into places once, and keeps waypoints and travel working on them", () => {
     const store = scratch();

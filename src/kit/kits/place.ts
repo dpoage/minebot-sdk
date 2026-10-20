@@ -1,7 +1,5 @@
 // The place kit: placing one block from the inventory, clearing what is in the way.
-import { Vec3 } from "vec3";
-import { z } from "zod";
-import { action, defineKit, goals, isAir, type KitContext, Position, toVec3 } from "../kit.ts";
+import { action, defineKit, goals, isAir, type KitContext, Position, toVec3, Vec3, z } from "minebot-sdk/kit";
 
 const NEIGHBORS = [
   new Vec3(0, -1, 0),
@@ -50,15 +48,14 @@ export async function placeAt(ctx: KitContext, pos: Vec3, item: string): Promise
   return true;
 }
 
-export const place = defineKit({
-  name: "place",
-  description: "Place one block from the inventory, digging out a different solid block first.",
-  uses: [],
-  actions: {
+export const place = defineKit(
+  { name: "place", description: "Place one block from the inventory, digging out a different solid block first." },
+  {
     place: action({
       doc: "Place one block of `item` at `at` ({x,y,z} or [x,y,z]), walking close and digging out a different solid block first. Needs a solid neighbor to place against. Returns false if the block was already there, true otherwise.",
       args: z.object({ at: Position, item: z.string().min(1) }),
+      returns: z.boolean(),
       run: (ctx, { at, item }) => placeAt(ctx, toVec3(at).floored(), item),
     }),
   },
-});
+);

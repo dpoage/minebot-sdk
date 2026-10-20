@@ -211,6 +211,30 @@ export interface KitsResponse {
   locked: boolean;
 }
 
+/** One action's shape for typing: JSON Schema (draft 2020-12) of what a call takes and, when the action declares it, what it returns. */
+export interface ActionSchema {
+  doc: string;
+  /** The argument as callers write it (zod input). */
+  args: Record<string, unknown>;
+  /** The result as callers read it (zod output); absent when the action declares no `returns`. */
+  returns?: Record<string, unknown>;
+}
+
+/** One kit's actions with their schemas: what `minebot types` generates declarations from. */
+export interface KitSchema {
+  name: string;
+  description: string;
+  uses: string[];
+  active: boolean;
+  /** True for kits agents saved on this body; the rest ship with the package and are typed there. */
+  agent: boolean;
+  actions: Record<string, ActionSchema>;
+}
+
+export interface KitSchemasResponse {
+  kits: KitSchema[];
+}
+
 /** What saving a kit returns: the kit as the body now offers it. */
 export type SaveKitResponse = KitInfo;
 

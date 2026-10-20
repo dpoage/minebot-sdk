@@ -1,5 +1,5 @@
 // Runs each wiki page's check program against a live body and reports which pages still hold.
-//   node scripts/wiki-check.ts --bot <name>
+//   node --conditions=minebot-sdk:source scripts/wiki-check.ts --bot <name>
 // A check program returns normally while its page is true and throws when it is not.
 // Rerun after changing MC_VERSION or upgrading Mineflayer; update `mc_version` on pages that pass.
 import { readFile } from "node:fs/promises";

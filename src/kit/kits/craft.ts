@@ -1,7 +1,6 @@
 // The craft kit: crafting at a table that is already within reach. Finding or placing one,
 // and crafting intermediate items, is the crafter kit's work on top of this primitive.
-import { z } from "zod";
-import { action, type Block, defineKit, type KitContext } from "../kit.ts";
+import { action, type Block, defineKit, type KitContext, Point, z } from "minebot-sdk/kit";
 
 const TABLE_SEARCH_RADIUS = 4;
 
@@ -45,19 +44,19 @@ export async function craftItem(ctx: KitContext, name: string, count = 1): Promi
   return made;
 }
 
-export const craft = defineKit({
-  name: "craft",
-  description: "Craft items from the inventory at a table within reach.",
-  uses: [],
-  actions: {
+export const craft = defineKit(
+  { name: "craft", description: "Craft items from the inventory at a table within reach." },
+  {
     craft: action({
       doc: "Craft at least `count` (default 1) more of `item` from the inventory. A recipe that needs a crafting table uses one within 4 blocks, and the call fails when there is none. Returns how many were made.",
       args: z.object({ item: z.string().min(1), count: z.number().int().positive().default(1) }),
+      returns: z.number(),
       run: (ctx, { item, count }) => craftItem(ctx, item, count),
     }),
     table: action({
       doc: "The position of a crafting table within 4 blocks, so programs can stand next to it. Fails when there is none nearby.",
       args: z.object({}),
+      returns: Point,
       run: (ctx) => {
         const table = nearbyTable(ctx);
         if (!table) throw new Error(`no crafting table within ${TABLE_SEARCH_RADIUS} blocks`);
@@ -65,4 +64,4 @@ export const craft = defineKit({
       },
     }),
   },
-});
+);

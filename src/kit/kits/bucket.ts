@@ -1,7 +1,5 @@
 // The bucket kit: scooping up a water or lava source, pouring a bucket out.
-import { Vec3 } from "vec3";
-import { z } from "zod";
-import { action, type Block, defineKit, goals, isAir, type KitContext, Position, toVec3 } from "../kit.ts";
+import { action, type Block, defineKit, goals, isAir, type KitContext, Point, Position, toVec3, Vec3, z } from "minebot-sdk/kit";
 
 // Survival players interact with blocks up to 4.5 blocks from the eyes.
 const BLOCK_REACH = 4.5;
@@ -155,20 +153,20 @@ export async function emptyBucket(ctx: KitContext, at: Vec3, fluid: (typeof FLUI
   throw new Error(`could not pour ${name} at ${at}: no solid face next to it in view`);
 }
 
-export const bucket = defineKit({
-  name: "bucket",
-  description: "Fill a bucket from a water or lava source, and pour it out.",
-  uses: [],
-  actions: {
+export const bucket = defineKit(
+  { name: "bucket", description: "Fill a bucket from a water or lava source, and pour it out." },
+  {
     fill: action({
       doc: "Fill an empty bucket from a `fluid` ('water' or 'lava') source: the one at `at` ({x,y,z} or [x,y,z]), or the nearest within `radius` (default 16). Walks within reach and tries up to 3 sources. Flowing fluid is not a source and cannot be taken. Returns { filled, at } — the bucket item now held, and the source's position.",
       args: z.object({ fluid: z.enum(FLUIDS), at: Position.optional(), radius: z.number().positive().default(16) }),
+      returns: z.object({ filled: z.string(), at: Point }),
       run: (ctx, { fluid, at, radius }) => fillBucket(ctx, fluid, at ? toVec3(at).floored() : undefined, radius),
     }),
     empty: action({
       doc: "Pour a full bucket so its fluid source lands in the block at `at` ({x,y,z} or [x,y,z]), which must be air or a non-solid block next to a solid one. `fluid` ('water' or 'lava') picks the bucket; default whichever the inventory holds, water first. Walks within reach. Water evaporates in the Nether. Returns true when it poured, false when that source was already there.",
       args: z.object({ at: Position, fluid: z.enum(FLUIDS).optional() }),
+      returns: z.boolean(),
       run: (ctx, { at, fluid }) => emptyBucket(ctx, toVec3(at).floored(), fluid),
     }),
   },
-});
+);

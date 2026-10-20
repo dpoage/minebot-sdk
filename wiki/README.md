@@ -77,7 +77,7 @@ Search results and pages show a status:
 A check program is a minebot program. It returns normally while its page is true, and it throws with a reason when the page is no longer true. Run all checks against a live body:
 
 ```sh
-node scripts/wiki-check.ts --bot <name>
+node --conditions=minebot-sdk:source scripts/wiki-check.ts --bot <name>
 ```
 
 Run the checks after you change `MC_VERSION` or upgrade Mineflayer. Then set `mc_version` on the pages that pass, and fix or remove the pages that fail.
@@ -93,7 +93,7 @@ Run the checks after you change `MC_VERSION` or upgrade Mineflayer. Then set `mc
 An agent kit that earns its place becomes a built-in kit.
 
 1. Read the kit's source (`minebot kits source <kit>`) and its call counts (`minebot kits`). Promote only a kit whose actions work: check their `ok` and `failed` counts, and run each action in game.
-2. Copy the source to `src/kit/kits/<name>.ts`. Replace the `defineKit`, `action`, and `z` globals with the imports the other files use (`zod` and `../kit.ts`). `uses` may name built-in kits only.
-3. Add the kit to `BUILTIN_KITS` in `src/kit/index.ts`, after the kits it uses.
+2. Copy the source to `src/kit/kits/<name>.ts`. It already imports from `minebot-sdk/kit`, which is how every built-in kit imports; keep the import line. `uses` may name built-in kits only. Declare `returns` on every action.
+3. Add the kit to `BUILTIN_KITS` in `src/kit/index.ts`, after the kits it uses, and to `KitRegistry` in `src/kit/registry.ts`, so that `ctx.kits` and programs type its calls.
 4. Add the kit to the kit tables in `README.md`, `docs/sdk.md`, and `wiki/minebot/kits.md`, and write a test.
 5. Delete the saved kit from the agent-kit directory (`minebot kits rm <kit>`), so that the built-in kit is the only one of that name. Its history stays in `.history/`.

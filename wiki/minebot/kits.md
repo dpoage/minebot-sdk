@@ -44,27 +44,30 @@ A routine kit reaches another kit only through the public actions of the kits it
 <!-- agentKits -->
 ## Your own kits
 
-You can save kits of your own, in the same shape as the built-ins:
+You can save kits of your own, in the same shape as the built-ins: one import from `minebot-sdk/kit` (the only import a kit may have), then one exported kit (`export default`, or `export const <name> = defineKit(...)` as the built-ins are written; other exports are ignored):
 
 ```ts
-export default defineKit({
-  name: "woodcutter",
-  description: "Chops trees and returns to base.",
-  uses: ["move", "dig"],
-  actions: {
+import { action, defineKit, Point, z } from "minebot-sdk/kit";
+
+export default defineKit(
+  { name: "woodcutter", description: "Chops the nearest logs and reports where the player ends up.", uses: ["move", "sense", "dig"] },
+  {
     chop: action({
-      doc: "Digs the log above and walks home. Returns where the player stands.",
+      doc: "Walks to each of the `times` nearest logs within 16 blocks and digs it. Returns how many it dug and where the player then stands.",
       args: z.object({ times: z.number().int().positive().default(1) }),
+      returns: z.object({ chopped: z.number(), standingAt: Point }),
       run: async (ctx, { times }) => {
-        for (let i = 0; i < times; i++) {
-          const head = ctx.bot.entity.position.offset(0, 1, 0);
-          await ctx.kits.dig.dig({ at: { x: head.x, y: head.y, z: head.z } });
+        const logs = await ctx.kits.sense.find({ blocks: "*_log", radius: 16, count: times });
+        for (const log of logs) {
+          await ctx.kits.move.to({ position: log, range: 3 });
+          await ctx.kits.dig.dig({ at: log });
         }
-        return ctx.kits.move.to({ position: [0, 64, 0] });
+        const here = ctx.bot.entity.position.floored();
+        return { chopped: logs.length, standingAt: { x: here.x, y: here.y, z: here.z } };
       },
     }),
   },
-});
+);
 ```
 
 Save it from a program with `await kits.save(source)`, or from the terminal with `minebot kits save <file>`. Nothing is written when the source is rejected: it must compile, use only kits this body offers, not take a built-in kit's name, and pass the escape audit. `kits.source("move")` prints a built-in kit's source — start from it. A saved kit is offered and active immediately. Several bodies can share the kit directory: a kit one body saves works on the others without a restart. Run an action once before you save the kit with `kits.try(source, { action, args })`, and take a save back with `kits.revert(name, version)`; see `minebot/writing-kits`.

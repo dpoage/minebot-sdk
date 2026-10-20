@@ -6,10 +6,11 @@ import path from "node:path";
 import { stringify as stringifyYaml } from "yaml";
 import { LessonInput, type LessonInput as LessonInputType, type PageMeta, type PageSummary, type SearchHit, type WikiPage } from "../protocol/index.ts";
 import { countTokens, rankFields, type RankField } from "../rank.ts";
+import { PACKAGE_ROOT } from "../package.ts";
 import { readPages, tokens, visible, type WikiView } from "./page.ts";
 
 /** Default location of the curated pages. */
-export const WIKI_DIR = path.resolve(import.meta.dirname, "../../wiki");
+export const WIKI_DIR = path.join(PACKAGE_ROOT, "wiki");
 
 const LESSONS = "lessons";
 const FULL_VIEW: WikiView = { kits: true, milestones: true, agentKits: true, triggers: true };

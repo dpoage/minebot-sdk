@@ -8,11 +8,30 @@ The SDK does not decide anything for the agent. The harness owns the turn loop, 
 
 ## Requirements
 
-- Node.js 24 or later. Node runs the TypeScript sources directly, without a build step.
+- Node.js 24 or later. An installed package runs compiled JavaScript. A checkout runs the TypeScript sources directly, without a build step.
 - Java 25 or later, for the development server.
 - Minecraft 26.1. minebot pins this version in `src/mc/version.ts` (`MC_VERSION`). It is the newest version in Mineflayer 4.39's `testedVersions`.
 
+## Install
+
+```sh
+npm install minebot-sdk
+npx minebot --help
+```
+
+The package is the authoring library plus the `minebot` command. The body stays a separate process: `minebot body` starts it, and everything else talks to it over HTTP. The package has three entry points:
+
+| Import | What it is |
+| - | - |
+| `minebot-sdk/kit` | The surface for writing kits, built-in and agent-written: `defineKit`, `action`, `z`, and the helpers and types that kits use. |
+| `minebot-sdk/client` | A typed HTTP client for a running body (`BodyClient`), and the request and response types of its API. It contains no CLI or MCP code. |
+| `minebot-sdk/testing` | A test harness that runs kits against a fake bot. |
+
+The package ships its kit sources (`minebot kits source <kit>` prints one) and the wiki pages. Each entry point resolves to compiled JavaScript with type declarations.
+
 ## Quick start
+
+The steps below run from a checkout of this repository. With the installed package, run `npx minebot` where they say `npm run minebot --`. The development server script is part of the checkout only; the installed package works against any Minecraft 26.1 server.
 
 1. Install the dependencies:
 
@@ -45,7 +64,7 @@ The SDK does not decide anything for the agent. The harness owns the turn loop, 
 Register the MCP server with your harness. For Claude Code:
 
 ```sh
-claude mcp add minebot -- node /absolute/path/to/minebot/src/cli.ts mcp --bot alpha
+claude mcp add minebot -- node --conditions=minebot-sdk:source /absolute/path/to/minebot/src/cli.ts mcp --bot alpha
 ```
 
 The MCP server exposes these tools:
@@ -178,7 +197,7 @@ The framework counts every call of every action, nested calls included: how ofte
 
 ## Agent kits
 
-An agent can save kits of its own, in the same shape as the built-ins: one `export default defineKit({ name, description, uses, actions })` with `action({ doc, args, run })` and the schema builder `z` provided as globals — no imports.
+An agent can save kits of its own, in the same shape as the built-ins: one import, `import { defineKit, action, z } from "minebot-sdk/kit"` (the only import a kit may have; it also exports the helpers the built-ins use), then one exported kit, `export default defineKit({ name, description, uses }, { actionName: action({ doc, args, returns, run }) })` or, as the built-ins are written, `export const <name> = defineKit(...)` (other `export const` and `export function` declarations are ignored, so the output of `minebot kits source <kit>` can be saved under a new name as it is). `returns` is a zod schema of what the action returns, checked on every call and typed for callers; `uses` types `ctx.kits` inside the actions.
 
 ```js
 await kits.save(source);       // in a program
@@ -194,6 +213,61 @@ The CLI serves the same over `minebot kits save [file]` (stdin when omitted), `m
 Saving validates before it writes, and nothing is written when the source is rejected: it must compile, pass the escape audit, use only kits this body offers, and not take a built-in kit's name. A saved kit is offered and active immediately. `kits.try` runs the same validation, then calls one action once against the live bot, as part of the current program, and returns the action's result or throws its error. It writes nothing and registers nothing: the `ctx.store` of the tried kit and of every kit it calls is a throwaway, and no call is counted in the statistics. Over MCP, CLI, and HTTP, a try is a program run, so it is recorded in the history like one.
 
 Saving over an existing kit keeps the old source. Each different source is a numbered version, stored with the time and the body that saved it in `.history/<kit>/<n>.ts` and `<n>.json` inside the agent-kit directory. `kits.versions(name)` lists them, and `kits.revert(name, version)` saves an earlier one again as a new version, validated like any save, so the history only grows. Removing a kit keeps its history. Agent kits are a capability of their own: on by default, off with `--no-agent-kits`, and `--agent-kits <dir>` picks the directory (default: the state directory's `agent-kits/`). Several bodies can share the directory; a kit one body saves works on the others without a restart, and they share the history, each version noting which body saved it. A bad file on disk never stops a body: it is skipped and reported as a `kit_error` event.
+
+## Authoring workspace
+
+`minebot init [dir]` scaffolds a TypeScript workspace for writing kits and programs. The body stays a separate process; the workspace holds source files and a type checker.
+
+```sh
+npx -p minebot-sdk minebot init ws && cd ws
+npm install                                    # minebot-sdk and typescript
+npx minebot body --bot dev --agent-kits ./kits  # in another terminal: the body loads kits/*.ts
+npx minebot types --bot dev --out minebot-env.d.ts
+npx tsc                                        # checks kits/ and programs/
+npx minebot run --bot dev programs/hello.ts
+```
+
+`init` writes `package.json` (dependency `minebot-sdk`, dev dependency `typescript`), a strict `tsconfig.json`, `kits/hello.ts` (an example kit that calls the `move` kit), `programs/hello.ts` (a program that calls it), `test/hello.test.ts` (a kit test on the harness, run with `npm test`), `.gitignore`, and a README. It never overwrites a file that exists.
+
+A kit imports its helpers from `"minebot-sdk/kit"`. The body loads every `.ts` file in `kits/` and reloads a file when you save it. Programs are the body of an async function, so they may use top-level `await` but not a top-level `return`; `minebot run` strips the types of a `.ts` file before it sends the program.
+
+`minebot types [--out <file>]` writes one declaration file for the body it asks. It declares the kits that the package does not ship — the operator's and the agents' — in `KitRegistry`, with each action's arguments and result typed from its zod schemas, and it declares the program globals (`bot`, `kit`, `kits`, `notes`, `wiki`, `triggers`, `status`, ...) for what that body offers. A body without a feature gets no declaration for it. The output depends only on the body's kits, so regenerate it after they change, and commit it if you like. The kit schemas are also served as `GET /kits/schemas`; a body without kits gets the globals only. Type checking is plain `tsc` in the workspace; the body does not type-check on save.
+
+## Testing kits
+
+`minebot-sdk/testing` runs a kit's actions in a test, with no Minecraft server. `createKitHarness` builds the real kit framework (`KitHost`: argument and result validation, `uses`, per-kit in-memory stores, the active set) around a fake Mineflayer bot on the real registry for the version the body targets. `init` scaffolds a workspace with an example test (`npm test`).
+
+```ts
+import assert from "node:assert/strict";
+import { test } from "node:test";
+import { createKitHarness } from "minebot-sdk/testing";
+import woodcutter from "../kits/woodcutter.ts"; // the kit from the wiki page minebot/writing-kits
+
+test("chop digs two logs and keeps the drops", async () => {
+  const h = createKitHarness({
+    kits: [woodcutter],                                              // joins the built-in kits; a same-named kit replaces one
+    blocks: [{ name: "oak_log", from: [6, 64, 0], to: [6, 66, 0] }],  // a trunk, three blocks tall
+    inventory: { stone_axe: 1 },
+  });
+  const result = await h.call("woodcutter.chop", { times: 2 });       // "kit.action": validated like a body call
+  assert.deepEqual(result, { chopped: 2, standingAt: { x: 5, y: 64, z: 0 } });
+  assert.equal(h.count("oak_log"), 2);
+  assert.equal(h.blockAt([6, 64, 0]).name, "air");
+  assert.ok(h.calls.some((c) => c.kit === "dig" && c.action === "dig")); // every action call is recorded, nested ones too
+});
+```
+
+Options (all optional): `kits`, `builtins` (offer the built-in kits, default true), `active`, `inventory` (`{ item: count }`), `equipment` (`{ head: "iron_helmet" }`, from the inventory), `blocks` (a block at `at`, or a box `from`/`to`, with block `properties`), `ground` (a one-block-thick layer, default stone at y 63; `false` for a world of air), `entities` (`{ name: "cow", at }`, a player with `username`, a dropped item with `name: "item", item`), `position` (default the top of the ground at the origin), `time` (ticks since dawn), `health`, `food`, and `username`. The harness gives back `call(path, args)`, `kit` (the built-in kits, typed, as a program sees them), `calls`, `logs`, `chat`, `inventory`, `count`, `give`, `blockAt`, `setBlock`, `position`, `teleport`, `spawn`, `entities`, `advance(ticks)`, `abort(reason)`, `furnaceAt`, the `bot`, and the `host`.
+
+What the fake bot does:
+
+- **World.** `blockAt`, `findBlock`, and `findBlocks` over the ground layer and the blocks you set (real prismarine blocks, so harvest tools and dig times follow the registry). `findBlocks` follows Mineflayer: the point is floored, `maxDistance` and `count` default when 0, a predicate is first called with a position-less block, and a function `useExtraInfo` filters. Air is the rest of the world and is not enumerable. Digging removes the block, advances the clock by the dig time, and drops the items: the registry's drops, plus what it leaves out (the crop item of ripe wheat and beetroots, a bed's head). Placing sets a block, spends the held item, and refuses a cell the bot or another creature stands in. Digging, placing, crafting at a table, and opening furnaces are limited to 4.5 blocks from the eyes: out of reach, the real server ignores the click and Mineflayer waits forever, so the harness throws instead.
+- **Inventory.** Mineflayer's slot layout with `items()`, `equip`, `toss` (a null count tosses one), `heldItem`, `quickBarSlot`, `emptySlotCount()`, and `getEquipmentDestSlot`; crafting with the real recipes (`recipesFor`, `recipesAll`, `craft`). Item drops are entities: walk over them to pick them up.
+- **Pathfinding.** `goto` and `setGoal` teleport to the nearest standable spot that satisfies the goal (`goals.GoalNear`, `GoalBlock`, `GoalInvert`, ...), or fail with `No path to the goal!`: within 12 blocks of the goal, or for `GoalInvert` within 64 blocks of the bot. Like the plugin, `setGoal` returns at once and emits `goal_reached` on a later turn, then clears a goal that is not dynamic.
+- **Furnaces.** Furnace blocks open as windows, and their contents cook on the harness clock with the real burn and smelt times; an open window emits `update` and reports `fuel` as a fraction of the fuel item burning. `ctx.sleep(ms)` passes `ms / 50` ticks and then yields to the event loop, so a kit that polls with `ctx.sleep` lets `within` timeouts and timed `abort()` calls fire. `advance(ticks)` passes more.
+- **Entities, time, health, food, and chat.** Entities with registry categories (`isHostile` works), the day clock (`time.day` counts days), `bot.chat` into `chat`, `bot.consume` for food. Data members the harness does not model read as Mineflayer's idle value (`currentWindow` and `targetDigBlock` are null, `usingHeldItem` is false).
+
+Scope is decision logic, not physics: nothing walks, collides, or takes time except where listed (dropped items do fall to the ground). The harness clock is its own: it does not fake `Date.now()`, so a loop bounded by wall-clock time (a deadline built from `Date.now()`) still ends by that deadline in real time. Everything else in Mineflayer is unsupported, and calling it throws `not supported by minebot-sdk/testing: bot.attack` (an `UnsupportedApiError`) instead of returning `undefined`. That covers combat, sleeping, containers, raycasts, using items, and the raw client. A passing test shows the kit's logic holds; `kits.try` on a live body shows how it behaves there.
 
 ## Triggers
 
@@ -305,6 +379,7 @@ See [wiki/README.md](wiki/README.md) for the page format and the rules for addin
 | - | - |
 | `body` | Starts a body and connects it to a server. Options: `--username`, `--host`, `--port`, `--api-host`, `--api-port`, `--history <file>`, `--kits <a,b>`, `--lock-kits`, `--no-agent-kits`, `--agent-kits <dir>`, `--wiki <off\|read\|write>`, `--wiki-dir <dir>`, `--lessons <dir>`, `--state <dir>`, `--milestones <file>`, `--no-milestones`, `--no-triggers`. |
 | `list` | Lists the running bodies and their connection state. |
+| `init [dir]` | Scaffolds an authoring workspace; see [Authoring workspace](#authoring-workspace). Needs no body. |
 | `observe` | Prints the observation as JSON. `--brief` prints one line. |
 | `status` | Prints deaths, reconnects, and progress toward the body's milestones. |
 | `milestones` | Prints the milestones. `milestones set <file>` replaces them; `milestones clear` removes them. Not on a body with `--no-milestones`. |
@@ -314,6 +389,7 @@ See [wiki/README.md](wiki/README.md) for the page format and the rules for addin
 | `events` | Prints buffered events. Use `--since <seq>` to get only newer events. |
 | `wait` | Blocks until a matching event arrives, then prints it as JSON, or `timed out`. Options: `--types a,b`, `--from <name>`, `--match <regex>`, `--since <seq>`, `--timeout <ms>`. |
 | `chat <message>` | Sends a chat message. |
+| `types` | Prints TypeScript declarations for the body's program globals and kits; `--out <file>` writes them. See [Authoring workspace](#authoring-workspace). |
 | `triggers` | Lists triggers. `triggers add <name> --on a,b [file]` saves one (the program comes from stdin when the file is omitted; options `--from`, `--match`, `--when`, `--cooldown`, `--timeout`, `--priority`, `--preempt`). `triggers rm <name>`, `triggers enable <name>`, and `triggers disable <name>`. Only on a body that has triggers. |
 | `kits` | Lists the kits and how often their actions worked. `kits use <kit...>` replaces the active kits (not on a locked body). `kits docs [kit...]` prints the reference. `kits search <query>` finds kits and actions by what they do. `kits save [file]`, `kits rm <kit>`, `kits source <kit>`, `kits try [file] --action <name> [--args <json>]`, `kits versions <kit>`, and `kits revert <kit> <version>` manage agent kits. Only on a body that offers kits. |
 | `wiki` | `wiki search <query>`, `wiki read <page>`, `wiki list [section]`, and in `write` mode `wiki lesson --title <t> [--tags a,b]` with the body text on stdin. Only on a body with the wiki. |
@@ -350,6 +426,10 @@ npm test
 ```
 
 The tests cover the program runner, the kit framework, agent kits, the wiki, the capability table, the package boundaries, what each kind of body shows an agent, the escape audit, and the benchmark grading. They do not need a Minecraft server.
+
+A checkout runs from source. The `minebot-sdk/...` entry points in `package.json` have a `minebot-sdk:source` condition (package-scoped, so a consumer that turns on a generic `source` condition does not load files the package does not ship) that points at `src/`, and the npm scripts, the type checker (`customConditions` in `tsconfig.json`), and the benchmark images pass it (`node --conditions=minebot-sdk:source`). Built-in kits import `minebot-sdk/kit` like any other kit, and the condition makes that import resolve to `src/kit/public.ts` here and to `dist/kit/public.js` in an installed package. Run a script that loads kits as `node --conditions=minebot-sdk:source <file>`.
+
+`npm run build` compiles `src/` to `dist/` (JavaScript and `.d.ts`; `tsconfig.build.json`), and `npm pack` runs it first. The tarball holds `dist/`, the kit sources in `src/kit/kits/`, `wiki/`, the license, and this README. `npm publish --dry-run` lists what a release would ship.
 
 ## Benchmark
 

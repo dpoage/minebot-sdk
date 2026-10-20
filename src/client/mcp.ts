@@ -49,7 +49,7 @@ export function toolPlan(features: BodyFeatures): Record<string, { enabled: bool
     kit_save: {
       enabled: caps.agentKits,
       description:
-        "Save your own kit as TypeScript source: `export default defineKit({ name, description, uses, actions })` with action({ doc, args, run }) and the zod schema builder z as globals — no imports. Start from kit_source of a built-in kit, and check it with kit_try first. Nothing is written when the source is rejected. Saving over a kit keeps the old source (kit_versions).",
+        "Save your own kit as TypeScript source: `import { defineKit, action, z } from \"minebot-sdk/kit\";` (the only import allowed; it also exports nameMatcher, Position, goals and the other helpers that the built-in kits rely on), then `export default defineKit({ name, description, uses }, { actionName: action({ doc, args, returns, run }) })`; `returns` is a zod schema of what the action returns, checked on every call. Start from kit_source of a built-in kit, and check it with kit_try first. Nothing is written when the source is rejected. Saving over a kit keeps the old source (kit_versions).",
     },
     kit_remove: {
       enabled: caps.agentKits,
@@ -273,7 +273,7 @@ export async function serveMcp(bodyName: string): Promise<void> {
   );
   const kitSave = server.registerTool(
     "kit_save",
-    { description: "", inputSchema: { source: z.string().min(1).max(128 * 1024).describe("TypeScript source: export default defineKit({ ... })") } },
+    { description: "", inputSchema: { source: z.string().min(1).max(128 * 1024).describe("TypeScript source: an import from \"minebot-sdk/kit\", then export default defineKit({ ... }, { ... })") } },
     ({ source }) => call(async (c) => json(await c.saveKit(source))),
   );
   const kitRemove = server.registerTool(
@@ -303,7 +303,7 @@ export async function serveMcp(bodyName: string): Promise<void> {
     {
       description: "",
       inputSchema: {
-        source: TryKitInput.shape.source.describe("TypeScript source: export default defineKit({ ... })"),
+        source: TryKitInput.shape.source.describe("TypeScript source: an import from \"minebot-sdk/kit\", then export default defineKit({ ... }, { ... })"),
         action: TryKitInput.shape.action.describe("The action to run"),
         args: TryKitInput.shape.args.describe("The action's argument object"),
         timeout_ms: TryKitInput.shape.timeoutMs.describe(`Abort after this many milliseconds. Default ${DEFAULT_TIMEOUT_MS}.`),

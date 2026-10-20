@@ -82,7 +82,7 @@ export function programApiDoc(features: BodyFeatures): string {
   }
   if (caps.agentKits) {
     globals.push(
-      "- kits.save(source), kits.remove(name), kits.source(name): write, delete, and read agent kits — TypeScript files in the same shape as the built-ins (`export default defineKit({ ... })`); run `kits.source(\"move\")` and read `minebot api` for an example. kits.try(source, { action, args }) compiles and audits the source like a save, runs that one action once, and returns its result or throws its error; nothing is saved. Saving over a kit keeps the old source: kits.versions(name) lists the versions, kits.revert(name, version) saves one again.",
+      "- kits.save(source), kits.remove(name), kits.source(name): write, delete, and read agent kits — TypeScript files in the same shape as the built-ins: `import { defineKit, action, z } from \"minebot-sdk/kit\";` (the only import allowed; it also exports the helpers the built-ins use, such as nameMatcher, Position, goals) then one `export default defineKit({ name, description, uses }, { actionName: action({ doc, args, returns, run }) })` (or `export const <name> = defineKit(...)`, as the built-ins are written; other exports are ignored); run `kits.source(\"move\")` and read `minebot api` for an example. kits.try(source, { action, args }) compiles and audits the source like a save, runs that one action once, and returns its result or throws its error; nothing is saved. Saving over a kit keeps the old source: kits.versions(name) lists the versions, kits.revert(name, version) saves one again.",
     );
   }
   if (caps.triggers) {
