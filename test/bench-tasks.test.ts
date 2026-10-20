@@ -6,7 +6,7 @@ import { MilestoneSpec } from "../bench/verify/milestones.ts";
 
 const BENCH = path.join(import.meta.dirname, "..", "bench");
 const TASKS = path.join(BENCH, "tasks");
-const NEW_FAMILIES = ["iron-tools", "survive-nights", "stock-chest", "two-sessions"];
+const NEW_FAMILIES = ["iron-tools", "diamond-night", "survive-nights", "stock-chest", "two-sessions"];
 const TIERS = ["raw", "kits", "wiki", "full"];
 
 const read = (...parts: string[]) => readFile(path.join(TASKS, ...parts), "utf8");
@@ -94,5 +94,20 @@ describe("generated tasks", () => {
     const solve = await read("survive-nights-raw", "solution", "solve.sh");
     assert.match(solve, /minebot wait --types day/);
     assert.match(solve, /-lt 2 \]/);
+  });
+
+  it("makes diamond-night require the whole chain, the first dawn, and no death, with reflexes on", async () => {
+    for (const tier of TIERS) {
+      const spec = MilestoneSpec.parse(JSON.parse(await read(`diamond-night-${tier}`, "tests", "milestones.json")));
+      assert.equal(spec.allRequired, true);
+      const ids = spec.milestones.map((m) => m.id);
+      assert.deepEqual(ids.slice(-4), ["iron_ingot", "iron_pickaxe", "diamond", "diamond_pickaxe"]);
+      assert.deepEqual(spec.milestones.find((m) => m.id === "diamond")?.blocks, ["diamond_ore", "deepslate_diamond_ore"]);
+      assert.deepEqual(spec.checks.map((c) => c.type), ["nights", "deaths"]);
+      assert.doesNotMatch(await read(`diamond-night-${tier}`, "environment", "docker-compose.yaml"), /--no-triggers/);
+    }
+    const solve = await read("diamond-night-raw", "solution", "solve.sh");
+    assert.match(solve, /const TARGET = "diamond_pickaxe"/);
+    assert.match(solve, /bot\.time\.day < 1/);
   });
 });

@@ -16,7 +16,7 @@ type Milestones = NonNullable<MilestoneSpecInput["milestones"]>;
 type Milestone = Milestones[number];
 
 /** The programs of bench/oracle/progression.js, by TARGET. */
-type OracleTarget = "logs" | "wooden_pickaxe" | "stone_pickaxe" | "iron_pickaxe" | "shelter" | "stock_chest" | "stash_chest" | "retrieve_logs";
+type OracleTarget = "logs" | "wooden_pickaxe" | "stone_pickaxe" | "iron_pickaxe" | "diamond_pickaxe" | "shelter" | "stock_chest" | "stash_chest" | "retrieve_logs";
 
 /** One agent session of a task: its goal, its time, its reference solution, and what grades it. */
 interface Stage {
@@ -128,6 +128,18 @@ const cobblestone = (n: number): Milestone => ({
   count: n,
 });
 
+/** The iron pickaxe chain: iron-tools grades it, and diamond-night builds on it. */
+const ironChain: Milestones = [
+  ...woodenChain,
+  cobblestone(3),
+  crafted("stone_pickaxe", "Craft a stone pickaxe", "stone_pickaxe"),
+  // Iron ore is dug, and it drops raw iron.
+  { id: "raw_iron", description: "Obtain three raw iron", via: "gathered", obtained: ["raw_iron"], blocks: ["iron_ore", "deepslate_iron_ore"], count: 3 },
+  crafted("furnace", "Craft a furnace", "furnace"),
+  { id: "iron_ingot", description: "Smelt three iron ingots", via: "crafted", obtained: ["iron_ingot"], count: 3 },
+  crafted("iron_pickaxe", "Craft an iron pickaxe", "iron_pickaxe"),
+];
+
 /** Nights that survive-nights asks for: night 1 starts about 11 minutes after the clock starts, and each day is 20 minutes of server time. */
 const NIGHTS = 2;
 /** Logs that the stash chest holds in two-sessions. */
@@ -200,15 +212,51 @@ const TASKS: TaskSpec[] = [
         allRequired: true,
         agentTimeoutSec: 3600,
         oracleTarget: "iron_pickaxe",
+        milestones: ironChain,
+      },
+    ],
+  },
+  {
+    name: "diamond-night",
+    description: "From an empty inventory, craft a diamond pickaxe and be alive at dawn after the first night.",
+    keywords: ["crafting", "mining", "smelting", "survival"],
+    difficulty:
+      "Fourteen dependent steps: the iron pickaxe chain, then diamonds dug from 60 blocks and more below the surface, and the diamond pickaxe; and no death until the first night is over. Adds a deep descent past caves, lava, and the dark, a night in which hostile creatures spawn, and a clock the agent cannot hurry: it has to stay alive until dawn even when the pickaxe is done early.",
+    extraKits: ["survival", "combat"],
+    triggers: true,
+    stages: [
+      {
+        name: "dig",
+        goal: `Craft a diamond pickaxe, and do not die before the first night is over.
+
+Diamonds need an iron pickaxe, and they lie deep: diamond ore is most common far below sea level, under the deepslate. The world starts at dawn. A Minecraft day is 24000 ticks, which is 20 minutes of real time. The sun sets about 13000 ticks into the day (11 minutes after the world starts), and the night ends when the sun comes up on the next day (24000 ticks). Hostile creatures spawn in the dark, at night on the surface and at any time in caves.
+
+You are graded when you stop or when the time limit passes, whichever is first. By then the server's clock must have passed the end of the first night (24000 ticks), the diamond pickaxe must be crafted, and the player must never have died: stopping early gives no reward. \`minebot wait --types day,hostile_near,low_health --timeout <ms>\` blocks until one of those events arrives, up to 30 minutes, and costs nothing while it waits.`,
+        grading:
+          "Every step of the chain counts, not only the diamond pickaxe: the iron has to be mined and smelted, and the diamonds have to be mined. Smelting counts as crafting: an item that you take out of a furnace is counted when you take it. The server's clock and the number of times the player died are graded too: the clock has to show at least one full day (24000 ticks), and the player must not have died.",
+        allRequired: true,
+        agentTimeoutSec: 5400,
+        oracleTarget: "diamond_pickaxe",
+        oracleAfter: `# The pickaxe is made and the player is walled in. Keep it alive until the server's clock passes the end of the first night.
+cat > /tmp/dawn.js <<'EOF'
+while (bot.time.day < 1) {
+  const foe = bot.nearestEntity((e) => e.kind === "Hostile mobs" && e.position.distanceTo(bot.entity.position) < 3.5);
+  if (foe) bot.attack(foe);
+  await sleep(1000);
+}
+return bot.time.time;
+EOF
+minebot run --timeout 1800000 /tmp/dawn.js
+`,
         milestones: [
-          ...woodenChain,
-          cobblestone(3),
-          crafted("stone_pickaxe", "Craft a stone pickaxe", "stone_pickaxe"),
-          // Iron ore is dug, and it drops raw iron.
-          { id: "raw_iron", description: "Obtain three raw iron", via: "gathered", obtained: ["raw_iron"], blocks: ["iron_ore", "deepslate_iron_ore"], count: 3 },
-          crafted("furnace", "Craft a furnace", "furnace"),
-          { id: "iron_ingot", description: "Smelt three iron ingots", via: "crafted", obtained: ["iron_ingot"], count: 3 },
-          crafted("iron_pickaxe", "Craft an iron pickaxe", "iron_pickaxe"),
+          ...ironChain,
+          // Diamond ore is dug, and it drops diamonds.
+          { id: "diamond", description: "Obtain three diamonds", via: "gathered", obtained: ["diamond"], blocks: ["diamond_ore", "deepslate_diamond_ore"], count: 3 },
+          crafted("diamond_pickaxe", "Craft a diamond pickaxe", "diamond_pickaxe"),
+        ],
+        checks: [
+          { id: "night_1", description: "Live to the end of the first night", type: "nights", nights: 1 },
+          { id: "no_deaths", description: "Do not die", type: "deaths", max: 0 },
         ],
       },
     ],

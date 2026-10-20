@@ -1,9 +1,9 @@
 // Reference ("oracle") program for the benchmark tasks. It proves each task is solvable
 // through the body API and that its verifier passes. Run it with a TARGET prepended:
 //   { echo 'const TARGET = "wooden_pickaxe";'; cat progression.js; } | minebot run --timeout 900000
-// TARGET is "logs" (collect LOG_GOAL logs), "wooden_pickaxe", "stone_pickaxe", "iron_pickaxe", "shelter" (dig in and
-// seal the hole; the shell waits for the nights), "stock_chest", "stash_chest" (the first session of two-sessions),
-// or "retrieve_logs" (the second).
+// TARGET is "logs" (collect LOG_GOAL logs), "wooden_pickaxe", "stone_pickaxe", "iron_pickaxe", "diamond_pickaxe", "shelter"
+// (dig in and seal the hole; the shell waits for the nights), "stock_chest", "stash_chest" (the first session of
+// two-sessions), or "retrieve_logs" (the second).
 // The first three targets use Mineflayer alone, in every tier. The others use the kits where the body offers them
 // (`kit` is defined) and Mineflayer where it does not, so one program solves each task in each tier.
 /* global TARGET, kit */
@@ -334,8 +334,14 @@ async function ironPickaxe() {
   await mine(["stone", "cobblestone"], "cobblestone", 11);
   await stonePickaxe();
   await mine(["iron_ore", "deepslate_iron_ore"], "raw_iron", 3, 96);
+  // The pathfinder spends cobblestone as scaffolding on the way to the ore and back; the furnace needs 8.
+  const cobblestoneForFurnace = async () => {
+    if (count((name) => name === "cobblestone") < 8) await mine(["stone", "cobblestone"], "cobblestone", 8);
+  };
   if (K) {
     // Back to the table, on the surface: make() places a furnace on open ground near where it stands, and the ore was underground.
+    await tableNearby();
+    await cobblestoneForFurnace();
     await tableNearby();
     // Smelts the raw iron at a furnace that it crafts from the cobblestone and places, then crafts the pickaxe.
     // A busy server can leave a placement unanswered; the next attempt starts from the table again.
@@ -351,11 +357,247 @@ async function ironPickaxe() {
       }
     }
   }
+  await tableNearby();
+  await cobblestoneForFurnace();
   const table = await tableNearby();
   await craft("furnace", 1, table);
   const furnace = await placeNear("furnace");
   await smelt(furnace, "raw_iron", 3);
   await craft("iron_pickaxe", 1, await tableNearby());
+}
+
+// ---- diamond_pickaxe: the iron pickaxe chain, three diamonds from deep underground, the pickaxe ----
+
+const DIAMOND_ORES = ["diamond_ore", "deepslate_diamond_ore"];
+
+async function diamondPickaxe() {
+  // Plans through rock take long on a busy machine: give the pathfinder more time than its 5 s default.
+  bot.pathfinder.thinkTimeout = 30_000;
+  // Two logs more than the iron pickaxe needs: a crafting table down at the diamonds, so the pickaxe needs no climb back.
+  const species = await collectLogs(9);
+  await ironPickaxe();
+  // Tunneling 60 blocks and more down digs some 200 blocks, which wears out a stone pickaxe and would wear out the one iron
+  // pickaxe that the diamonds need. Make two spare stone pickaxes for the rock, and dig with the iron one only where nothing
+  // cheaper harvests the block.
+  await spareStonePickaxes(species, 2);
+  const fastest = bot.pathfinder.bestHarvestTool.bind(bot.pathfinder);
+  bot.pathfinder.bestHarvestTool = (block) => cheapTool(block) ?? fastest(block);
+  await diamonds(3);
+  if (K) await K.crafter.make({ item: "diamond_pickaxe" });
+  else {
+    await planksFrom(species, 4);
+    if (!has("crafting_table")) await craft("crafting_table");
+    if (count((n) => n === "stick") < 2) {
+      await planksFrom(species, 2);
+      await craft("stick");
+    }
+    const table = await placeNear("crafting_table");
+    await craft("diamond_pickaxe", 1, table);
+  }
+  // The night has to pass without a death, and the caves are dark: clear the creatures nearby, then wall the player in.
+  await fightOff();
+  await sealIn();
+}
+
+/** The cheapest pickaxe in the inventory that harvests `block`, stone before wood (wood digs deepslate slowly), iron excepted; none for diamond ore. */
+function cheapTool(block) {
+  if (DIAMOND_ORES.includes(block.name)) return undefined;
+  return ["stone_pickaxe", "wooden_pickaxe"].map((name) => bot.inventory.items().find((i) => i.name === name)).find((tool) => tool && block.canHarvest(tool.type));
+}
+
+/** Crafts `n` more stone pickaxes at the crafting table, with sticks from `species` planks and cobblestone it mines if short. */
+async function spareStonePickaxes(species, n) {
+  if (count((name) => name === "cobblestone") < 3 * n) await mine(["stone", "cobblestone"], "cobblestone", 3 * n);
+  while (count((name) => name === "stick") < 2 * n) {
+    await planksFrom(species, 2);
+    await craft("stick");
+  }
+  const table = await tableNearby();
+  for (let i = 0; i < n; i++) await craft("stone_pickaxe", 1, table);
+}
+
+const LIQUID = /lava|water/;
+const isSolid = (block) => block?.boundingBox === "block";
+const FACES = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]];
+/** True when the cell holds lava or water, or touches it: digging it would let the liquid in. */
+const wet = (cell) => [[0, 0, 0], ...FACES].some(([x, y, z]) => LIQUID.test(bot.blockAt(cell.offset(x, y, z))?.name ?? ""));
+
+/** Digs `cell` until it is open (falling gravel or sand fills it again), with the cheapest pickaxe that harvests the block. */
+async function digCell(cell) {
+  for (let i = 0; i < 6 && isSolid(bot.blockAt(cell)); i++) {
+    const block = bot.blockAt(cell);
+    const tool = bot.pathfinder.bestHarvestTool(block);
+    if (tool) await bot.equip(tool, "hand");
+    await within(15_000, "digging", bot.dig(block, true), () => bot.stopDigging());
+    await sleep(150);
+  }
+  if (isSolid(bot.blockAt(cell))) throw new Error(`could not clear ${cell}`);
+}
+
+/** Walks (jumping for a step up) into the open cell next to the player, and stops in its middle. */
+async function stepInto(cell, jump) {
+  const center = cell.offset(0.5, 0, 0.5);
+  const flat = () => Math.hypot(bot.entity.position.x - center.x, bot.entity.position.z - center.z);
+  bot.setControlState("forward", true);
+  if (jump) bot.setControlState("jump", true);
+  try {
+    for (const end = Date.now() + 3000; Date.now() < end && flat() > 0.3; ) {
+      await bot.lookAt(new Vec3(center.x, bot.entity.position.y + 1.6, center.z), true);
+      await sleep(50);
+    }
+  } finally {
+    bot.clearControlStates();
+  }
+  await sleep(300);
+  if (flat() > 0.6) throw new Error(`could not step into ${cell}`);
+}
+
+/** True when the player can stand in `cell` or drop at most 3 blocks below it onto solid ground, with no liquid on the way. */
+function landing(cell) {
+  for (let d = 1; d <= 4; d++) {
+    const below = bot.blockAt(cell.offset(0, -d, 0));
+    if (isSolid(below)) return true;
+    if (LIQUID.test(below?.name ?? "")) return false;
+  }
+  return false;
+}
+
+/**
+ * Tunnels toward `target` until the eyes are within `reach` of it: a staircase down while the target is below, a two-high
+ * tunnel at its level, a step up while it is above. It digs every cell itself instead of planning with the pathfinder, which
+ * gives up on long digs through rock and plans slowly on a busy machine. A direction whose cells hold or touch lava or water,
+ * or that ends over a drop of more than 3 blocks, is not taken; the next one toward the target is. When no step down is safe
+ * (an aquifer or a cave below), it steps level; when no step at all is, it lets the pathfinder walk it a few blocks aside.
+ */
+async function tunnelTo(target, reach = 4) {
+  let heading = null;
+  let sidesteps = 0;
+  const visited = new Set();
+  for (let step = 0; step < 500; step++) {
+    if (signal.aborted) throw signal.reason;
+    // Caves are dark at any hour: deal with a creature that comes close before the next step.
+    if (bot.nearestEntity((e) => isHostileMob(e) && e.position.distanceTo(bot.entity.position) < 4)) await fightOff(5, 20_000);
+    const feet = bot.entity.position.floored();
+    visited.add(feet.toString());
+    if (bot.entity.position.offset(0, 1.62, 0).distanceTo(target) <= reach) return;
+    const dx = Math.floor(target.x) - feet.x;
+    const dz = Math.floor(target.z) - feet.z;
+    const dy = Math.floor(target.y) - feet.y;
+    const along = [[Math.sign(dx), 0], [0, Math.sign(dz)]].filter(([x, z]) => x || z);
+    if (Math.abs(dz) > Math.abs(dx)) along.reverse();
+    // Toward the target first; straight above or below it, keep the heading; then any side.
+    const headings = [...along, ...(heading ? [heading] : []), ...SIDES].filter((h, i, all) => all.findIndex((o) => o[0] === h[0] && o[1] === h[1]) === i);
+    const wanted = dy < 0 ? -1 : dy > 1 ? 1 : 0;
+    let moved = false;
+    // A cell the tunnel stood in before is a way back, not forward: going there again is how a tunnel oscillates.
+    for (const climb of wanted === 0 ? [0] : [wanted, 0]) {
+      for (const [x, z] of headings) {
+        const next = feet.offset(x, climb, z);
+        if (visited.has(next.toString())) continue;
+        const cells =
+          climb < 0 ? [feet.offset(x, 1, z), feet.offset(x, 0, z), next] : climb > 0 ? [feet.offset(0, 2, 0), next, next.offset(0, 1, 0)] : [next, next.offset(0, 1, 0)];
+        if (cells.some(wet) || !landing(next)) continue;
+        try {
+          for (const cell of cells) await digCell(cell);
+          await stepInto(next, climb > 0);
+          heading = [x, z];
+          moved = true;
+          break;
+        } catch (err) {
+          log(`tunnel at ${feet}: ${err.message}`);
+        }
+      }
+      if (moved) break;
+    }
+    if (moved) continue;
+    if (++sidesteps > 4) throw new Error(`boxed in at ${feet}: liquid or a drop on every side`);
+    const angle = Math.random() * 2 * Math.PI;
+    log(`boxed in at ${feet}; walking aside`);
+    await goto(new goals.GoalNear(feet.x + Math.round(8 * Math.cos(angle)), feet.y, feet.z + Math.round(8 * Math.sin(angle)), 2), 60_000).catch((err) => log(`walking aside: ${err.message}`));
+  }
+  throw new Error(`still far from ${target}`);
+}
+
+/**
+ * Mines diamond ore until the inventory holds `n` diamonds: the nearest ore first, reached by tunneling to it. Ore that
+ * cannot be reached (water or lava around it) is skipped with its whole cluster.
+ */
+async function diamonds(n) {
+  const have = () => count((name) => name === "diamond");
+  const skipped = [];
+  while (have() < n) {
+    if (signal.aborted) throw signal.reason;
+    const ores = bot.findBlocks({ matching: blockIds(DIAMOND_ORES), maxDistance: 128, count: 128 }).filter((p) => !skipped.some((s) => s.distanceTo(p) <= 4));
+    ores.sort((a, b) => a.distanceTo(bot.entity.position) - b.distanceTo(bot.entity.position));
+    const ore = ores[0];
+    if (!ore) throw new Error(`no diamond ore within 128 blocks; have ${have()} of ${n}`);
+    try {
+      log(`going for the diamond ore at ${ore}`);
+      await tunnelTo(ore.offset(0.5, 0.5, 0.5));
+      const block = bot.blockAt(ore);
+      if (!DIAMOND_ORES.includes(block?.name)) throw new Error(`the block is ${block?.name} now`);
+      await bot.equip(bot.inventory.items().find((i) => i.name === "iron_pickaxe"), "hand");
+      await within(20_000, "digging", bot.dig(block), () => bot.stopDigging());
+      await pickUpDrops();
+      log(`dug ${block.name} at ${ore}; ${have()} diamonds`);
+    } catch (err) {
+      skipped.push(ore);
+      if (skipped.length > 8) throw new Error(`gave up on diamonds: ${err.message}`);
+      log(`skipping the diamonds around ${ore}: ${err.message}`);
+    }
+  }
+}
+
+/** Creatures that attack on sight (the body's own rule, src/mc/hostile.ts). */
+const isHostileMob = (e) => e.kind === "Hostile mobs" && !["enderman", "zombified_piglin", "strider"].includes(e.name);
+
+/** Strikes the hostile creatures within `radius` until none is left there, or `ms` pass. */
+async function fightOff(radius = 6, ms = 90_000) {
+  const pickaxe = bot.inventory.items().find((i) => i.name === "diamond_pickaxe" || i.name === "iron_pickaxe");
+  if (pickaxe) await bot.equip(pickaxe, "hand");
+  for (const end = Date.now() + ms; Date.now() < end; ) {
+    const foe = bot.nearestEntity((e) => isHostileMob(e) && e.position.distanceTo(bot.entity.position) < radius);
+    if (!foe) return;
+    if (foe.position.distanceTo(bot.entity.position) < 3.5) {
+      await bot.lookAt(foe.position.offset(0, foe.height * 0.8, 0), true);
+      bot.attack(foe);
+    }
+    await sleep(650);
+  }
+}
+
+/** Blocks the inventory may spend on walls. */
+const WALL = ["cobblestone", "cobbled_deepslate", "stone", "deepslate", "andesite", "diorite", "granite", "tuff", "dirt"];
+
+/**
+ * Surrounds the player's feet and head with blocks and caps it, so nothing reaches it until it digs out. Best effort: a
+ * placement the server refuses (a creature or a drop in the cell) is retried once and then left open.
+ */
+async function sealIn() {
+  const here = bot.entity.position.floored();
+  // Stand in the middle of the block, so the body is in no neighbor cell.
+  await goto(new goals.GoalBlock(here.x, here.y, here.z), 10_000).catch(() => {});
+  const feet = bot.entity.position.floored();
+  const cells = [...SIDES.map(([x, z]) => feet.offset(x, 0, z)), ...SIDES.map(([x, z]) => feet.offset(x, 1, z)), feet.offset(0, 2, 0)];
+  const faces = [new Vec3(0, -1, 0), new Vec3(1, 0, 0), new Vec3(-1, 0, 0), new Vec3(0, 0, 1), new Vec3(0, 0, -1), new Vec3(0, 1, 0)];
+  const open = [];
+  for (const cell of cells) {
+    for (let attempt = 1; attempt <= 2 && bot.blockAt(cell)?.boundingBox !== "block"; attempt++) {
+      const wall = bot.inventory.items().find((i) => WALL.includes(i.name));
+      // Place against any solid neighbor of the cell: the floor for the feet level, the block below for the head level.
+      const face = faces.find((f) => bot.blockAt(cell.plus(f))?.boundingBox === "block");
+      if (!wall || !face) break;
+      try {
+        await bot.equip(wall, "hand");
+        await bot.placeBlock(bot.blockAt(cell.plus(face)), face.scaled(-1));
+      } catch (err) {
+        log(`walling ${cell}: ${err.message}`);
+        await sleep(500);
+      }
+    }
+    if (bot.blockAt(cell)?.boundingBox !== "block") open.push(cell.toString());
+  }
+  log(`walled in at ${feet}${open.length ? `; open: ${open.join(" ")}` : ""}`);
 }
 
 // ---- shelter: a one-block shaft three deep with a block over it. The shell then waits for the nights. ----
@@ -517,6 +759,7 @@ async function retrieveLogs() {
 // ---- Dispatch ----
 
 if (TARGET === "iron_pickaxe") await ironPickaxe();
+else if (TARGET === "diamond_pickaxe") await diamondPickaxe();
 else if (TARGET === "shelter") await shelter();
 else if (TARGET === "stock_chest") await stockChest();
 else if (TARGET === "stash_chest") await stashChest();
