@@ -1,8 +1,11 @@
 // Serves one body's API as MCP tools over stdio. The body endpoint is re-read per call, so body restarts are fine.
 //
-// Tools for optional features exist only while the body offers the feature, so an agent does not
-// learn about features its body lacks. `toolPlan` derives the whole tool set from the capability
-// table; the same function is what the capability test turns against every feature.
+// The default `core` tool set is what an agent needs to drive a body through programs: observe,
+// run, stop, wait, events, and the references. Everything else (notes, status, chat, kit and wiki
+// management, triggers) is a program global, so `core` leaves those tools out; `full` serves them
+// as tools too. Tools for optional features exist only while the body offers the feature, so an
+// agent does not learn about features its body lacks. `toolPlan` derives the gated tool set from
+// the capability table; the same function is what the capability test turns against every feature.
 import { McpServer, type RegisteredTool } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
@@ -30,8 +33,15 @@ const json = (value: unknown) => JSON.stringify(value, null, 2);
 
 const API_DOC_FALLBACK = "Call the api_reference tool for the globals available to programs.";
 
-/** The description of every capability-gated tool, by capability state: one place, reused by apply() and the tests. */
-export function toolPlan(features: BodyFeatures): Record<string, { enabled: boolean; description: string }> {
+/** Which tools `minebot mcp` serves: the core set, or every tool. */
+export const TOOL_SETS = ["core", "full"] as const;
+export type ToolSet = (typeof TOOL_SETS)[number];
+
+/** The tools of the core set. Programs reach everything else through their globals. */
+const CORE_TOOLS: Readonly<Record<string, true>> = { observe: true, run_program: true, stop_program: true, wait_for: true, get_events: true, api_reference: true, kit_docs: true };
+
+/** The description of every capability-gated tool, and whether it is served, by capability state and tool set: one place, reused by apply() and the tests. */
+export function toolPlan(features: BodyFeatures, toolSet: ToolSet): Record<string, { enabled: boolean; description: string }> {
   const caps = capabilities(features);
   const plan: Record<string, { enabled: boolean; description: string }> = {
     list_kits: {
@@ -49,7 +59,7 @@ export function toolPlan(features: BodyFeatures): Record<string, { enabled: bool
     kit_save: {
       enabled: caps.agentKits,
       description:
-        "Save your own kit as TypeScript source: `import { defineKit, action, z } from \"minebot-sdk/kit\";` (the only import allowed; it also exports nameMatcher, Position, goals and the other helpers that the built-in kits rely on), then `export default defineKit({ name, description, uses }, { actionName: action({ doc, args, returns, run }) })`; `returns` is a zod schema of what the action returns, checked on every call. Start from kit_source of a built-in kit, and check it with kit_try first. Nothing is written when the source is rejected. Saving over a kit keeps the old source (kit_versions).",
+        "Save your own kit as TypeScript source: `import { defineKit, action, z } from \"minebot-sdk/kit\";` (the only import allowed; it also exports nameMatcher, Position, goals and the other helpers that the built-in kits rely on), then `export default defineKit({ name, description, uses }, { actionName: action({ doc, args, returns, run }) })`; `returns` is a zod schema of what the action returns, checked on every call. Start from kit_source of a built-in kit, and check it with kit_try first. Nothing is written when the source is rejected. The answer includes `typeCheck`: type errors in the source, which do not stop the save; fix them and save again. Saving over a kit keeps the old source (kit_versions).",
     },
     kit_remove: {
       enabled: caps.agentKits,
@@ -66,7 +76,7 @@ export function toolPlan(features: BodyFeatures): Record<string, { enabled: bool
     kit_try: {
       enabled: caps.agentKits,
       description:
-        "Run one action of kit source once without saving it: compiles and audits the source like kit_save, calls the action with args against the live body, and returns the result or the error. Nothing is written. Try a kit here before you save it.",
+        "Run one action of kit source once without saving it: compiles and audits the source like kit_save, calls the action with args against the live body, and returns the result or the error. Type errors in the source appear in the logs; they do not stop the run. Nothing is written. Try a kit here before you save it.",
     },
     kit_versions: {
       enabled: caps.agentKits,
@@ -110,11 +120,12 @@ export function toolPlan(features: BodyFeatures): Record<string, { enabled: bool
       description: "Turn a trigger on or off without deleting it. Turning it on again clears a self-disable.",
     },
   };
+  for (const [name, entry] of Object.entries(plan)) entry.enabled &&= toolSet === "full" || Object.hasOwn(CORE_TOOLS, name);
   return plan;
 }
 
 /** Serves one body's API as MCP tools over stdio. */
-export async function serveMcp(bodyName: string): Promise<void> {
+export async function serveMcp(bodyName: string, toolSet: ToolSet): Promise<void> {
   const server = new McpServer({ name: `minebot-${bodyName}`, version: "0.1.0" });
 
   let known: string | undefined;
@@ -157,7 +168,7 @@ export async function serveMcp(bodyName: string): Promise<void> {
     () => call(async (c) => formatStatus(await c.status())),
   );
 
-  server.registerTool(
+  const notesList = server.registerTool(
     "notes_list",
     {
       description:
@@ -171,7 +182,7 @@ export async function serveMcp(bodyName: string): Promise<void> {
       }),
   );
 
-  server.registerTool(
+  const notesSet = server.registerTool(
     "notes_set",
     {
       description: 'Create or replace a note. Keys: 1-64 lowercase letters, digits, and . _ / -, e.g. "plan" or "places/base".',
@@ -180,7 +191,7 @@ export async function serveMcp(bodyName: string): Promise<void> {
     ({ key, text }) => call(async (c) => json(await c.setNote(key, text))),
   );
 
-  server.registerTool(
+  const notesDelete = server.registerTool(
     "notes_delete",
     { description: "Delete a note.", inputSchema: { key: NoteKey } },
     ({ key }) => call(async (c) => json(await c.deleteNote(key))),
@@ -230,7 +241,7 @@ export async function serveMcp(bodyName: string): Promise<void> {
     ({ since }) => call(async (c) => json(await c.events(since))),
   );
 
-  server.registerTool(
+  const sendChat = server.registerTool(
     "send_chat",
     {
       description: "Send a public chat message (or a command such as /msg) as the player.",
@@ -400,7 +411,7 @@ export async function serveMcp(bodyName: string): Promise<void> {
 
   const setEnabled = (tool: RegisteredTool, on: boolean) => (on ? tool.enable() : tool.disable());
   function apply(features: BodyFeatures, apiDoc: string): void {
-    const plan = toolPlan(features);
+    const plan = toolPlan(features, toolSet);
     const tools: Record<string, RegisteredTool> = {
       list_kits: listKits,
       kit_docs: kitDocs,
@@ -434,6 +445,8 @@ export async function serveMcp(bodyName: string): Promise<void> {
   }
 
   for (const tool of [listKits, kitDocs, useKits, kitSave, kitRemove, kitSource, kitSearch, kitTry, kitVersions, kitRevert, wikiSearch, wikiRead, wikiList, addLesson, triggerAdd, triggerList, triggerRemove, triggerSetEnabled]) tool.disable();
+  // Ungated tools outside the core set: programs have notes, status(), and bot.chat.
+  if (toolSet !== "full") for (const tool of [status, notesList, notesSet, notesDelete, sendChat]) tool.disable();
   await sync();
   await server.connect(new StdioServerTransport());
 }

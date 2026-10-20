@@ -5,7 +5,7 @@ import path from "node:path";
 import { describe, it } from "node:test";
 import { z } from "zod";
 import { initWorkspace } from "../src/client/init.ts";
-import { generateEnv, schemaToType } from "../src/client/types-gen.ts";
+import { generateEnv, schemaToType } from "../src/protocol/declarations.ts";
 import type { BodyFeatures, KitSchema } from "../src/protocol/index.ts";
 
 const EVERYTHING: BodyFeatures = { kits: ["move", "tidy"], kitsLocked: false, agentKits: true, wiki: "write", lessons: true, milestones: true, triggers: true };

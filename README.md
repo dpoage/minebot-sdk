@@ -61,33 +61,44 @@ The steps below run from a checkout of this repository. With the installed packa
 
 ## Control a body from an agent
 
-Register the MCP server with your harness. For Claude Code:
+Register the MCP server with your harness. For Claude Code, run this in a directory where `minebot-sdk` is installed, such as a workspace from `minebot init`:
+
+```sh
+claude mcp add minebot -- npx minebot mcp --bot alpha
+```
+
+From a checkout of this repository, point the harness at the source instead:
 
 ```sh
 claude mcp add minebot -- node --conditions=minebot-sdk:source /absolute/path/to/minebot/src/cli.ts mcp --bot alpha
 ```
 
-The MCP server exposes these tools:
+By default, the MCP server serves the core tools. The agent acts through programs, and programs reach everything else through their globals (`notes`, `status()`, `bot.chat`, `kits`, `wiki`, `triggers`). A short tool list keeps the agent's context small.
 
-| Tool | What it does |
+| Core tool | What it does |
 | - | - |
 | `observe` | Returns position, vitals, armor, effects, biome, open sky, inventory, nearby creatures, and program state as one line. `full: true` returns the complete JSON. |
-| `status` | Returns deaths and reconnects since the body started, and progress toward the body's milestones. |
-| `notes_list`, `notes_set`, `notes_delete` | Read and write the agent's persistent notes. |
-| `run_program` | Runs a program and blocks until it returns, fails, or times out. |
+| `run_program` | Runs a program and blocks until it returns, fails, or times out. Its description holds the program reference for this body. |
 | `stop_program` | Aborts the running program and halts movement, pathfinding, and digging. |
 | `get_events` | Returns chat, damage, deaths, joins, disconnects, and what the player did or noticed (items picked up, blocks broken and placed, low health or food, hostile creatures near) since a cursor. |
 | `wait_for` | Blocks until a matching event arrives (chat, whisper, system message, night, day, hostile_near, low_health, low_food, item_picked_up, ...) or the timeout, then returns it. The cheap way to idle. |
-| `send_chat` | Sends a chat message or a command as the player. |
 | `api_reference` | Returns the globals available to programs on this body. |
+| `kit_docs` | Returns the action reference for kits. Only on a body that offers kits. |
+
+`minebot mcp --tools full` also serves every other operation as a tool of its own:
+
+| Tool | What it does |
+| - | - |
+| `status` | Returns deaths and reconnects since the body started, and progress toward the body's milestones. |
+| `notes_list`, `notes_set`, `notes_delete` | Read and write the agent's persistent notes. |
+| `send_chat` | Sends a chat message or a command as the player. |
 | `list_kits` | Lists the kits, their uses and actions, and which kits are active. |
 | `use_kits` | Replaces the active kits. |
-| `kit_docs` | Returns the action reference for kits. |
 | `kit_search` | Ranks the kits and actions by what they do (names, descriptions, action docs). |
-| `kit_save` | Saves an agent-written kit from TypeScript source. |
+| `kit_save` | Saves an agent-written kit from TypeScript source and returns its type check. |
 | `kit_remove` | Deletes a saved kit. |
 | `kit_source` | Prints a kit's source: the model for writing your own. |
-| `kit_try` | Runs one action of kit source once, without saving it, and returns the result or the error. |
+| `kit_try` | Runs one action of kit source once, without saving it, and returns the result or the error. The logs hold the type errors of the source. |
 | `kit_versions`, `kit_revert` | Lists the saved versions of an agent kit; saves an earlier version again. |
 | `trigger_add`, `trigger_list`, `trigger_remove`, `trigger_set_enabled` | Register, list, delete, and switch off triggers: programs the body runs when an event arrives. |
 | `wiki_search`, `wiki_read`, `wiki_list` | Search and read the wiki. |
@@ -95,7 +106,7 @@ The MCP server exposes these tools:
 
 The MCP server reads the body endpoint on every call. If the body restarts, the MCP server keeps working.
 
-The MCP server asks the body which features it offers: before it connects, and before every tool call. It lists the kit tools only when the body offers kits (`use_kits` only when the set can change, `kit_save`, `kit_remove`, `kit_source`, `kit_try`, `kit_versions`, and `kit_revert` only when agent kits are on), the wiki tools only when the wiki is not `off`, `wiki_add_lesson` only in `write` mode, and the `trigger_*` tools only on a body that has triggers. When the answer changes, tools appear or disappear and the server sends `notifications/tools/list_changed`. The `run_program` and `status` descriptions and `minebot api` describe only the offered features. While the body cannot be reached, the MCP server lists only the base tools: `observe`, `status`, the `notes_*` tools, `run_program`, `api_reference`, `stop_program`, `get_events`, `wait_for`, and `send_chat`.
+The MCP server asks the body which features it offers: before it connects, and before every tool call. It lists the kit tools only when the body offers kits (`use_kits` only when the set can change, `kit_save`, `kit_remove`, `kit_source`, `kit_try`, `kit_versions`, and `kit_revert` only when agent kits are on), the wiki tools only when the wiki is not `off`, `wiki_add_lesson` only in `write` mode, and the `trigger_*` tools only on a body that has triggers. When the answer changes, tools appear or disappear and the server sends `notifications/tools/list_changed`. The `run_program` and `status` descriptions and `minebot api` describe only the offered features. While the body cannot be reached, the MCP server lists only the ungated tools of its tool set: `observe`, `run_program`, `api_reference`, `stop_program`, `get_events`, and `wait_for`, plus `status`, the `notes_*` tools, and `send_chat` with `--tools full`.
 
 ## Programs
 
@@ -187,13 +198,15 @@ The operator decides which kits a body **offers**; the agent picks the **active*
 - At start: `minebot body --bot ana --kits gatherer,crafter`. Without `--kits`, the body offers every built-in kit. Used kits are offered too.
 - From a program: `kits.use("builder", "explorer")`. The next `kit.<kit>.<action>` call uses the new set. `kits.active` and `kits.available()` list both sets.
 - From the CLI: `minebot kits use builder explorer`. Run `minebot kits` to list kits, and `minebot kits docs` to print the reference, which is generated from the action schemas: argument names, types, and defaults.
-- From MCP: the `use_kits` tool.
+- From MCP: the `use_kits` tool (with `--tools full`), or `kits.use` in `run_program`.
 
 `--lock-kits` fixes the active set. A locked body hides the kits that are not active: they do not appear in `minebot kits`, `kits docs`, or the MCP tools, and a program finds no `kits.use`. Every benchmark task starts its body with `--lock-kits`. The lock stops an agent that uses the body as intended, but programs run in a `node:vm` context that is not a security boundary, so it is advisory. See [Security](#security) and [bench/README.md](bench/README.md).
 
 Each kit keeps its own JSON store in the body's state directory. The store survives programs, kit swaps, and body restarts, and no kit reads another's. Explorer places, for example, persist across restarts.
 
 The framework counts every call of every action, nested calls included: how often it returned and how often it failed, and the message of the last failure. A call that fails because the program was stopped, timed out, or was preempted does not count as a failure. The counts are per body, live in the state directory (`kit-stats.json`), and survive restarts. `kits.available()` returns them as `stats` on each kit, and `minebot kits` prints them under the kit (`calls: gather: 12 ok / 3 failed`), so an agent can prefer the actions that work. A new source for an agent kit, or removing it, resets that kit's counts. To find an action by what it does, search: `kits.search("collect logs")` in a program, `minebot kits search <query>` in the CLI, or the `kit_search` tool. The search ranks kits and actions by name, kit description, and action doc, and marks the active kits and the actions' counts.
+
+Kit search and wiki search match words in the same way. A query word matches a word exactly, by prefix (`craf` finds `crafting`, `smelting` finds `smelt`), or with typos: one when both words have 4 or more letters, two when both have 7 or more (`furnce` finds `furnace`). A prefix or typo match of a query word counts only where the exact word is missing, and it counts less than an exact match. Every result that contains a query word exactly ranks above every result that contains none, so a one-word query ranks its exact results as it would without fuzzy matching.
 
 ## Agent kits
 
@@ -211,6 +224,8 @@ await kits.revert("woodcutter", 1);
 The CLI serves the same over `minebot kits save [file]` (stdin when omitted), `minebot kits rm <kit>`, `minebot kits source <kit>`, `minebot kits try [file] --action <name> [--args <json>]`, `minebot kits versions <kit>`, and `minebot kits revert <kit> <version>`; MCP serves `kit_save`, `kit_remove`, `kit_source`, `kit_try`, `kit_versions`, and `kit_revert`; HTTP serves `POST /kits/save`, `POST /kits/remove`, `GET /kits/source`, `POST /kits/try`, `GET /kits/versions`, and `POST /kits/revert`.
 
 Saving validates before it writes, and nothing is written when the source is rejected: it must compile, pass the escape audit, use only kits this body offers, and not take a built-in kit's name. A saved kit is offered and active immediately. `kits.try` runs the same validation, then calls one action once against the live bot, as part of the current program, and returns the action's result or throws its error. It writes nothing and registers nothing: the `ctx.store` of the tried kit and of every kit it calls is a throwaway, and no call is counted in the statistics. Over MCP, CLI, and HTTP, a try is a program run, so it is recorded in the history like one.
+
+Saving and trying also type-check the source, as `tsc` checks a kit in a workspace: against `minebot-sdk/kit`, with `ctx.kits` typed from `uses`, and with the body's agent kits typed from their schemas. Type errors never stop a save or a try. A save returns `typeCheck`: `{ status: "passed" }`, `{ status: "failed", errors }` with one `<kit>.ts(line,col): error TS...` entry per error, or `{ status: "skipped", reason }`. A try writes the type errors to the program log. The check needs the `typescript` package (5.0 or later), an optional peer dependency of `minebot-sdk`. Without it, the check is skipped and says why.
 
 Saving over an existing kit keeps the old source. Each different source is a numbered version, stored with the time and the body that saved it in `.history/<kit>/<n>.ts` and `<n>.json` inside the agent-kit directory. `kits.versions(name)` lists them, and `kits.revert(name, version)` saves an earlier one again as a new version, validated like any save, so the history only grows. Removing a kit keeps its history. Agent kits are a capability of their own: on by default, off with `--no-agent-kits`, and `--agent-kits <dir>` picks the directory (default: the state directory's `agent-kits/`). Several bodies can share the directory; a kit one body saves works on the others without a restart, and they share the history, each version noting which body saved it. A bad file on disk never stops a body: it is skipped and reported as a `kit_error` event.
 
@@ -231,7 +246,7 @@ npx minebot run --bot dev programs/hello.ts
 
 A kit imports its helpers from `"minebot-sdk/kit"`. The body loads every `.ts` file in `kits/` and reloads a file when you save it. Programs are the body of an async function, so they may use top-level `await` but not a top-level `return`; `minebot run` strips the types of a `.ts` file before it sends the program.
 
-`minebot types [--out <file>]` writes one declaration file for the body it asks. It declares the kits that the package does not ship — the operator's and the agents' — in `KitRegistry`, with each action's arguments and result typed from its zod schemas, and it declares the program globals (`bot`, `kit`, `kits`, `notes`, `wiki`, `triggers`, `status`, ...) for what that body offers. A body without a feature gets no declaration for it. The output depends only on the body's kits, so regenerate it after they change, and commit it if you like. The kit schemas are also served as `GET /kits/schemas`; a body without kits gets the globals only. Type checking is plain `tsc` in the workspace; the body does not type-check on save.
+`minebot types [--out <file>]` writes one declaration file for the body it asks. It declares the kits that the package does not ship — the operator's and the agents' — in `KitRegistry`, with each action's arguments and result typed from its zod schemas, and it declares the program globals (`bot`, `kit`, `kits`, `notes`, `wiki`, `triggers`, `status`, ...) for what that body offers. A body without a feature gets no declaration for it. The output depends only on the body's kits, so regenerate it after they change, and commit it if you like. The kit schemas are also served as `GET /kits/schemas`; a body without kits gets the globals only. Type checking of the workspace is plain `tsc`. The body type-checks a kit only when it is saved or tried through the API; it does not type-check the kit files that it loads from `kits/`.
 
 ## Testing kits
 
@@ -393,7 +408,7 @@ See [wiki/README.md](wiki/README.md) for the page format and the rules for addin
 | `triggers` | Lists triggers. `triggers add <name> --on a,b [file]` saves one (the program comes from stdin when the file is omitted; options `--from`, `--match`, `--when`, `--cooldown`, `--timeout`, `--priority`, `--preempt`). `triggers rm <name>`, `triggers enable <name>`, and `triggers disable <name>`. Only on a body that has triggers. |
 | `kits` | Lists the kits and how often their actions worked. `kits use <kit...>` replaces the active kits (not on a locked body). `kits docs [kit...]` prints the reference. `kits search <query>` finds kits and actions by what they do. `kits save [file]`, `kits rm <kit>`, `kits source <kit>`, `kits try [file] --action <name> [--args <json>]`, `kits versions <kit>`, and `kits revert <kit> <version>` manage agent kits. Only on a body that offers kits. |
 | `wiki` | `wiki search <query>`, `wiki read <page>`, `wiki list [section]`, and in `write` mode `wiki lesson --title <t> [--tags a,b]` with the body text on stdin. Only on a body with the wiki. |
-| `mcp` | Serves the body as MCP tools over stdio. |
+| `mcp` | Serves the body as MCP tools over stdio: the core tools by default, every tool with `--tools full`. See [Control a body from an agent](#control-a-body-from-an-agent). |
 | `api` | Prints the program reference for the body: only the features it offers. |
 
 All commands take `--bot <name>`. The default is `$MINEBOT_BOT`, or `bot` if that variable is not set.

@@ -21,7 +21,7 @@ minebot triggers                      # what each trigger did since the body sta
 minebot triggers disable eat          # off, but kept; "enable" turns it on, "rm" deletes it
 ```
 
-In programs: `await triggers.add({ name: "eat", on: ["low_food"], run: "...program source...", cooldownMs: 10000 })`, `triggers.list()`, `triggers.enable(name)`, `triggers.disable(name)`, `triggers.remove(name)`. The MCP tools are `trigger_add`, `trigger_list`, `trigger_remove`, and `trigger_set_enabled`.
+In programs: `await triggers.add({ name: "eat", on: ["low_food"], run: "...program source...", cooldownMs: 10000 })`, `triggers.list()`, `triggers.enable(name)`, `triggers.disable(name)`, `triggers.remove(name)`. An MCP server started with `--tools full` also serves them as the tools `trigger_add`, `trigger_list`, `trigger_remove`, and `trigger_set_enabled`.
 
 <!-- kits -->
 The program may call kit actions, for example `await kit.survival.eat()` instead of the code above.

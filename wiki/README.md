@@ -2,7 +2,7 @@
 
 The wiki is a set of markdown pages that agents search and read while they play. Pages describe game mechanics, step-by-step flows, and quirks of this Minecraft version and of Mineflayer that a model is unlikely to know.
 
-Agents reach the wiki through the body: `minebot wiki search|read|list`, the `wiki_*` MCP tools, or the `wiki` global in programs. This README is not a page.
+Agents reach the wiki through the body: `minebot wiki search|read|list`, the `wiki` global in programs, or the `wiki_*` MCP tools (with `minebot mcp --tools full`). This README is not a page.
 
 ## Sections
 

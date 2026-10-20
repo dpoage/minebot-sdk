@@ -1,8 +1,9 @@
-// `minebot types`: one declaration file that types a workspace against a body. Kits that ship
-// with the package are typed by the package itself; this file adds the kits the body got from its
-// operator or its agents (from their zod schemas), and the globals a program sees, limited to what
-// the body offers. The output depends only on its inputs, so regenerating without a change is a no-op.
-import { CAPABILITY_GATES, type ActionSchema, type BodyFeatures, type KitSchema } from "../protocol/index.ts";
+// TypeScript declarations derived from the wire contract: KitRegistry entries for kits from their
+// JSON Schemas, and the program globals a body offers. `minebot types` writes them into a workspace;
+// the body type-checks kit source against the registry part. Kits that ship with the package are
+// typed by the package itself. The output depends only on its inputs, so regenerating without a
+// change is a no-op.
+import { CAPABILITY_GATES, type ActionSchema, type BodyFeatures, type KitSchema } from "./index.ts";
 
 type Json = Record<string, unknown>;
 
@@ -147,7 +148,8 @@ function actionMember(name: string, action: ActionSchema, indent: string): strin
   return `${comment(action.doc, indent)}${indent}readonly ${propertyKey(name)}: (args${argsOptional(action.args) ? "?" : ""}: ${args}) => Promise<${returns}>;`;
 }
 
-function registryBlock(kits: readonly KitSchema[]): string {
+/** A `declare module "minebot-sdk/kit"` block that adds `kits` to KitRegistry, typed from their schemas. */
+export function registryBlock(kits: readonly KitSchema[]): string {
   const entries = kits.map((kit) => {
     const actions = Object.entries(kit.actions).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
     const members = actions.map(([name, action]) => actionMember(name, action, "      "));

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { describe, it } from "node:test";
-import { toolPlan } from "../src/client/mcp.ts";
+import { TOOL_SETS, toolPlan } from "../src/client/mcp.ts";
 import { usageFor } from "../src/client/usage.ts";
 import { CAPABILITIES, capabilities, CAPABILITY_GATES, programApiDoc, type BodyFeatures, type Capability } from "../src/protocol/index.ts";
 import { wikiView } from "../src/wiki/access.ts";
@@ -77,12 +77,15 @@ describe("the capability table", () => {
       const usage = usageFor(features, false);
       assert.doesNotMatch(usage, forbidden, `usageFor leaks ${capability}`);
 
-      // The MCP tool plan: the capability's tools are disabled, and no enabled tool leaks it.
-      const plan = toolPlan(features);
+      // The MCP tool plan, in both tool sets: the capability's tools are disabled, and no enabled tool leaks it.
+      // kit_docs is the one gated tool in the core set (test/mcp.test.ts checks the whole list).
       const capsNow = capabilities(features);
-      for (const [tool, entry] of Object.entries(plan)) {
-        assert.equal(entry.enabled, capsNow[capabilityOf(tool)], `${tool} enabled state wrong with ${capability} off`);
-        if (entry.enabled) assert.doesNotMatch(entry.description, forbidden, `enabled tool ${tool} description leaks ${capability}`);
+      for (const toolSet of TOOL_SETS) {
+        for (const [tool, entry] of Object.entries(toolPlan(features, toolSet))) {
+          const served = capsNow[capabilityOf(tool)] && (toolSet === "full" || tool === "kit_docs");
+          assert.equal(entry.enabled, served, `${tool} enabled state wrong with ${capability} off in the ${toolSet} set`);
+          if (entry.enabled) assert.doesNotMatch(entry.description, forbidden, `enabled tool ${tool} description leaks ${capability}`);
+        }
       }
 
       // The wiki's view of the body: the gated features map straight onto it.

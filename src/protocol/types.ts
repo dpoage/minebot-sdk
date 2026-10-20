@@ -235,8 +235,15 @@ export interface KitSchemasResponse {
   kits: KitSchema[];
 }
 
-/** What saving a kit returns: the kit as the body now offers it. */
-export type SaveKitResponse = KitInfo;
+/**
+ * The type check of kit source against `minebot-sdk/kit` and the body's other kits. It never
+ * blocks a save or a try: `failed` lists the errors (`<kit>.ts(line,col): error TSxxxx: ...`) and
+ * the kit is saved anyway; `skipped` says why no check ran (TypeScript is an optional peer dependency).
+ */
+export type KitTypeCheck = { status: "passed" } | { status: "failed"; errors: string[] } | { status: "skipped"; reason: string };
+
+/** What saving a kit returns: the kit as the body now offers it, and the type check of its source. */
+export type SaveKitResponse = KitInfo & { typeCheck: KitTypeCheck };
 
 /** One ranked answer of a kit search: a kit, or one of its actions. */
 export interface KitSearchHit {

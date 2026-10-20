@@ -68,7 +68,7 @@ export function usageFor(features: BodyFeatures | null, hasBody = HAS_BODY, oper
           ...(caps.lessons ? ["  wiki lesson          Add a lesson; the body text comes from stdin. Needs --title; --tags a,b is optional."] : []),
         ]
       : []),
-    "  mcp                  Serve the body as MCP tools over stdio.",
+    "  mcp                  Serve the body as MCP tools over stdio: the core tools, or every tool with --tools full.",
     "  api                  Print the program environment reference.",
   ];
   const options = [

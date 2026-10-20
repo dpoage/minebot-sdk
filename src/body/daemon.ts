@@ -44,10 +44,12 @@ import {
   type Endpoint,
   type KitInfo,
   type KitsResponse,
+  type SaveKitResponse,
   type TriggersResponse,
   type WikiMode,
 } from "../protocol/index.ts";
 import { Wiki } from "../wiki/wiki.ts";
+import { typeCheckKit, typeCheckLog } from "./typecheck.ts";
 import { Body } from "./body.ts";
 import { HttpError, parse, type Route, serveBodyApi } from "./http.ts";
 import { ProgramHistory } from "./history.ts";
@@ -195,8 +197,8 @@ export async function startDaemon(options: DaemonOptions): Promise<{ endpoint: E
   /** Whether a kit's `uses` entry names a kit this body offers. */
   const resolvable = (name: string) => host.offered.includes(name) || library.agentKits().has(name);
 
-  /** Validates and writes an agent kit, then offers it. Nothing is written when validation fails. */
-  async function saveKit(source: string): Promise<KitInfo> {
+  /** Validates and writes an agent kit, then offers it and reports its type check. Nothing is written when validation fails; type errors do not stop the save. */
+  async function saveKit(source: string): Promise<SaveKitResponse> {
     const kit = await library.save(source, resolvable);
     try {
       syncKits();
@@ -204,7 +206,7 @@ export async function startDaemon(options: DaemonOptions): Promise<{ endpoint: E
       await library.remove(kit.name).catch(() => {});
       throw err;
     }
-    return host.infoFor(kit);
+    return { ...host.infoFor(kit), typeCheck: await typeCheckKit(source, kit.name, host.schemas().filter((schema) => schema.agent)) };
   }
 
   /** Saves an earlier version of an agent kit again and offers it. */
@@ -214,10 +216,17 @@ export async function startDaemon(options: DaemonOptions): Promise<{ endpoint: E
     return host.infoFor(kit);
   }
 
-  /** Compiles and audits kit source like a save, then runs one action once inside the calling program. Nothing is written or registered. */
+  /** Compiles and audits kit source like a save, then runs one action once inside the calling program while the source is type-checked; type errors go to the program log. Nothing is written or registered. */
   async function tryKit(source: string, run: { action: string; args?: unknown }, scope: ProgramScope, bot: Bot): Promise<unknown> {
     syncKits();
-    return host.tryKit(library.check(source, resolvable), run.action, run.args, scope, bot);
+    const kit = library.check(source, resolvable);
+    const checked = typeCheckKit(source, kit.name, host.schemas().filter((schema) => schema.agent), scope.signal);
+    try {
+      return await host.tryKit(kit, run.action, run.args, scope, bot);
+    } finally {
+      const line = typeCheckLog(await checked);
+      if (line) scope.log(line);
+    }
   }
 
   const wiki = options.wikiMode === "off" ? null : Wiki.load(options.wikiDir, options.lessonsDir);

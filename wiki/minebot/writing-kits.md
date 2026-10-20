@@ -70,7 +70,9 @@ Every save of a different source is a new version, and a revert is a save, so a 
 
 ## Check it with a type checker
 
-A harness with a file system can write kits in a workspace instead: `minebot init ws` scaffolds one, the body loads `ws/kits/*.ts` when it runs with `--agent-kits ./kits`, and `minebot types --out minebot-env.d.ts` writes declarations for this body's kits and program globals, so `npx tsc` reports a wrong argument before you try or save anything. A saved kit and a try are not type-checked by the body.
+`kits.save` and `kits.try` type-check the source: a wrong argument, a call to a kit missing from `uses`, or a `run` that returns the wrong type. Type errors never stop a save or a try. `kits.save` returns them as `typeCheck: { status: "failed", errors: ["woodcutter.ts(11,34): error TS2322: ..."] }`, and `kits.try` writes them to the program log. Fix them, then save again. `typeCheck.status` is `skipped` with a `reason` when the body has no TypeScript installed.
+
+A harness with a file system can write kits in a workspace instead: `minebot init ws` scaffolds one, the body loads `ws/kits/*.ts` when it runs with `--agent-kits ./kits`, and `minebot types --out minebot-env.d.ts` writes declarations for this body's kits and program globals, so `npx tsc` reports a wrong argument before you try or save anything. The body does not type-check the files that it loads from `ws/kits/`.
 
 ## Test it without a server
 

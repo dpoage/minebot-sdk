@@ -19,6 +19,7 @@ import {
   type PageSummary,
   type RunResult,
   type SaveKitResponse,
+  type KitInfo,
   type SearchHit,
   type StatusResponse,
   type TriggerInfo,
@@ -179,7 +180,7 @@ export class BodyClient {
   }
 
   /** Saves an earlier version of an agent kit again, as a new version. */
-  revertKit(name: string, version: number): Promise<SaveKitResponse> {
+  revertKit(name: string, version: number): Promise<KitInfo> {
     return this.#request("POST", "/kits/revert", { name, version });
   }
 

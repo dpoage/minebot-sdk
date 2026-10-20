@@ -134,8 +134,9 @@ const TSCONFIG = `${JSON.stringify(
       strict: true,
       noEmit: true,
       skipLibCheck: true,
-      // No DOM: its globals (`status`, `name`, ...) would collide with the program globals.
-      lib: ["es2023"],
+      // No DOM: its globals (`status`, `name`, ...) would collide with the program globals. esnext: Node 24
+      // has Promise.withResolvers, which the built-in kits use; the body's type check uses the same lib.
+      lib: ["esnext"],
       types: ["node"],
       // Every file is a module, so a program may use top-level await.
       moduleDetection: "force",

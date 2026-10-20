@@ -11,7 +11,7 @@ import { formatKitHits, formatKits, formatKitVersions, formatRun, formatStatus, 
 import { HAS_BODY, usageFor } from "./client/usage.ts";
 import { BODY_FLAG_OPTIONS, OPERATOR_FLAG_HELP } from "./client/body-flags.ts";
 import { ENV_FILE, initWorkspace } from "./client/init.ts";
-import { generateEnv } from "./client/types-gen.ts";
+import { generateEnv } from "./protocol/declarations.ts";
 import { CAPABILITY_GATES, DEFAULT_SERVER_HOST, DEFAULT_SERVER_PORT, type BodyFeatures, RUNTIME_DIR } from "./protocol/index.ts";
 
 const { values: opts, positionals } = parseArgs({
@@ -35,6 +35,7 @@ const { values: opts, positionals } = parseArgs({
     cooldown: { type: "string" },
     priority: { type: "string" },
     preempt: { type: "boolean", default: false },
+    tools: { type: "string", default: "core" },
     help: { type: "boolean", short: "h", default: false },
     ...BODY_FLAG_OPTIONS,
   },
@@ -336,8 +337,10 @@ async function main(): Promise<number> {
     }
     case "mcp": {
       // Not a static import: only the MCP server needs the MCP SDK.
-      const { serveMcp } = await import("./client/mcp.ts");
-      await serveMcp(opts.bot);
+      const { serveMcp, TOOL_SETS } = await import("./client/mcp.ts");
+      const toolSet = TOOL_SETS.find((set) => set === opts.tools);
+      if (!toolSet) throw new Error(`unknown tool set "${opts.tools}"; use ${TOOL_SETS.join(" or ")}`);
+      await serveMcp(opts.bot, toolSet);
       const closed = Promise.withResolvers<void>();
       process.stdin.once("end", () => closed.resolve());
       await closed.promise;
