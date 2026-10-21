@@ -19,10 +19,12 @@ export interface BodyFeatures {
   milestones: boolean;
   /** The agent can register triggers: programs the body runs when an event arrives. */
   triggers: boolean;
+  /** The body keeps a routine library: modules the agent saves, binds to names, and calls. */
+  routines: boolean;
 }
 
 /** Every optional capability a body can offer. */
-export const CAPABILITIES = ["kits", "kitSwitching", "agentKits", "wiki", "lessons", "milestones", "triggers"] as const;
+export const CAPABILITIES = ["kits", "kitSwitching", "agentKits", "wiki", "lessons", "milestones", "triggers", "routines"] as const;
 export type Capability = (typeof CAPABILITIES)[number];
 
 /**
@@ -37,6 +39,7 @@ export const CAPABILITY_GATES: Record<Capability, (features: BodyFeatures) => bo
   lessons: (f) => f.wiki === "write",
   milestones: (f) => f.milestones,
   triggers: (f) => f.triggers,
+  routines: (f) => f.routines,
 };
 
 /** Which capabilities a body offers, in CAPABILITIES order. */
@@ -95,10 +98,23 @@ export function programApiDoc(features: BodyFeatures): string {
     const write = caps.lessons ? ", wiki.addLesson({ title, tags, body }) to record what you learned" : "";
     globals.push(`- wiki: notes on mechanics, flows, and quirks${lessons}. wiki.search(query, limit?) -> hits, wiki.read(id) -> markdown, wiki.list(section?)${write}.`);
   }
+  const routines = caps.routines ? `\n\n${routinesDoc(features)}` : "";
   return `A program is the body of an async JavaScript function. It runs inside the body, against a live Mineflayer bot. require() and import() are not available.
 
 Globals:
 ${globals.join("\n")}
 
-The value you return is sent back as the result. On timeout or stop, the body halts pathfinding, digging and movement, clears the timers that exist at that moment, and removes the on() handlers that exist at that moment. If the program does not end, the body can kill the bot host and restart it; the restart reconnects as the same player. A program that blocks the host with synchronous code after it catches the abort can run on without being killed. Check signal.aborted in long loops so the program ends in time.`;
+The value you return is sent back as the result. On timeout or stop, the body halts pathfinding, digging and movement, clears the timers that exist at that moment, and removes the on() handlers that exist at that moment. If the program does not end, the body can kill the bot host and restart it; the restart reconnects as the same player. A program that blocks the host with synchronous code after it catches the abort can run on without being killed. Check signal.aborted in long loops so the program ends in time.${routines}`;
 }
+
+/** The routines section of the program reference, for a body that offers them. */
+function routinesDoc(features: BodyFeatures): string {
+  const caps = capabilities(features);
+  const members = ["bot", "log", "sleep", "signal", "on", "notes", "status", ...(caps.kits ? ["kit"] : []), ...(caps.wiki ? ["wiki"] : [])];
+  return `Routines: a routine is a TypeScript module saved in this body's library, run by name instead of as program text. Its default export is a function (ctx, args) => result, usually \`export default defineRoutine({ description?, args?, returns? }, async (ctx, args) => result)\` with \`import { defineRoutine, z } from "minebot-sdk/routine"\`; args and returns are optional zod schemas that validate a call. Unlike a program it is a real module: it can import Node built-ins, the packages this body ships (vec3, mineflayer-pathfinder, zod, minebot-sdk), and other saved routines (\`import { helper } from "./helper.ts"\`).
+- ctx has exactly: ${members.join(", ")}. status() resolves like the program global; the other members are the program globals of the same name, and ctx.on, ctx.sleep and ctx.signal end with the call.
+- Library over HTTP: GET /routines, GET /routines/source?name=, POST /routines/save { name, source } (answers the routine and the type check of its source, which does not stop the save), GET /routines/versions?name=, POST /routines/revert { name, version }. Names are 1-48 lowercase letters, digits, _ and -.
+- Bindings: POST /bind { kind: "action", name, routine } names a saved routine for calling (the same name replaces it); GET /bindings lists them; POST /unbind { name } removes one. Bindings persist across body restarts.
+- POST /call { name, args?, timeoutMs? } calls the routine bound to name with the JSON args and answers like /run: status, result (the routine's return value), error, logs. A call is a run: one at a time with programs, stopped by /stop, ended by its timeout.`;
+}
+

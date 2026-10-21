@@ -157,6 +157,15 @@ const ROUTES = [
   "GET /wiki/page",
   "GET /wiki/list",
   "POST /wiki/lessons",
+  "GET /routines",
+  "GET /routines/source",
+  "POST /routines/save",
+  "GET /routines/versions",
+  "POST /routines/revert",
+  "GET /bindings",
+  "POST /bind",
+  "POST /unbind",
+  "POST /call",
 ] as const;
 
 /** The routes a request reached in a body that serves them (not the missing-token or unknown-route answer). */
@@ -312,7 +321,7 @@ function referenceKits(names: readonly string[], locked = false): KitHost {
   return new KitHostClass({ kits, stores: () => JsonStore.memory(), locked, active: names });
 }
 
-const FEATURES_ALL: Features = { kits: ["move"], kitsLocked: false, agentKits: true, wiki: "write", lessons: true, milestones: true, triggers: true };
+const FEATURES_ALL: Features = { kits: ["move"], kitsLocked: false, agentKits: true, wiki: "write", lessons: true, milestones: true, triggers: true, routines: true };
 
 const NOT_CONNECTED = { error: "the body is not connected to a server" };
 const NO_ROUTE = (method: string, pathname: string) => ({ error: `no route for ${method} ${pathname}` });
@@ -577,10 +586,10 @@ describe("body API: agent kits", () => {
 
 describe("body API on a body with every optional feature off", () => {
   let body: Running;
-  const features: Features = { kits: [], kitsLocked: true, agentKits: false, wiki: "off", lessons: false, milestones: false, triggers: false };
+  const features: Features = { kits: [], kitsLocked: true, agentKits: false, wiki: "off", lessons: false, milestones: false, triggers: false, routines: false };
 
   before(async () => {
-    body = await startBody({ kits: [], lockKits: true, wikiMode: "off", milestonesEnabled: false, agentKits: false, triggers: false });
+    body = await startBody({ kits: [], lockKits: true, wikiMode: "off", milestonesEnabled: false, agentKits: false, triggers: false, routines: false });
   });
   after(() => body.close());
 
@@ -607,6 +616,15 @@ describe("body API on a body with every optional feature off", () => {
     await absent("GET", "/wiki/page?id=quirks/drops");
     await absent("GET", "/wiki/list");
     await absent("POST", "/wiki/lessons", { raw: "{ not json" });
+    await absent("GET", "/routines");
+    await absent("GET", "/routines/source?name=act");
+    await absent("POST", "/routines/save", { raw: "{ not json" });
+    await absent("GET", "/routines/versions?name=act");
+    await absent("POST", "/routines/revert", { json: { name: "act", version: 1 } });
+    await absent("GET", "/bindings");
+    await absent("POST", "/bind", { raw: "{ not json" });
+    await absent("POST", "/unbind", { json: { name: "act" } });
+    await absent("POST", "/call", { json: { name: "act" } });
   });
 
   it("still serves the routes every body has, with the features it lacks left out", async () => {
@@ -622,7 +640,7 @@ describe("body API on a body with every optional feature off", () => {
 describe("body API on a body with locked kits, agent kits off, and a read-only wiki that holds a lesson", () => {
   let body: Running;
   const ref = referenceKits(["move"], true);
-  const features: Features = { kits: ["move"], kitsLocked: true, agentKits: false, wiki: "read", lessons: true, milestones: true, triggers: true };
+  const features: Features = { kits: ["move"], kitsLocked: true, agentKits: false, wiki: "read", lessons: true, milestones: true, triggers: true, routines: true };
 
   before(async () => {
     body = await startBody({
@@ -679,6 +697,7 @@ interface GatedProbe {
 
 const KIT_NAME_RULE = { status: 400, body: { error: "✖ use 1-32 lowercase letters, digits, and _; start with a letter\n  → at name" } };
 const NO_TRIGGER = { status: 404, body: { error: 'no trigger "ghost"' } };
+const ROUTINE_NAME_RULE = { status: 400, body: { error: "✖ use 1-48 lowercase letters, digits, _ and -; start with a letter\n  → at name" } };
 
 /** Every capability-gated route of the table, once, with a request whose answer does not depend on which other capabilities the body offers. */
 const GATED: GatedProbe[] = [
@@ -713,6 +732,15 @@ const GATED: GatedProbe[] = [
   },
   { capability: "wiki", method: "GET", url: "/wiki/list?section=quirks", served: (f) => ({ body: { pages: [{ id: "quirks/drops", title: "Drops fall out of reach", tags: ["items", "drops"], status: "verified" }], mode: f.wiki } }) },
   { capability: "lessons", method: "POST", url: "/wiki/lessons", call: { json: { title: "ab", body: "x" } }, served: () => ({ status: 400, body: { error: "✖ Too small: expected string to have >=3 characters\n  → at title\n✖ Too small: expected string to have >=10 characters\n  → at body" } }) },
+  { capability: "routines", method: "GET", url: "/routines", served: () => ({ body: { routines: [] } }) },
+  { capability: "routines", method: "GET", url: "/routines/source?name=ghost", served: () => ({ status: 404, body: { error: 'no routine "ghost"' } }) },
+  { capability: "routines", method: "POST", url: "/routines/save", call: { json: { name: "Bad", source: "" } }, served: () => ROUTINE_NAME_RULE },
+  { capability: "routines", method: "GET", url: "/routines/versions?name=Bad", served: () => ROUTINE_NAME_RULE },
+  { capability: "routines", method: "POST", url: "/routines/revert", call: { json: { name: "Bad", version: 1 } }, served: () => ROUTINE_NAME_RULE },
+  { capability: "routines", method: "GET", url: "/bindings", served: () => ({ body: { bindings: [] } }) },
+  { capability: "routines", method: "POST", url: "/bind", call: { json: { kind: "action", name: "act", routine: "ghost" } }, served: () => ({ status: 404, body: { error: 'no routine named "ghost"' } }) },
+  { capability: "routines", method: "POST", url: "/unbind", call: { json: { name: "ghost" } }, served: () => ({ status: 404, body: { error: 'no binding "ghost"' } }) },
+  { capability: "routines", method: "POST", url: "/call", call: { json: { name: "ghost" } }, served: () => ({ status: 404, body: { error: 'no action bound to "ghost"' } }) },
 ];
 
 /** A body that offers every capability; each profile below turns one off. */
@@ -737,6 +765,7 @@ const PROFILES: Profile[] = [
   { off: ["lessons"], scenario: { wikiMode: "read" }, features: { ...FEATURES_ALL, wiki: "read", lessons: false } },
   { off: ["milestones"], scenario: { milestonesEnabled: false }, features: { ...FEATURES_ALL, milestones: false } },
   { off: ["triggers"], scenario: { triggers: false }, features: { ...FEATURES_ALL, triggers: false } },
+  { off: ["routines"], scenario: { routines: false }, features: { ...FEATURES_ALL, routines: false } },
 ];
 
 describe("body API: each capability gates exactly its own routes", () => {
@@ -1018,6 +1047,21 @@ describe("body API: start and stop", () => {
       await daemon.close();
       releaseLongTimers();
     }
+  });
+});
+
+describe("body API: routine calls on a body that is not connected", () => {
+  let body: Running;
+
+  before(async () => {
+    body = await startBody({ stateFiles: { "bindings.json": { act: { kind: "action", routine: "act" } } } });
+  });
+  after(() => body.close());
+
+  it("lists the stored binding, and answers /call with 503 as /run does", async () => {
+    await body.call("GET", "/bindings", { body: { bindings: [{ kind: "action", name: "act", routine: "act" }] } });
+    await body.call("POST", "/call", { status: 503, body: NOT_CONNECTED }, { json: { name: "act", args: { a: 1 } } });
+    await body.call("POST", "/run", { status: 503, body: NOT_CONNECTED }, { json: { code: "return 1" } });
   });
 });
 

@@ -24,6 +24,8 @@ export const BODY_FLAG_OPTIONS = {
   "agent-kits": { type: "string" },
   "no-agent-kits": { type: "boolean", default: false },
   "no-triggers": { type: "boolean", default: false },
+  routines: { type: "string" },
+  "no-routines": { type: "boolean", default: false },
 } as const;
 
 /** The same flags as a schema: what a validated body command looks like. */
@@ -47,9 +49,12 @@ export const BodyFlags = z
     agentKits: z.string().optional(),
     noAgentKits: z.boolean(),
     noTriggers: z.boolean(),
+    routines: z.string().optional(),
+    noRoutines: z.boolean(),
   })
   .refine((flags) => !(flags.milestones && flags.noMilestones), { message: "--milestones and --no-milestones cannot be combined" })
-  .refine((flags) => !(flags.agentKits && flags.noAgentKits), { message: "--agent-kits and --no-agent-kits cannot be combined" });
+  .refine((flags) => !(flags.agentKits && flags.noAgentKits), { message: "--agent-kits and --no-agent-kits cannot be combined" })
+  .refine((flags) => !(flags.routines && flags.noRoutines), { message: "--routines and --no-routines cannot be combined" });
 
 export type BodyFlags = z.infer<typeof BodyFlags>;
 
@@ -69,6 +74,7 @@ export const OPERATOR_FLAG_HELP = [
   "          --milestones <file> (milestones JSON; replaces the stored set),",
   "          --no-milestones (no milestones: the agent cannot read, set, or grade them),",
   "          --no-triggers (the agent cannot register triggers: programs that run when an event arrives),",
+  "          --no-routines (no routines: the agent cannot save, bind, or call modules), --routines <dir> (default <state>/routines),",
 ];
 
 /** Parses and validates raw flag values (already through parseArgs) into a body command. */
@@ -92,5 +98,7 @@ export function parseBodyFlags(name: string, values: Record<string, string | boo
     agentKits: values["agent-kits"],
     noAgentKits: values["no-agent-kits"],
     noTriggers: values["no-triggers"],
+    routines: values.routines,
+    noRoutines: values["no-routines"],
   });
 }

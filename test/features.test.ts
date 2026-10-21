@@ -16,7 +16,7 @@ const exec = promisify(execFile);
 const ROUTINE_KITS = ["gatherer", "crafter", "builder", "explorer", "social"];
 /** What --locks with the routine kits offers: their used primitives come along automatically. */
 const OFFERED_KITS = ["move", "sense", "dig", "place", "inventory", "craft", "items", "furnace", ...ROUTINE_KITS];
-const raw: BodyFeatures = { kits: [], kitsLocked: true, agentKits: false, wiki: "off", lessons: false, milestones: false, triggers: false };
+const raw: BodyFeatures = { kits: [], kitsLocked: true, agentKits: false, wiki: "off", lessons: false, milestones: false, triggers: false, routines: false };
 const kitsTier: BodyFeatures = { ...raw, kits: OFFERED_KITS, agentKits: true };
 const wikiTier: BodyFeatures = { ...raw, wiki: "read" };
 const full: BodyFeatures = { ...kitsTier, wiki: "read" };
@@ -49,7 +49,7 @@ describe("tier visibility in the usage text", () => {
 
   it("shows an operator everything when no body can be asked", () => {
     const text = usageFor(null, true, OPERATOR_FLAG_HELP);
-    for (const word of ["body ", "--no-agent-kits", "--no-milestones", "--no-triggers", "kits use", "wiki lesson", "--lock-kits"]) {
+    for (const word of ["body ", "--no-agent-kits", "--no-milestones", "--no-triggers", "--no-routines", "kits use", "wiki lesson", "--lock-kits"]) {
       assert.match(text, new RegExp(word.replace(/[-]/g, "\\-")));
     }
     assert.doesNotMatch(usageFor(null, false), /kits|wiki|milestones/i);
@@ -121,7 +121,7 @@ describe("tier visibility on a running body", () => {
   let plainKitsBody: BodyClient;
   before(async () => {
     [rawBody, fullBody, plainKitsBody] = await Promise.all([
-      start("features-raw", "--wiki", "off", "--no-milestones", "--no-agent-kits", "--no-triggers", "--kits", ""),
+      start("features-raw", "--wiki", "off", "--no-milestones", "--no-agent-kits", "--no-triggers", "--no-routines", "--kits", ""),
       start("features-full", "--wiki", "read", "--kits", ROUTINE_KITS.join(","), "--no-milestones"),
       start("features-plainkits", "--wiki", "off", "--no-agent-kits", "--no-milestones", "--no-triggers", "--kits", ROUTINE_KITS.join(",")),
     ]);
@@ -146,7 +146,7 @@ describe("tier visibility on a running body", () => {
   const get = (client: BodyClient, route: string) => fetch(new URL(route, client.endpoint.url), { headers: { authorization: `Bearer ${client.endpoint.token}` } });
 
   it("answers requests for a feature it lacks like requests for any unknown route", async () => {
-    for (const route of ["/kits", "/kits/docs", "/kits/source?name=move", "/kits/save", "/wiki/list", "/wiki/search?q=logs", "/wiki/page?id=flows/first-day", "/milestones", "/triggers"]) {
+    for (const route of ["/kits", "/kits/docs", "/kits/source?name=move", "/kits/save", "/wiki/list", "/wiki/search?q=logs", "/wiki/page?id=flows/first-day", "/milestones", "/triggers", "/routines", "/routines/source?name=act", "/routines/versions?name=act", "/bindings"]) {
       const res = await get(rawBody, route);
       assert.equal(res.status, 404, route);
       assert.equal(((await res.json()) as { error: string }).error, `no route for GET ${route.split("?")[0]}`);
@@ -160,6 +160,27 @@ describe("tier visibility on a running body", () => {
     await assert.rejects(rawBody.setMilestones({ milestones: [] }), /no route for PUT \/milestones/);
     await assert.rejects(rawBody.addTrigger({ name: "t", on: ["hurt"], run: "return 1" }), /no route for POST \/triggers/);
     await assert.rejects(rawBody.addLesson({ title: "A lesson", body: "Some text here." }), /no route for POST \/wiki\/lessons/);
+    for (const route of ["/routines/save", "/bind", "/unbind", "/call"]) {
+      const res = await fetch(new URL(route, rawBody.endpoint.url), { method: "POST", headers: { authorization: `Bearer ${rawBody.endpoint.token}` }, body: "{ not json" });
+      assert.equal(res.status, 404, route);
+      assert.equal(((await res.json()) as { error: string }).error, `no route for POST ${route}`);
+    }
+    assert.equal((await rawBody.features()).routines, false);
+  });
+
+  it("keeps a body's routines in the directory --routines names, and creates it", async () => {
+    const dir = path.join(runtime, "features-routines-dir");
+    const body = await start("features-routines", "--wiki", "off", "--no-milestones", "--routines", dir);
+    assert.equal((await body.features()).routines, true);
+    assert.equal(existsSync(dir), true);
+    const saved = await fetch(new URL("/routines/save", body.endpoint.url), {
+      method: "POST",
+      headers: { authorization: `Bearer ${body.endpoint.token}` },
+      body: JSON.stringify({ name: "act", source: "export default () => 1;\n" }),
+    });
+    assert.equal(saved.status, 200);
+    assert.equal(readFileSync(path.join(dir, "act.ts"), "utf8"), "export default () => 1;\n");
+    assert.equal(existsSync(path.join(runtime, "features-routines-state", "routines")), false);
   });
 
   it("serves a blocking wait on every body", async () => {
@@ -197,6 +218,7 @@ describe("tier visibility on a running body", () => {
     assert.doesNotMatch(doc, WIKI_WORDS);
     assert.doesNotMatch(doc, MILESTONE_WORDS);
     assert.doesNotMatch(doc, /trigger/i);
+    assert.doesNotMatch(doc, /routine/i);
   });
 
   it("gives the CLI of a raw body no commands for features it lacks", async () => {

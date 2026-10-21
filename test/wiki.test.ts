@@ -6,7 +6,7 @@ import path from "node:path";
 import { describe, it } from "node:test";
 import { MC_VERSION } from "../src/mc/version.ts";
 import { formatPage, Wiki, WIKI_DIR, WikiDisabledError, WikiPageNotFoundError } from "../src/wiki/wiki.ts";
-import { WikiAccess, type WikiView } from "../src/wiki/access.ts";
+import { FULL_VIEW, WikiAccess, wikiView, type WikiView } from "../src/wiki/access.ts";
 import { chunk, compress, dataPages, loadMinecraftData } from "../scripts/wiki-reference.ts";
 
 async function fixture(): Promise<{ root: string; lessons: string }> {
@@ -93,8 +93,8 @@ describe("Wiki", () => {
 });
 
 describe("Wiki views", () => {
-  const none: WikiView = { kits: false, milestones: false, agentKits: false, triggers: false };
-  const all: WikiView = { kits: true, milestones: true, agentKits: true, triggers: true };
+  const none: WikiView = { kits: false, milestones: false, agentKits: false, triggers: false, routines: false };
+  const all: WikiView = { kits: true, milestones: true, agentKits: true, triggers: true, routines: true };
 
   async function featureFixture(): Promise<Wiki> {
     const { root } = await fixture();
@@ -128,10 +128,10 @@ describe("Wiki views", () => {
     assert.match(full, /kit\.gatherer\.gather digs and collects logs\./);
     assert.match(full, /The milestones count logs\./);
     assert.match(full, /Save your own kit with kits\.save\./);
-    const kitsOnly = wiki.read("quirks/logs", { kits: true, milestones: false, agentKits: false, triggers: false }).body;
+    const kitsOnly = wiki.read("quirks/logs", { kits: true, milestones: false, agentKits: false, triggers: false, routines: false }).body;
     assert.match(kitsOnly, /kit\.gatherer/);
     assert.doesNotMatch(kitsOnly, /milestone|kits\.save/);
-    const milestonesOnly = wiki.read("quirks/logs", { kits: false, milestones: true, agentKits: false, triggers: false }).body;
+    const milestonesOnly = wiki.read("quirks/logs", { kits: false, milestones: true, agentKits: false, triggers: false, routines: false }).body;
     assert.match(milestonesOnly, /The milestones count logs\./);
     assert.doesNotMatch(milestonesOnly, /kit\.|kits\.save/);
     // The search index sees the same text, so a query for kit words finds nothing in a body without kits.
@@ -175,9 +175,29 @@ describe("repository wiki", () => {
     }
   });
 
+  it("hides a page that requires routines, and cuts routines blocks, for a body without routines; wikiView follows the capability", async () => {
+    const { root } = await fixture();
+    const page = (meta: string, body: string) => `---\n${meta}\n---\n\n${body}\n`;
+    await mkdir(path.join(root, "minebot"));
+    await writeFile(path.join(root, "minebot", "routines.md"), page("title: Routines are modules\nrequires: [routines]\nverified_by: test", "Save a routine, then bind it."));
+    await writeFile(path.join(root, "quirks", "logs.md"), page("title: Gathering logs\nverified_by: test", "Dig the log.\n\n<!-- routines -->\nSave a routine that digs.\n<!-- /routines -->"));
+    const wiki = Wiki.load(root);
+    const none: WikiView = { kits: false, milestones: false, agentKits: false, triggers: false, routines: false };
+    const all: WikiView = { ...none, routines: true };
+    assert.ok(wiki.list(undefined, all).some((p) => p.id === "minebot/routines"));
+    assert.ok(!wiki.list(undefined, none).some((p) => p.id === "minebot/routines"));
+    assert.throws(() => wiki.read("minebot/routines", none), WikiPageNotFoundError);
+    assert.equal(wiki.read("quirks/logs", none).body, "Dig the log.");
+    assert.equal(wiki.read("quirks/logs", all).body, "Dig the log.\n\nSave a routine that digs.");
+    const features = { kits: [], kitsLocked: true, agentKits: false, wiki: "read" as const, lessons: false, milestones: false, triggers: false };
+    assert.equal(wikiView({ ...features, routines: true }).routines, true);
+    assert.equal(wikiView({ ...features, routines: false }).routines, false);
+    assert.equal(FULL_VIEW.routines, true);
+  });
+
   it("says nothing about kits or goals to a body that has neither", () => {
     const wiki = Wiki.load(WIKI_DIR);
-    const view: WikiView = { kits: false, milestones: false, agentKits: false, triggers: false };
+    const view: WikiView = { kits: false, milestones: false, agentKits: false, triggers: false, routines: false };
     const mentions = /\bkits?\b|\bkit\.|\blessons?\b|minebot goals|body's goals|milestone/i;
     const pages = wiki.list(undefined, view);
     assert.ok(pages.length > 10, "the repository wiki keeps its pages for a body without kits");
@@ -201,7 +221,7 @@ describe("repository wiki", () => {
 
   it("keeps the kit shortcuts for a body that has kits", () => {
     const wiki = Wiki.load(WIKI_DIR);
-    const view: WikiView = { kits: true, milestones: false, agentKits: false, triggers: false };
+    const view: WikiView = { kits: true, milestones: false, agentKits: false, triggers: false, routines: false };
     assert.match(wiki.read("flows/first-day", view).body, /kit\.gatherer\.gather\(\{ blocks: "\*_log", count: 4 \}\)/);
     assert.ok(wiki.list(undefined, view).some((p) => p.id === "minebot/kits"));
     assert.doesNotMatch(wiki.read("flows/first-day", view).body, /<!--/);
@@ -209,7 +229,7 @@ describe("repository wiki", () => {
 
   it("shows the triggers page only to a body with triggers, and keeps kits out of it when the body has none", () => {
     const wiki = Wiki.load(WIKI_DIR);
-    const without: WikiView = { kits: false, milestones: false, agentKits: false, triggers: false };
+    const without: WikiView = { kits: false, milestones: false, agentKits: false, triggers: false, routines: false };
     const triggersOnly: WikiView = { ...without, triggers: true };
     assert.ok(!wiki.list(undefined, without).some((p) => p.id === "minebot/triggers"));
     assert.throws(() => wiki.read("minebot/triggers", without), WikiPageNotFoundError);

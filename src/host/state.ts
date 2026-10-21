@@ -1,5 +1,5 @@
 // The body's state directory: the one owner of where persistent state lives. Notes, milestones,
-// triggers, per-kit stores, and agent kits survive body restarts here, and every file is written atomically.
+// triggers, action bindings, per-kit stores, agent kits, and routines survive body restarts here, and every file is written atomically.
 import path from "node:path";
 import { JsonStore } from "../store.ts";
 import { Notes } from "./notes.ts";
@@ -9,6 +9,7 @@ export class BodyState {
   readonly #stores = new Map<string, JsonStore>();
   #triggers: JsonStore | undefined;
   #kitStats: JsonStore | undefined;
+  #bindings: JsonStore | undefined;
 
   constructor(dir: string) {
     this.dir = dir;
@@ -29,6 +30,17 @@ export class BodyState {
   get kitStats(): JsonStore {
     this.#kitStats ??= new JsonStore(path.join(this.dir, "kit-stats.json"));
     return this.#kitStats;
+  }
+
+  /** The agent's action bindings, one entry per bound name. Apart from the kit stores, which are named by kit. */
+  get bindings(): JsonStore {
+    this.#bindings ??= new JsonStore(path.join(this.dir, "bindings.json"));
+    return this.#bindings;
+  }
+
+  /** Where the routine library lives; bodies that share the directory share their routines. */
+  get routinesDir(): string {
+    return path.join(this.dir, "routines");
   }
 
   /** Where agents' kits live; bodies that share the directory share their kits. */

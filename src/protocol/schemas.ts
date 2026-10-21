@@ -14,7 +14,7 @@ export const NoteKey = z
 export const NoteText = z.string().min(1).max(MAX_NOTE_LENGTH);
 
 /** Features of a body that wiki content can depend on; the cut-block markers share these names. */
-export const WikiFeature = z.enum(["kits", "milestones", "agentKits", "triggers"]);
+export const WikiFeature = z.enum(["kits", "milestones", "agentKits", "triggers", "routines"]);
 export type WikiFeature = z.infer<typeof WikiFeature>;
 
 /** Wiki page frontmatter. Pages that require a feature are hidden from bodies without it. */
@@ -190,3 +190,32 @@ export const RemoveTriggerInput = z.object({ name: TriggerName });
 
 /** Body of `POST /triggers/enabled`. */
 export const TriggerEnabledInput = z.object({ name: TriggerName, enabled: z.boolean() });
+
+/** Body of `POST /routines/save`. */
+export const SaveRoutineInput = z.object({ name: RoutineName, source: RoutineSource });
+
+/** Query of `GET /routines/source`. */
+export const RoutineSourceQuery = z.object({ name: RoutineName });
+
+/** Query of `GET /routines/versions`. */
+export const RoutineVersionsQuery = z.object({ name: RoutineName });
+
+/** Body of `POST /routines/revert`: save an earlier version of a routine again, as a new version. */
+export const RevertRoutineInput = z.object({ name: RoutineName, version: z.number().int().positive() });
+
+/**
+ * Body of `POST /bind`: an action, a saved routine called by name with `POST /call`. A binding's
+ * name is in the triggers' namespace (`TriggerName`).
+ */
+export const BindInput = z.object({ kind: z.literal("action"), name: TriggerName, routine: RoutineName });
+export type BindInput = z.infer<typeof BindInput>;
+
+/** Body of `POST /unbind`. */
+export const UnbindInput = z.object({ name: TriggerName });
+
+/** Body of `POST /call`: calls the action bound to `name`. `args` default to `{}`; `timeoutMs` as for `POST /run`. */
+export const CallInput = z.object({
+  name: TriggerName,
+  args: z.record(z.string(), z.unknown()).optional(),
+  timeoutMs: RunInput.shape.timeoutMs,
+});

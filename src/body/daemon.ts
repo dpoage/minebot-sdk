@@ -52,6 +52,10 @@ export interface DaemonOptions {
   agentKitsDir?: string;
   /** Let agents register triggers: programs the body runs when an event arrives. Default: true. */
   triggers?: boolean;
+  /** Let agents keep routines: modules they save, bind to names, and call. Default: true. */
+  routines?: boolean;
+  /** Where routines are saved; default: the state directory's routines/. Bodies that share the directory share their routines. */
+  routinesDir?: string;
 }
 
 /** Starts a body and serves its API. Publishes the endpoint to `.minebot/<name>.json`. */

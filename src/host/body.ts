@@ -9,7 +9,9 @@ import type { Wiki } from "../wiki/wiki.ts";
 import { WikiAccess, wikiView } from "../wiki/access.ts";
 import { Connection, type ServerAuth } from "./connection.ts";
 import { programFinished, type EventSink, type FiringOf, type LostFiring, type TriggerDisabled, type TriggerFinished } from "../protocol/host.ts";
-import { programGlobals, type GlobalsDeps } from "./globals.ts";
+import { invokeRoutine } from "../routine/invoke.ts";
+import { programGlobals, routineContext, type GlobalsDeps } from "./globals.ts";
+import type { RoutineLoader } from "./routines/loader.ts";
 import { briefOf, observation } from "./observation.ts";
 import { Notes } from "./notes.ts";
 import { StallTracker } from "./progress.ts";
@@ -43,6 +45,8 @@ export interface BodyOptions {
   kitAuthoring?: GlobalsDeps["kitAuthoring"];
   /** Let the agent register triggers. Default: true. A body without them neither mentions nor serves them. */
   triggersEnabled?: boolean;
+  /** Loads the routines a call runs; undefined for a body without routines. */
+  routines?: RoutineLoader;
   /** Where the body's events go; the supervisor's log numbers them and echoes them back. */
   events: EventSink;
   /** Where trigger runs and registrations are reported, as programs are. */
@@ -123,17 +127,7 @@ export class Body {
     this.wiki = new WikiAccess(options.wiki, options.wikiMode, options.username, () => wikiView(this.features));
     this.runner = new ProgramRunner({
       // Only the features the body offers become globals, so a program cannot find the others.
-      globals: (scope) =>
-        programGlobals(scope, {
-          connection: this.#connection,
-          kits: this.kits,
-          wiki: this.wiki,
-          notes: this.notes,
-          features: () => this.features,
-          status: () => this.status(),
-          ...(this.triggers && { triggers: this.triggers }),
-          ...(capabilities(this.features).agentKits && options.kitAuthoring && { kitAuthoring: options.kitAuthoring }),
-        }),
+      globals: (scope) => programGlobals(scope, this.#environment()),
       events: () => this.#connection.bot ?? undefined,
       onAbort: () => this.#connection.halt(),
     });
@@ -156,6 +150,20 @@ export class Body {
           });
   }
 
+  /** What programs and routines are built from: the body's facilities, with the optional ones only where the body offers them. */
+  #environment(): GlobalsDeps {
+    return {
+      connection: this.#connection,
+      kits: this.kits,
+      wiki: this.wiki,
+      notes: this.notes,
+      features: () => this.features,
+      status: () => this.status(),
+      ...(this.triggers && { triggers: this.triggers }),
+      ...(capabilities(this.features).agentKits && this.#options.kitAuthoring && { kitAuthoring: this.#options.kitAuthoring }),
+    };
+  }
+
   /** The optional parts of this body. Everything an agent can see derives from this. */
   get features(): BodyFeatures {
     return {
@@ -166,6 +174,7 @@ export class Body {
       lessons: this.wiki.lessons,
       milestones: this.#options.milestonesEnabled ?? true,
       triggers: this.triggers !== null,
+      routines: this.#options.routines !== undefined,
     };
   }
 
@@ -176,7 +185,34 @@ export class Body {
    */
   async run(code: string, timeoutMs?: number): Promise<RunOutcome> {
     this.#options.syncKits?.();
-    const result = await this.runner.run(code, timeoutMs);
+    return this.#ended(await this.runner.run(code, timeoutMs));
+  }
+
+  /**
+   * Calls routine `routine` with `args` as one run, with the duties of `run`: the routine's module is
+   * loaded and its default export called inside the run, so what its top level does is bounded by the
+   * run's timeout, stop, and kill deadline. `result` is the routine's awaited return as JSON.
+   * Throws when the body is not connected, and `BusyError` while another run is active.
+   */
+  async call(routine: string, args: unknown, timeoutMs?: number): Promise<RunOutcome> {
+    const loader = this.#options.routines;
+    if (!loader) throw new Error("this body has no routines");
+    this.#options.syncKits?.();
+    const environment = this.#environment();
+    // Not connected answers as a program does, not as a run that failed.
+    this.#connection.requireBot();
+    const result = await this.runner.call(
+      async (scope) => {
+        const ctx = routineContext(scope, environment);
+        return invokeRoutine(await loader.load(routine), routine, ctx, args ?? {});
+      },
+      { timeoutMs, sourceDir: loader.dir },
+    );
+    return this.#ended(result);
+  }
+
+  /** What a program's or a call's end does for the body: the event, the triggers waiting for an idle runner, the stall record. */
+  #ended(result: RunOutcome): RunOutcome {
     // A hung run ends with its host: the supervisor, which kills it, logs the end of the program.
     if (result.hung) return result;
     this.events.push("program_finished", programFinished(result));

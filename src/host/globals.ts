@@ -4,6 +4,8 @@ import type { Bot } from "mineflayer";
 import pathfinderPkg from "mineflayer-pathfinder";
 import { Vec3 } from "vec3";
 import type { KitHost } from "../kit/kit.ts";
+import type { KitRegistry } from "../kit/registry.ts";
+import type { RoutineContext } from "../routine/public.ts";
 import { capabilities, type BodyFeatures, type LessonInput, type StatusResponse } from "../protocol/index.ts";
 import type { ProgramScope } from "../program/scope.ts";
 import type { WikiAccess } from "../wiki/access.ts";
@@ -33,19 +35,38 @@ export interface GlobalsDeps {
   };
 }
 
+/**
+ * What programs and routines both get, from one place: the notes, `status`, `kit` when the body offers
+ * kits, and `wiki` when its wiki is on. A fact about these members changes here only.
+ */
+function facilities(scope: ProgramScope, deps: GlobalsDeps, bot: Bot) {
+  const caps = capabilities(deps.features());
+  return {
+    notes: {
+      list: () => deps.notes.list(),
+      get: (key: string) => deps.notes.get(key)?.text,
+      set: (key: string, text: string) => deps.notes.set(key, text),
+      delete: (key: string) => deps.notes.delete(key),
+    },
+    status: deps.status,
+    ...(caps.kits && { kit: deps.kits.api(scope, bot) }),
+    ...(caps.wiki && {
+      wiki: {
+        search: (query: string, limit?: number) => deps.wiki.search(query, limit),
+        read: (id: string) => deps.wiki.readFormatted(id).text,
+        list: (section?: string) => deps.wiki.list(section),
+        ...(caps.lessons && { addLesson: (lesson: LessonInput) => deps.wiki.addLesson(lesson) }),
+      },
+    }),
+  };
+}
+
 /** The globals of one program run: the base environment plus exactly the features the body offers. */
 export function programGlobals(scope: ProgramScope, deps: GlobalsDeps): Record<string, unknown> {
   const bot = deps.connection.requireBot();
   const caps = capabilities(deps.features());
-  const notes = {
-    list: () => deps.notes.list(),
-    get: (key: string) => deps.notes.get(key)?.text,
-    set: (key: string, text: string) => deps.notes.set(key, text),
-    delete: (key: string) => deps.notes.delete(key),
-  };
-  const globals: Record<string, unknown> = { bot, goals, Movements, Vec3, notes, status: deps.status };
+  const globals: Record<string, unknown> = { bot, goals, Movements, Vec3, ...facilities(scope, deps, bot) };
   if (caps.kits) {
-    globals.kit = deps.kits.api(scope, bot);
     const authoring = caps.agentKits ? deps.kitAuthoring : undefined;
     globals.kits = deps.kits.controller({
       switching: caps.kitSwitching,
@@ -62,13 +83,16 @@ export function programGlobals(scope: ProgramScope, deps: GlobalsDeps): Record<s
       disable: (name: string) => triggers.setEnabled(name, false),
     };
   }
-  if (caps.wiki) {
-    globals.wiki = {
-      search: (query: string, limit?: number) => deps.wiki.search(query, limit),
-      read: (id: string) => deps.wiki.readFormatted(id).text,
-      list: (section?: string) => deps.wiki.list(section),
-      ...(caps.lessons && { addLesson: (lesson: LessonInput) => deps.wiki.addLesson(lesson) }),
-    };
-  }
   return globals;
+}
+
+/**
+ * What a routine's default export receives for one call: the run's scope, the live bot, and the
+ * facilities the body offers programs. Nothing else: the kit controller and the triggers stay program globals.
+ */
+export function routineContext(scope: ProgramScope, deps: GlobalsDeps): RoutineContext {
+  const bot = deps.connection.requireBot();
+  const { kit, ...rest } = facilities(scope, deps, bot);
+  // The kit calls of the host's registry are the shape `KitRegistry` types for authors.
+  return { ...scope, bot, ...rest, ...(kit && { kit: kit as Readonly<KitRegistry> }) };
 }

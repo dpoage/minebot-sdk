@@ -7,7 +7,7 @@ import { CAPABILITIES, capabilities, CAPABILITY_GATES, programApiDoc, type BodyF
 import { wikiView } from "../src/wiki/access.ts";
 
 /** A body with every capability on: the baseline to switch one off. */
-const EVERYTHING: BodyFeatures = { kits: ["move", "gatherer"], kitsLocked: false, agentKits: true, wiki: "write", lessons: true, milestones: true, triggers: true };
+const EVERYTHING: BodyFeatures = { kits: ["move", "gatherer"], kitsLocked: false, agentKits: true, wiki: "write", lessons: true, milestones: true, triggers: true, routines: true };
 
 /** Words an agent must not see when the capability is off. */
 const FORBIDDEN_WORDS: Record<Capability, RegExp> = {
@@ -18,6 +18,7 @@ const FORBIDDEN_WORDS: Record<Capability, RegExp> = {
   lessons: /\blearned\b|add a lesson|wiki lesson|wiki_add_lesson|addLesson/i,
   milestones: /\bmilestones?\b|minebot milestones|body's milestones/i,
   triggers: /\btriggers?\b|trigger_|--no-triggers/i,
+  routines: /\broutines?\b|call_routine|bind_routine|--no-routines|\/bind\b|\/call\b|defineRoutine/i,
 };
 
 function withOff(capability: Capability): BodyFeatures {
@@ -45,6 +46,9 @@ function withOff(capability: Capability): BodyFeatures {
     case "triggers":
       features.triggers = false;
       break;
+    case "routines":
+      features.routines = false;
+      break;
   }
   return features;
 }
@@ -59,8 +63,9 @@ describe("the capability table", () => {
       lessons: true,
       milestones: true,
       triggers: true,
+      routines: true,
     });
-    assert.deepEqual(CAPABILITIES, ["kits", "kitSwitching", "agentKits", "wiki", "lessons", "milestones", "triggers"]);
+    assert.deepEqual(CAPABILITIES, ["kits", "kitSwitching", "agentKits", "wiki", "lessons", "milestones", "triggers", "routines"]);
   });
 
   it("turns each capability off, alone, in every surface", () => {
@@ -90,7 +95,7 @@ describe("the capability table", () => {
 
       // The wiki's view of the body: the gated features map straight onto it.
       const view = wikiView(features);
-      if (capability === "kits" || capability === "milestones" || capability === "agentKits" || capability === "triggers") {
+      if (capability === "kits" || capability === "milestones" || capability === "agentKits" || capability === "triggers" || capability === "routines") {
         assert.equal(view[capability], false, `wikiView leaks ${capability}`);
       }
     }
@@ -124,6 +129,34 @@ describe("the capability table", () => {
     // The CLI's feature commands come from the same gates.
     const cli = readFileSync(new URL("../src/cli.ts", import.meta.url), "utf8");
     assert.match(cli, /const FEATURE_COMMANDS: Record<string, \(features: BodyFeatures\) => boolean> = \{\s*kits: CAPABILITY_GATES\.kits,\s*wiki: CAPABILITY_GATES\.wiki,\s*milestones: CAPABILITY_GATES\.milestones,\s*triggers: CAPABILITY_GATES\.triggers,\s*\};/);
+  });
+
+  it("tags every routine and binding route with the routines capability", () => {
+    const daemon = readFileSync(new URL("../src/host/routes.ts", import.meta.url), "utf8");
+    const routineRoutes = [
+      ["GET", "/routines"],
+      ["GET", "/routines/source"],
+      ["POST", "/routines/save"],
+      ["GET", "/routines/versions"],
+      ["POST", "/routines/revert"],
+      ["GET", "/bindings"],
+      ["POST", "/bind"],
+      ["POST", "/unbind"],
+      ["POST", "/call"],
+    ] as const;
+    for (const [method, path] of routineRoutes) {
+      assert.match(daemon, new RegExp(`method: "${method}",\\s*path: "${path}",\\s*capability: "routines",`), `${method} ${path} must name the routines capability`);
+    }
+  });
+
+  it("describes routines in the program reference exactly when the body offers them, and lists only the ctx members it offers", () => {
+    assert.match(programApiDoc(EVERYTHING), /Routines: /);
+    assert.doesNotMatch(programApiDoc(withOff("routines")), /Routines: /);
+    const members = (features: BodyFeatures) => /ctx has exactly: ([^.]*)\./.exec(programApiDoc(features))?.[1];
+    assert.equal(members(EVERYTHING), "bot, log, sleep, signal, on, notes, status, kit, wiki");
+    assert.equal(members(withOff("kits")), "bot, log, sleep, signal, on, notes, status, wiki");
+    assert.equal(members(withOff("wiki")), "bot, log, sleep, signal, on, notes, status, kit");
+    assert.equal(members({ ...withOff("kits"), wiki: "off", lessons: false }), "bot, log, sleep, signal, on, notes, status");
   });
 
   it("does not mention milestones anywhere a body without them looks", () => {

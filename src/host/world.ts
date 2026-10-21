@@ -1,6 +1,7 @@
 // The bot host's world: the state directory, the kit library and host with their
 // sync/save/revert/try, the wiki, and the Body, served through the route table. Everything a
 // program reads synchronously lives here.
+import { mkdirSync } from "node:fs";
 import path from "node:path";
 import type { Bot } from "mineflayer";
 import type { Kit } from "../kit/kit.ts";
@@ -10,12 +11,15 @@ import { BUILTIN_KITS } from "../kit/index.ts";
 import { KitStats } from "../kit/stats.ts";
 import type { ProgramScope } from "../program/scope.ts";
 import type { HostInit, EventSink } from "../protocol/host.ts";
-import type { KitInfo, SaveKitResponse } from "../protocol/index.ts";
+import type { KitInfo, SaveKitResponse, SaveRoutineResponse } from "../protocol/index.ts";
 import { Wiki } from "../wiki/wiki.ts";
+import { Bindings } from "./bindings.ts";
 import { Body, type RunRecorder } from "./body.ts";
+import { RoutineLibrary } from "./routines/library.ts";
+import { RoutineLoader } from "./routines/loader.ts";
 import { type ApiRequest, bodyRoutes, serve } from "./routes.ts";
 import { BodyState } from "./state.ts";
-import { typeCheckKit, typeCheckLog } from "./typecheck.ts";
+import { typeCheckKit, typeCheckLog, typeCheckRoutine } from "./typecheck.ts";
 
 export interface World {
   readonly body: Body;
@@ -162,6 +166,11 @@ export function buildWorld(options: HostInit, io: { events: EventSink; recorder:
     }
   }
 
+  // A body without routines has no library, no loader, and no bindings file.
+  const routinesDir = options.routines === false ? undefined : (options.routinesDir ?? state.routinesDir);
+  if (routinesDir) mkdirSync(routinesDir, { recursive: true });
+  const routineLibrary = routinesDir ? new RoutineLibrary({ dir: routinesDir, savedBy: options.name }) : undefined;
+
   const wiki = options.wikiMode === "off" ? null : Wiki.load(options.wikiDir, options.lessonsDir);
   const body = new Body({
     username: options.username,
@@ -176,6 +185,7 @@ export function buildWorld(options: HostInit, io: { events: EventSink; recorder:
     milestonesEnabled: options.milestonesEnabled,
     agentKits: options.agentKits && library.enabled,
     triggersEnabled: options.triggers ?? true,
+    routines: routinesDir ? new RoutineLoader(routinesDir) : undefined,
     events: io.events,
     recorder: io.recorder,
     startedAt: options.startedAt,
@@ -205,7 +215,16 @@ export function buildWorld(options: HostInit, io: { events: EventSink; recorder:
   };
   for (const problem of startupProblems) io.events.push("kit_error", problem);
 
-  const routes = bodyRoutes({ body, kits: host, library, syncKits, saveKit, revertKit, recorder: io.recorder });
+  const routines = routineLibrary && {
+    library: routineLibrary,
+    bindings: new Bindings({ store: state.bindings, library: routineLibrary, triggers: body.triggers, events: io.events }),
+    // The type check never blocks a save: it reports.
+    save: async (name: string, source: string): Promise<SaveRoutineResponse> => {
+      const routine = await routineLibrary.save(name, source);
+      return { routine, typeCheck: await typeCheckRoutine(routineLibrary.dir, name) };
+    },
+  };
+  const routes = bodyRoutes({ body, kits: host, library, syncKits, saveKit, revertKit, recorder: io.recorder, routines });
   return {
     body,
     kits: host,
