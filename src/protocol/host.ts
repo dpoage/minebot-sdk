@@ -117,6 +117,12 @@ export type FromHost =
    * the run had, the supervisor kills the host and restarts it, and no `run_ack` is sent.
    */
   | { kind: "run_finished"; runId: number; result: RunResult | null; hung?: true }
+  /**
+   * The end of a run, reported and acked, reached where it goes: its request was answered (sent
+   * after the `response`), or, for a trigger's run, `event` is the trigger_finished that ends it and
+   * `triggerFailures` the triggers' failures with the firing counted, both taken in as part of this message.
+   */
+  | { kind: "run_delivered"; runId: number; event?: { type: string; data: Record<string, unknown> }; triggerFailures?: Record<string, number> }
   /** Code the body will run later (a trigger), for the history's audit; answered by `run_ack` like a run. */
   | { kind: "register"; runId: number; code: string; extra: object; kits: string[] }
   | { kind: "state"; connected: boolean; deaths: number; reconnects: number; active: string[]; triggerFailures: Record<string, number> };

@@ -3,8 +3,10 @@
 // body wires them. `init.script` (the test owns it) holds one trigger (`reflex`) and the runner's
 // grace. The first host stores the trigger in the state directory before its Triggers load, so the
 // failures its init carries apply to it; every replacement loads it from there, as the body's world
-// does. Like the real host, the state it reports carries the triggers' failures. Once acked, every
-// run pushes `acked` with the time (ms) before its code starts.
+// does. Like the real host, the state it reports carries the triggers' failures, and it answers
+// requests and delivers trigger runs through the reporter. Once acked, every run pushes `acked`
+// with the time (ms) before its code starts. With `killAfterFinished`, the first host SIGKILLs
+// itself right after the message that carries a trigger_finished leaves it.
 // Requests: GET /ping answers with this pid; GET /triggers with the trigger list; POST /triggers
 // saves the trigger in the body; POST /run runs `{code, timeoutMs}` the way the body's /run does.
 import path from "node:path";
@@ -18,9 +20,16 @@ import { JsonStore } from "../../../src/store.ts";
 interface Script {
   graceMs: number;
   reflex: { name: string; on: string[]; run: string; timeoutMs: number; cooldownMs: number };
+  killAfterFinished?: boolean;
 }
 
-const send = (message: FromHost) => process.send!(message);
+let killAfterFinished = false;
+function send(message: FromHost): void {
+  process.send!(message);
+  const finished = (message.kind === "event" && message.type === "trigger_finished") || (message.kind === "run_delivered" && message.event?.type === "trigger_finished");
+  if (killAfterFinished && finished) process.kill(process.pid, "SIGKILL");
+}
+
 let events: HostEvents;
 let reporter: RunReporter;
 let triggers: Triggers;
@@ -58,7 +67,9 @@ process.on("message", async (message: ToHost) => {
         queueMicrotask(reportState);
       });
       const store = new JsonStore(path.join(init.stateDir, "triggers.json"));
-      if (store.keys().length === 0) store.set(init.script.reflex.name, { ...TriggerInput.parse(init.script.reflex), updated: new Date().toISOString() });
+      const first = store.keys().length === 0;
+      if (first) store.set(init.script.reflex.name, { ...TriggerInput.parse(init.script.reflex), updated: new Date().toISOString() });
+      killAfterFinished = first && init.script.killAfterFinished === true;
       triggers = new Triggers({
         store,
         events,
@@ -74,6 +85,7 @@ process.on("message", async (message: ToHost) => {
               return start(trigger.run, trigger.timeoutMs);
             },
           ),
+        deliver: (result, finished, failures) => reporter.deliver(result, { type: "trigger_finished", data: finished }, failures),
         register: async () => {},
         failures: init.triggerFailures,
         lost: init.lostFiring,
@@ -86,9 +98,9 @@ process.on("message", async (message: ToHost) => {
       const { id, method, body } = message;
       const { pathname } = new URL(message.url, "http://localhost");
       try {
-        send({ kind: "response", id, status: 200, body: await serve(id, method, pathname, body) });
+        reporter.answer({ id, status: 200, body: await serve(id, method, pathname, body) });
       } catch (err) {
-        send({ kind: "response", id, status: 500, body: { error: err instanceof Error ? err.message : String(err) } });
+        reporter.answer({ id, status: 500, body: { error: err instanceof Error ? err.message : String(err) } });
       }
       return;
     }

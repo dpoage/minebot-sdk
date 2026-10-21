@@ -7,15 +7,18 @@
 //   graceMs             how long its `report` runs wait after an abort before reporting themselves hung
 //   ackLog              file it writes the time (ms) it was acked a run's start to
 //   trigger             a run with no request, started at `start`: { mode, timeoutMs }
-// Once built it pushes a `hello` event with its pid.
+// Once built it pushes a `hello` event with its pid. A run's end the supervisor acked is delivered
+// as the real host delivers it: after the answer to its request, or with its trigger_finished.
 // Requests: /ping and /notes answer with this pid; /slow never answers; /run?mode=...&timeoutMs=...
 // starts a run that answers the request:
 //   block   takes the main thread once acked
 //   crash   SIGKILLs itself once acked
 //   hang    stays alive and never ends or reports
 //   report  after the abort (a stop, or timeoutMs) waits graceMs, then reports itself hung with logs "partial"
-//   settle  ends at the abort, reporting its result
+//   settle  ends at the abort, reporting its result; with settleMs, that long after the abort; with
+//           registerAtMs, sends a `register` (as a POST /triggers during a program does) that long after its ack
 import { appendFileSync, readFileSync } from "node:fs";
+import { setTimeout as sleep } from "node:timers/promises";
 import { hungCause, restartedError, type FromHost, type HostInit, type ToHost } from "../../../src/protocol/host.ts";
 import type { RunResult } from "../../../src/protocol/index.ts";
 
@@ -33,7 +36,10 @@ interface Script {
 interface Run {
   mode: string;
   timeoutMs: number;
+  settleMs: number;
+  registerAtMs?: number;
   requestId?: number;
+  trigger?: string;
   phase: "starting" | "running" | "finishing";
   result?: RunResult;
 }
@@ -44,9 +50,10 @@ const aborts: (() => void)[] = [];
 let script: Script = {};
 let nextRun = 0;
 
-function startRun(mode: string, timeoutMs: number, requestId?: number, trigger?: string): void {
+function startRun(run: Omit<Run, "phase">): void {
   const runId = nextRun++;
-  runs.set(runId, { mode, timeoutMs, requestId, phase: "starting" });
+  runs.set(runId, { ...run, phase: "starting" });
+  const { trigger, requestId, timeoutMs } = run;
   const extra = trigger === undefined ? {} : { trigger, event: { seq: 1, type: "x" } };
   send({ kind: "run_started", runId, code: "program", timeoutMs, extra, kits: [], ...(requestId !== undefined && { requestId }), ...(trigger !== undefined && { trigger: { name: trigger, updated: "t0" } }) });
 }
@@ -61,6 +68,9 @@ function running(runId: number, run: Run): void {
   }
   if (run.mode === "crash") process.kill(process.pid, "SIGKILL");
   if (run.mode === "hang") return;
+  if (run.registerAtMs !== undefined) {
+    setTimeout(() => send({ kind: "register", runId: nextRun++, code: "trigger", extra: {}, kits: [] }), run.registerAtMs);
+  }
   const startedAt = Date.now();
   const abort = new Promise<"stopped" | "timeout">((resolve) => {
     aborts.push(() => resolve("stopped"));
@@ -73,10 +83,24 @@ function running(runId: number, run: Run): void {
       send({ kind: "run_finished", runId, result, hung: true });
       return;
     }
+    if (run.settleMs > 0) await sleep(run.settleMs);
     run.result = { status, logs: "settled", durationMs: Date.now() - startedAt };
     run.phase = "finishing";
     send({ kind: "run_finished", runId, result: run.result });
   });
+}
+
+/** The supervisor recorded the run's end: answer its request, or push its trigger_finished, then deliver it. */
+function deliver(runId: number, run: Run): void {
+  runs.delete(runId);
+  const result = run.result!;
+  if (run.requestId !== undefined) {
+    send({ kind: "response", id: run.requestId, status: 200, body: result });
+    send({ kind: "run_delivered", runId });
+  } else if (run.trigger !== undefined) {
+    const data = { name: run.trigger, status: result.status, durationMs: result.durationMs, logs: result.logs };
+    send({ kind: "run_delivered", runId, event: { type: "trigger_finished", data }, triggerFailures: {} });
+  }
 }
 
 process.on("message", (message: ToHost) => {
@@ -98,12 +122,21 @@ process.on("message", (message: ToHost) => {
       return;
     }
     case "start":
-      if (script.trigger) startRun(script.trigger.mode, script.trigger.timeoutMs, undefined, "t1");
+      if (script.trigger) startRun({ mode: script.trigger.mode, timeoutMs: script.trigger.timeoutMs, settleMs: 0, trigger: "t1" });
       return;
     case "request": {
       const url = new URL(message.url, "http://localhost");
+      const { searchParams: q } = url;
       if (url.pathname === "/ping" || url.pathname === "/notes") send({ kind: "response", id: message.id, status: 200, body: { pid: process.pid } });
-      else if (url.pathname === "/run") startRun(url.searchParams.get("mode") ?? "settle", Number(url.searchParams.get("timeoutMs") ?? 60_000), message.id);
+      else if (url.pathname === "/run") {
+        startRun({
+          mode: q.get("mode") ?? "settle",
+          timeoutMs: Number(q.get("timeoutMs") ?? 60_000),
+          settleMs: Number(q.get("settleMs") ?? 0),
+          ...(q.has("registerAtMs") && { registerAtMs: Number(q.get("registerAtMs")) }),
+          requestId: message.id,
+        });
+      }
       // /slow, and anything else: no answer.
       return;
     }
@@ -114,7 +147,7 @@ process.on("message", (message: ToHost) => {
       const run = runs.get(message.runId);
       if (!run) return;
       if (run.phase === "starting") running(message.runId, run);
-      else if (run.requestId !== undefined) send({ kind: "response", id: run.requestId, status: 200, body: run.result });
+      else deliver(message.runId, run);
       return;
     }
     case "shutdown":

@@ -55,32 +55,47 @@ const NOT_CONNECTED = { status: 503, body: { error: NOT_CONNECTED_MESSAGE } };
 /** Why a host was killed whose program's end reached the supervisor just after the deadline had killed it: not a hang. */
 const LATE_CAUSE = "the program ended just as its deadline to stop ran out";
 
-/** A program the host reported and that the supervisor has not seen delivered. */
-interface RunInFlight {
+/**
+ * A run the host reported starting whose end has not reached where it goes. Its state, and nothing
+ * else, decides what its deadline, a stop, and its host's death do with it; once the host has
+ * delivered its end the record is removed.
+ */
+interface Run {
   id: number;
   end: RunEnd;
+  /** Resolves when the run is no longer in flight: its end reported, or ended with its host. */
   finished: PromiseWithResolvers<void>;
   /** When the supervisor acked it: the program's own clock starts here. */
   startedAt: number;
   /** When the program's timeout aborts it, by the supervisor's clock. */
   timeoutAt: number;
-  /** When POST /stop reached the supervisor. */
-  stopAt?: number;
   /** The API request this run answers, absent for a trigger's. */
   requestId?: number;
   /** The trigger definition the run fires, absent for a program. */
   trigger?: FiringOf;
-  /** What the host reported about a program that did not stop: its result, with the logs it held. */
-  hung?: RunResult;
-  /**
-   * The end the host reported and the history recorded. The run stays until the host has delivered
-   * it (the response to its request, or its trigger_finished); a host that dies first has the supervisor deliver it.
-   */
-  reported?: RunResult;
+  state: InFlight | Reported;
+}
+
+/** Acked, and no end handled yet: the only state a deadline kills, a stop waits for, and a death owes everything. */
+interface InFlight {
+  kind: "in-flight";
+  /** When POST /stop reached the supervisor. */
+  stopAt?: number;
   /** Kills the host when the program neither settles nor is reported hung in time. */
   deadline?: NodeJS.Timeout;
+  /** What the host reported about a program that did not stop: its result, with the logs it held. */
+  hung?: RunResult;
   /** Set when its deadline killed the host: an end that still arrives was late, not hung. */
   overdue?: boolean;
+}
+
+/**
+ * Its end is on disk and acked, and the host has yet to deliver it (answer its request, log its
+ * trigger_finished). A death owes it only that delivery, with this result.
+ */
+interface Reported {
+  kind: "reported";
+  result: RunResult;
 }
 
 /** One forked host. */
@@ -107,7 +122,7 @@ export class HostProcess {
   readonly #requests = new Map<number, Answer>();
   /** Requests that arrived while no host was ready; the next host answers them. */
   #queued: { request: ForwardedRequest; answer: Answer }[] = [];
-  readonly #runs = new Map<number, RunInFlight>();
+  readonly #runs = new Map<number, Run>();
   #attempt: Attempt | undefined;
   #nextRequest = 0;
   #connected = false;
@@ -144,6 +159,11 @@ export class HostProcess {
     return this.#connected;
   }
 
+  /** How many runs the supervisor holds, in flight or with their end not yet delivered. Test-facing: a run whose end reached where it goes leaves none. */
+  get openRuns(): number {
+    return this.#runs.size;
+  }
+
   /** Forks the first host and resolves once it has built its world; rejects with the reason it could not. A host that dies later is replaced, not reported here. */
   start(): Promise<void> {
     return this.#fork(this.#init).ready.promise;
@@ -167,14 +187,16 @@ export class HostProcess {
 
   /** Aborts the running program, if there is one, and resolves once it has ended: settled, or the host killed after the grace. */
   async stop(): Promise<{ stopped: boolean }> {
-    const running = [...this.#runs.values()].filter((run) => !run.reported);
-    if (running.length === 0) return { stopped: false };
     const now = Date.now();
-    const ending = running.map((run) => {
-      run.stopAt ??= now;
-      this.#arm(run);
-      return run.finished.promise;
-    });
+    const ending: Promise<void>[] = [];
+    for (const run of this.#runs.values()) {
+      // A run whose end was reported has stopped, even while the host is delivering it.
+      if (run.state.kind !== "in-flight") continue;
+      run.state.stopAt ??= now;
+      this.#arm(run, run.state);
+      ending.push(run.finished.promise);
+    }
+    if (ending.length === 0) return { stopped: false };
     if (this.#attempt?.child.connected) this.#send(this.#attempt, { kind: "stop" });
     await Promise.all(ending);
     return { stopped: true };
@@ -185,7 +207,7 @@ export class HostProcess {
     this.#unsubscribe();
     this.#ending = true;
     clearTimeout(this.#restartTimer);
-    for (const run of this.#runs.values()) clearTimeout(run.deadline);
+    for (const run of this.#runs.values()) if (run.state.kind === "in-flight") clearTimeout(run.state.deadline);
     await this.#terminate(this.#attempt);
     for (const run of this.#runs.values()) run.finished.resolve();
     this.#runs.clear();
@@ -280,19 +302,20 @@ export class HostProcess {
   }
 
   /**
-   * (Re)arms the run's kill deadline: the program's clock (its timeout, or the stop that reached
-   * the supervisor, whichever is first) + the grace + a margin that lets a live host's own report win.
-   * It fires through the message chain, so a run_finished already received settles the run first.
+   * (Re)arms the kill deadline of a run in flight: the program's clock (its timeout, or the stop that
+   * reached the supervisor, whichever is first) + the grace + a margin that lets a live host's own report win.
+   * It fires through the message chain and kills only while the run is still in this flight: a
+   * run_finished handled before it, even one whose delivery is pending, has ended the run.
    */
-  #arm(run: RunInFlight): void {
+  #arm(run: Run, flight: InFlight): void {
     const attempt = this.#attempt;
     if (!attempt) return;
-    clearTimeout(run.deadline);
-    const at = Math.min(run.timeoutAt, run.stopAt ?? Infinity) + this.#graceMs + KILL_MARGIN_MS;
-    run.deadline = setTimeout(() => {
+    clearTimeout(flight.deadline);
+    const at = Math.min(run.timeoutAt, flight.stopAt ?? Infinity) + this.#graceMs + KILL_MARGIN_MS;
+    flight.deadline = setTimeout(() => {
       this.#handling = this.#handling.then(() => {
-        if (this.#runs.get(run.id) !== run) return;
-        run.overdue = true;
+        if (this.#runs.get(run.id) !== run || run.state !== flight) return;
+        flight.overdue = true;
         this.#kill(attempt, hungCause(this.#graceMs));
       });
     }, Math.max(0, at - Date.now()));
@@ -319,16 +342,18 @@ export class HostProcess {
       case "response":
         this.#requests.get(message.id)?.resolve({ status: message.status, body: message.body });
         this.#requests.delete(message.id);
-        // The run it answers is delivered.
-        for (const run of this.#runs.values()) if (run.reported && run.requestId === message.id) this.#runs.delete(run.id);
         return;
       case "event":
         this.#events.push(message.type, message.data);
-        // A trigger run's end, delivered by its host.
-        if (message.type === "trigger_finished") {
-          for (const run of this.#runs.values()) if (run.reported && run.trigger?.name === message.data.name) this.#runs.delete(run.id);
-        }
         return;
+      case "run_delivered": {
+        // Taken in with the delivery in one step: a host that dies after this owes nothing for the run, and it was counted once.
+        if (message.event) this.#events.push(message.event.type, message.event.data);
+        if (message.triggerFailures) this.#carried = { ...this.#carried, triggerFailures: message.triggerFailures };
+        const run = this.#runs.get(message.runId);
+        if (run?.state.kind === "reported") this.#runs.delete(run.id);
+        return;
+      }
       case "state":
         this.#connected = message.connected;
         this.#carried = { deaths: message.deaths, reconnects: message.reconnects, active: message.active, triggerFailures: message.triggerFailures };
@@ -337,7 +362,8 @@ export class HostProcess {
         try {
           const end = await this.#history.begin(message.code, message.kits, message.extra);
           const now = Date.now();
-          const run: RunInFlight = {
+          const flight: InFlight = { kind: "in-flight" };
+          const run: Run = {
             id: message.runId,
             end,
             finished: Promise.withResolvers<void>(),
@@ -345,10 +371,11 @@ export class HostProcess {
             timeoutAt: now + Math.min(Math.max(message.timeoutMs, 0), MAX_TIMEOUT_MS),
             requestId: message.requestId,
             trigger: message.trigger,
+            state: flight,
           };
           this.#runs.set(message.runId, run);
           // Armed before the host may run the code: a program that blocks its host is still ended.
-          this.#arm(run);
+          this.#arm(run, flight);
           this.#sendIfOpen(attempt, { kind: "run_ack", runId: message.runId });
         } catch (err) {
           this.#sendIfOpen(attempt, { kind: "run_ack", runId: message.runId, error: errorText(err) });
@@ -356,32 +383,38 @@ export class HostProcess {
         return;
       case "run_finished": {
         const run = this.#runs.get(message.runId);
+        // A run's end is handled once, while it is in flight.
+        const flight = run?.state.kind === "in-flight" ? run.state : undefined;
         if (message.hung) {
           // The program did not stop and the host is alive to say so. Kill it; its death ends the run, with the logs it reported.
-          if (run) {
-            run.hung = message.result ?? undefined;
+          if (flight) {
+            flight.hung = message.result ?? undefined;
             this.#kill(attempt, hungCause(this.#graceMs));
           }
           return;
         }
-        if (run) clearTimeout(run.deadline);
-        // The deadline killed the host as the program was ending: the restart is not for a hang.
-        if (run?.overdue) attempt.cause = LATE_CAUSE;
-        let reported: RunResult | undefined;
+        if (flight) {
+          clearTimeout(flight.deadline);
+          // The deadline killed the host as the program was ending: the restart is not for a hang.
+          if (flight.overdue) attempt.cause = LATE_CAUSE;
+        }
+        let recorded: RunResult | undefined;
         try {
-          if (run && message.result) {
+          if (run && flight && message.result) {
             await run.end(message.result);
-            reported = message.result;
+            recorded = message.result;
           }
           this.#sendIfOpen(attempt, { kind: "run_ack", runId: message.runId });
         } catch (err) {
           // The run fails as it did when the history was written in-process.
           this.#sendIfOpen(attempt, { kind: "run_ack", runId: message.runId, error: errorText(err) });
         }
-        // The host has yet to deliver the end, after the ack; until it has, its death delivers it.
-        if (run && reported && (run.requestId !== undefined || run.trigger)) run.reported = reported;
-        else this.#runs.delete(message.runId);
-        run?.finished.resolve();
+        if (!run || !flight) return;
+        // The host delivers the recorded end after the ack (its request's answer, its trigger_finished); until it has, its death delivers it.
+        // A run with nothing recorded, or nowhere to deliver it, is over.
+        if (recorded && (run.requestId !== undefined || run.trigger !== undefined)) run.state = { kind: "reported", result: recorded };
+        else this.#runs.delete(run.id);
+        run.finished.resolve();
         return;
       }
       case "register":
@@ -420,22 +453,26 @@ export class HostProcess {
     const cause = attempt.cause ?? `the bot host exited (${how})`;
     this.#connected = false;
 
-    // Everything the dead host could not say: how its runs ended, then that it is gone, then the answers.
+    // What the dead host still owed its runs: how they ended, then that it is gone, then the answers.
+    // A run in flight is owed all of its end; a reported one only its delivery; a delivered one is no longer here.
     const runs = [...this.#runs.values()];
     this.#runs.clear();
-    const results = new Map<RunInFlight, RunResult>();
+    const answers = new Map<number, RunResult>();
     for (const run of runs) {
-      clearTimeout(run.deadline);
-      const result = run.hung ?? run.reported ?? lostRun(run, cause);
-      results.set(run, result);
-      // A reported end is on disk, and a program's run pushed its program_finished before reporting it.
-      if (!run.reported) {
+      const { state } = run;
+      let result: RunResult;
+      if (state.kind === "in-flight") {
+        clearTimeout(state.deadline);
+        result = state.hung ?? lostRun(run, state, cause);
         try {
           await run.end(result);
         } catch (err) {
           console.error("[minebot] could not write the history line of a program its host did not finish:", err);
         }
         if (run.trigger === undefined) this.#events.push("program_finished", { status: result.status, durationMs: result.durationMs });
+      } else {
+        // Its line is on disk, and a program's run pushed its program_finished before reporting its end.
+        result = state.result;
       }
       if (run.trigger !== undefined) {
         // As the host pushes it; the next host counts the firing in the trigger's failures.
@@ -448,13 +485,15 @@ export class HostProcess {
           ...(result.logs && { logs: result.logs.slice(0, MAX_EVENT_LOGS) }),
         });
       }
+      if (run.requestId !== undefined) answers.set(run.requestId, result);
     }
     this.#events.push("disconnected", { reason: `bot host restarted: ${cause}` });
-    for (const run of runs) {
-      if (run.requestId !== undefined) this.#requests.get(run.requestId)?.resolve({ status: 200, body: results.get(run) });
-      if (run.requestId !== undefined) this.#requests.delete(run.requestId);
-      run.finished.resolve();
+    // A request the host already answered is not waiting any more.
+    for (const [id, result] of answers) {
+      this.#requests.get(id)?.resolve({ status: 200, body: result });
+      this.#requests.delete(id);
     }
+    for (const run of runs) run.finished.resolve();
     for (const request of this.#requests.values()) request.resolve(NOT_CONNECTED);
     this.#requests.clear();
     this.#schedule(Date.now() - attempt.readyAt);
@@ -462,10 +501,10 @@ export class HostProcess {
 }
 
 /** How a run ended that its host could not report: stopped or timed out when it was aborted, else failed with the host. */
-function lostRun(run: RunInFlight, cause: string): RunResult {
+function lostRun(run: Run, flight: InFlight, cause: string): RunResult {
   const now = Date.now();
   let status: RunStatus = "error";
-  if (run.stopAt !== undefined && run.stopAt <= run.timeoutAt) status = "stopped";
+  if (flight.stopAt !== undefined && flight.stopAt <= run.timeoutAt) status = "stopped";
   else if (now >= run.timeoutAt) status = "timeout";
   return { status, error: restartedError(cause), logs: "", durationMs: now - run.startedAt };
 }

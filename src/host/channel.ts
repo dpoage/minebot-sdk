@@ -52,6 +52,10 @@ export class RunReporter implements RunRecorder {
   readonly #options: RunReporterOptions;
   readonly #acks = new Map<number, PromiseWithResolvers<void>>();
   readonly #open = new Set<Promise<unknown>>();
+  /** Requests answered by a run whose end the supervisor recorded: the request id → that run, until the answer is sent. */
+  readonly #answering = new Map<number, number>();
+  /** The results of trigger runs whose end the supervisor recorded → their run, until `deliver`. */
+  readonly #delivering = new WeakMap<RunResult, number>();
   #nextId = 0;
   /** Runs reported whose code has not started yet. */
   #starting = 0;
@@ -109,10 +113,31 @@ export class RunReporter implements RunRecorder {
     const finished = this.#finish(runId, running);
     this.#open.add(finished);
     try {
-      return await finished;
+      const result = await finished;
+      // The supervisor holds the recorded end until this host delivers it: the answer to its request, or `deliver`.
+      if (run.requestId !== undefined) this.#answering.set(run.requestId, runId);
+      else if (run.trigger) this.#delivering.set(result, runId);
+      return result;
     } finally {
       this.#open.delete(finished);
     }
+  }
+
+  /** Sends the answer to a forwarded request; then the run whose end it carries, if one does, is delivered. */
+  answer(response: { id: number; status: number; body: unknown }): void {
+    this.#options.send({ kind: "response", ...response });
+    const runId = this.#answering.get(response.id);
+    if (runId === undefined) return;
+    this.#answering.delete(response.id);
+    this.#options.send({ kind: "run_delivered", runId });
+  }
+
+  deliver(result: RunResult, event: { type: string; data: Record<string, unknown> }, triggerFailures: Record<string, number>): void {
+    const runId = this.#delivering.get(result);
+    if (runId === undefined) throw new Error("deliver() takes the result `record` returned for a trigger's run");
+    this.#delivering.delete(result);
+    // One message: the supervisor logs the event, takes the failures, and drops the run together, so no death can split them.
+    this.#options.send({ kind: "run_delivered", runId, event, triggerFailures });
   }
 
   async register(code: string, extra: object): Promise<void> {

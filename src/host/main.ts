@@ -89,7 +89,8 @@ async function handle(message: ToHost): Promise<void> {
       return;
     case "request":
       void world?.serve(message).then(({ status, body }) => {
-        send({ kind: "response", id: message.id, status, body });
+        // The reporter delivers the run the answer carries the end of, after the answer.
+        reporter.answer({ id: message.id, status, body });
         reportState();
       });
       return;

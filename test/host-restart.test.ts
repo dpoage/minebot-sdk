@@ -48,6 +48,8 @@ interface Script {
   initLog?: string;
   /** The one trigger of the trigger fixture (TRIGGER_FIXTURE). */
   reflex?: { name: string; on: string[]; run: string; timeoutMs: number; cooldownMs: number };
+  /** The trigger fixture's first host SIGKILLs itself right after the message carrying a trigger_finished leaves it. */
+  killAfterFinished?: boolean;
 }
 
 interface Scripted {
@@ -322,7 +324,7 @@ describe("restart: what a replacement host carries over", () => {
       reconnects: 3,
       milestones: MilestoneSet.parse({ milestones: [{ id: "logs", description: "Get logs", obtained: ["*_log"], count: 3 }] }),
     };
-    const io = { events: new HostEvents(() => {}), recorder: { record: async () => assert.fail("no run"), register: async () => {} } };
+    const io = { events: new HostEvents(() => {}), recorder: { record: async () => assert.fail("no run"), deliver: () => assert.fail("no run"), register: async () => {} } };
 
     it("starts from the counters and the start time, with the carried kits less the ones the catalog does not offer, and without the milestones", async () => {
       const world = buildWorld({ ...base, stateDir: path.join(ROOT, "world-a"), active: ["deleted-agent-kit", "move"], applyMilestones: false }, io);
@@ -411,6 +413,67 @@ describe("restart: a trigger whose firing ends with its host", () => {
     assert.equal(await failures(), 1);
     await killHost(t);
     assert.equal(await failures(), 1, "the replacement of an idle host counted the old firing again");
+  });
+
+  it("emits no second trigger_finished when the host dies idle after an ok firing", { timeout: 20_000 }, async () => {
+    const t = await scripted({ reflex: reflex("return 1;") }, TRIGGER_FIXTURE);
+    t.events.push("fire");
+    await waitFor(t, "trigger_finished");
+    await killHost(t);
+    await get(t, "/ping");
+    assert.deepEqual(eventsOf(t, "trigger_finished").map((e) => e.data.status), ["ok"], "the idle host's death delivered the firing again");
+  });
+
+  it("leaves one trigger_finished, and the firing counted once, when the host dies right after delivering it", { timeout: 20_000 }, async () => {
+    // A firing that times out and settles counts; the trigger has failed once already.
+    const t = await scripted({ reflex: { ...reflex("try { await sleep(100000); } catch {}"), timeoutMs: 100 }, killAfterFinished: true }, TRIGGER_FIXTURE, { triggerFailures: { reflex: 1 } });
+    t.events.push("fire");
+    await waitFor(t, "disconnected");
+    const [info] = ((await get(t, "/triggers")).body as { triggers: TriggerInfo[] }).triggers; // the replacement host's
+    assert.deepEqual(eventsOf(t, "trigger_finished").map((e) => e.data.status), ["timeout"]);
+    assert.equal(info!.failures, 2, "the firing was not counted exactly once");
+  });
+});
+
+describe("restart: what a run is owed follows its state", () => {
+  it("never kills a run whose end waits behind a slow history write across its deadline", { timeout: 20_000 }, async () => {
+    const history = new ProgramHistory({ file: path.join(ROOT, "slow-register.jsonl") });
+    // A disk this slow holds the register a POST /triggers sends during the program; the program's end, sent within its grace, queues behind it past the deadline.
+    const slow = {
+      begin: history.begin.bind(history),
+      register: async (...args: Parameters<typeof history.register>) => {
+        await sleep(650);
+        return history.register(...args);
+      },
+    } as unknown as InstanceType<typeof ProgramHistory>;
+    const events = new EventLog();
+    const dir = path.join(ROOT, "slow-register");
+    mkdirSync(dir);
+    const init = { stateDir: dir, startedAt: "t0", deaths: 0, reconnects: 0, applyMilestones: true, script: { graceMs: GRACE_MS } } as unknown as HostInit;
+    const host = new HostProcess({ init, events, history: slow, entry: FIXTURE, graceMs: GRACE_MS });
+    hosts.push(host);
+    await host.start();
+    host.join();
+    const t: Scripted = { host, events, history: path.join(ROOT, "slow-register.jsonl") };
+    const before = await pidOf(t);
+    // Aborted at 100 ms, it settles at 350, inside the grace; the register goes at 300 and is written at 950; the deadline is at 900.
+    const answer = await t.host.forward({ method: "POST", url: "/run?mode=settle&timeoutMs=100&settleMs=250&registerAtMs=300", body: null, tooLarge: false });
+    assert.deepEqual(withoutDuration(answer.body).rest, { status: "timeout", logs: "settled" });
+    await sleep(500);
+    assert.equal(await pidOf(t), before, "the host of a run that ended within its grace was replaced");
+    assert.equal(eventsOf(t, "disconnected").length, 0);
+  });
+
+  it("keeps no record of a request run once its answer was delivered: stop finds nothing to stop and an idle death owes it nothing", { timeout: 20_000 }, async () => {
+    const t = await scripted();
+    for (let i = 0; i < 3; i++) assert.deepEqual(withoutDuration((await run(t, "settle", 20)).body).rest, { status: "timeout", logs: "settled" });
+    // The host delivers each run right after its answer, so by the answer to this request every run is delivered.
+    await pidOf(t);
+    assert.equal(t.host.openRuns, 0, "delivered runs are still held");
+    assert.deepEqual(await t.host.stop(), { stopped: false });
+    await killHost(t);
+    assert.equal(eventsOf(t, "program_finished").length, 0, "the idle host's death synthesized a run's end");
+    assert.deepEqual(historyOf(t).map((line) => line.status), ["timeout", "timeout", "timeout"]);
   });
 });
 

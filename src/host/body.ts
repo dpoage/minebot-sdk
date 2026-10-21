@@ -63,6 +63,11 @@ export interface RunRecorder {
    * `requestId` is the API request the run answers, and `trigger` the trigger definition it fires, so the supervisor can end it when this host is killed mid-run.
    */
   record(run: { code: string; timeoutMs?: number; extra?: object; requestId?: number; trigger?: FiringOf }, execute: () => Promise<RunOutcome>): Promise<RunResult>;
+  /**
+   * Ends a trigger's run that `record` returned `result` for: its trigger_finished `event`, and the
+   * triggers' failures with the firing counted, reach the history's keeper together, as that run's delivery.
+   */
+  deliver(result: RunResult, event: { type: string; data: Record<string, unknown> }, triggerFailures: Record<string, number>): void;
   /** Records code the body will run later. */
   register(code: string, extra: object): Promise<void>;
 }
@@ -127,6 +132,7 @@ export class Body {
             connected: () => this.#connection.spawned,
             bot: () => this.#connection.bot ?? undefined,
             run: (trigger, event, started) => this.#runTrigger(trigger, event, started),
+            deliver: (result, finished, failures) => options.recorder.deliver(result, { type: "trigger_finished", data: finished }, failures),
             register: (trigger) =>
               options.recorder.register(`${trigger.run}\n${trigger.when ?? ""}`, { trigger: trigger.name, on: trigger.on, ...(trigger.when !== undefined && { when: trigger.when }) }),
             failures: options.triggerFailures,
