@@ -355,7 +355,7 @@ describe("restart: what a replacement host carries over", () => {
       reconnects: 3,
       milestones: MilestoneSet.parse({ milestones: [{ id: "logs", description: "Get logs", obtained: ["*_log"], count: 3 }] }),
     };
-    const io = { events: new HostEvents(() => {}), recorder: { record: async () => assert.fail("no run"), deliver: () => assert.fail("no run"), counts: () => {}, register: async () => {} } };
+    const io = { events: new HostEvents(() => {}), recorder: { record: async () => assert.fail("no run"), deliver: () => assert.fail("no run"), counts: () => {}, preempt: () => false, register: async () => {} } };
 
     it("starts from the counters and the start time, with the carried kits less the ones the catalog does not offer, and without the milestones", async () => {
       const world = buildWorld({ ...base, stateDir: path.join(ROOT, "world-a"), active: ["deleted-agent-kit", "move"], applyMilestones: false }, io);

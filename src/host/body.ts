@@ -76,6 +76,12 @@ export interface RunRecorder {
    * of a firing that ended with no recorded run, and a trigger_disabled, go in the same message.
    */
   counts(triggerFailures: Record<string, number>, ended?: { finished?: TriggerFinished; disabled?: TriggerDisabled }): void;
+  /**
+   * Asks the recorded run whose code executes to stop, for a preempting firing that waits on it: true
+   * when one does at this moment, and the abort is then on its way (after the history's holder has been told, and only if that run still executes).
+   * False when no recorded run executes, a run acked but not started included; nothing is aborted.
+   */
+  preempt(): boolean;
   /** Records code the body will run later. */
   register(code: string, extra: object): Promise<void>;
 }
@@ -130,13 +136,20 @@ export class Body {
       events: () => this.#connection.bot ?? undefined,
       onAbort: () => this.#connection.halt(),
     });
+    const { runner } = this;
     this.triggers =
       options.triggersEnabled === false
         ? null
         : new Triggers({
             store: options.state.triggers,
             events: this.events,
-            runner: this.runner,
+            // A preemption is the recorder's to carry out, so the supervisor's deadline covers the abort.
+            runner: {
+              get running() {
+                return runner.running;
+              },
+              stop: () => options.recorder.preempt(),
+            },
             connected: () => this.#connection.spawned,
             bot: () => this.#connection.bot ?? undefined,
             run: (trigger, event, started) => this.#runTrigger(trigger, event, started),

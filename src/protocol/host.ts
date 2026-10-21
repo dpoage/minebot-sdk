@@ -135,6 +135,13 @@ export type FromHost =
    */
   | { kind: "run_finished"; runId: number; result: RunResult | null; hung?: true }
   /**
+   * A preempting trigger firing is waiting on the run `runId` (recorded, with its code executing)
+   * and the host is about to abort it; sent, and written, before the abort. The supervisor handles
+   * it as POST /stop for that one run: a run in flight gets its stop time and its kill deadline,
+   * any other state is ignored. Not answered.
+   */
+  | { kind: "preempt"; runId: number }
+  /**
    * The end of a run, reported and acked, reached where it goes: its request was answered (sent
    * after the `response`) or, for a trigger's run, `finished` is the trigger_finished, `disabled`
    * the trigger_disabled the firing caused, and `triggerFailures` the failures with the firing

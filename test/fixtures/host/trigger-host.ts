@@ -11,6 +11,7 @@
 // as the supervisor's answer to a run's end reaches it, before it can act on it. With
 // `dieBeforeReadyOnSpawn: n`, the n-th host SIGKILLs itself once its Triggers are built (their
 // counts sent) and before it is ready.
+// A preempting firing stops the running program through `reporter.preempt()`, as the body's Triggers do; `burstOnEvent` queues a burst in the channel ahead of it.
 // Requests: GET /ping answers with this pid; GET /triggers with the trigger list; POST /triggers
 // saves the trigger in the body; POST /triggers/enabled `{name, enabled}` sets it enabled; POST
 // /run runs `{code, timeoutMs}` the way the body's /run does.
@@ -25,18 +26,21 @@ import { JsonStore } from "../../../src/store.ts";
 
 interface Script {
   graceMs: number;
-  reflex: { name: string; on: string[]; run: string; when?: string; timeoutMs: number; cooldownMs: number };
+  reflex: { name: string; on: string[]; run: string; when?: string; timeoutMs: number; cooldownMs: number; preempt?: boolean; priority?: number };
   killAfterFinished?: boolean;
   killOnEndAck?: boolean;
   dieBeforeReadyOnSpawn?: number;
+  /** On hearing an event of `type`, before the triggers do, the host sends `count` events of about `bytes` each: a burst in the channel ahead of whatever the triggers send next. */
+  burstOnEvent?: { type: string; count: number; bytes: number };
 }
 
 let killAfterFinished = false;
 let killOnEndAck = false;
 /** Runs whose start was acked: the next ack for one answers its end. */
 const startAcked = new Set<number>();
-function send(message: FromHost): void {
-  process.send!(message);
+function send(message: FromHost, written?: () => void): void {
+  if (written) process.send!(message, () => written());
+  else process.send!(message);
   const finished =
     (message.kind === "event" && message.type === "trigger_finished") ||
     ((message.kind === "run_delivered" || message.kind === "trigger_counts") && message.finished !== undefined);
@@ -87,10 +91,22 @@ process.on("message", async (message: ToHost) => {
       if (first) store.set(init.script.reflex.name, { ...TriggerInput.parse(init.script.reflex), updated: new Date().toISOString() });
       killAfterFinished = first && init.script.killAfterFinished === true;
       killOnEndAck = first && init.script.killOnEndAck === true;
+      const { burstOnEvent } = init.script;
+      if (burstOnEvent) {
+        events.subscribe((event) => {
+          if (event.type === burstOnEvent.type) for (let i = 0; i < burstOnEvent.count; i++) events.push("burst", { pad: "x".repeat(burstOnEvent.bytes) });
+        });
+      }
       triggers = new Triggers({
         store,
         events,
-        runner,
+        // As the body wires it: a preemption goes through the reporter.
+        runner: {
+          get running() {
+            return runner.running;
+          },
+          stop: () => reporter.preempt(),
+        },
         connected: () => true,
         bot: () => undefined,
         run: (trigger, event, started) =>

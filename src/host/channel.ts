@@ -40,7 +40,8 @@ export class HostEvents implements EventSink {
 }
 
 export interface RunReporterOptions {
-  send: (message: FromHost) => void;
+  /** Sends a message to the supervisor. `written` is called once the message is written to the channel, or could not be. */
+  send: (message: FromHost, written?: () => void) => void;
   /** The kits the body is running now. */
   kits: () => string[];
   /** Aborts the running program; false when none runs. */
@@ -61,6 +62,12 @@ export class RunReporter implements RunRecorder {
   #starting = 0;
   /** A stop that arrived after the supervisor acked a run but before its code started. */
   #stopPending = false;
+  /**
+   * The recorded run whose code executes: its `execute` has started it and its outcome has not
+   * settled. Set in the turn `execute` returns (the program starts synchronously inside it), cleared
+   * when the outcome settles; a run acked but not started yet is not it, and neither is one that has settled.
+   */
+  #executing: number | undefined;
 
   constructor(options: RunReporterOptions) {
     this.#options = options;
@@ -77,6 +84,22 @@ export class RunReporter implements RunRecorder {
   /** Aborts the running program. A run the supervisor has acked but that has not started yet is aborted as it starts. */
   stop(): void {
     if (!this.#options.stop() && this.#starting > 0) this.#stopPending = true;
+  }
+
+  /**
+   * Asks the executing recorded run to stop because a preempting firing is waiting; true when one executes at this moment.
+   * The supervisor learns of the preemption (and so arms its kill deadline for the run) before the program is aborted:
+   * a program that blocks the host right after its abort would otherwise keep that message queued behind the host's
+   * frozen thread. The abort follows once the message is written, and only if the run is still the one executing then:
+   * a run that settled meanwhile is not followed by an abort of its successor.
+   */
+  preempt(): boolean {
+    const runId = this.#executing;
+    if (runId === undefined) return false;
+    this.#options.send({ kind: "preempt", runId }, () => {
+      if (this.#executing === runId) this.#options.stop();
+    });
+    return true;
   }
 
   async record(run: { code: string; timeoutMs?: number; extra?: object; requestId?: number; trigger?: FiringOf }, execute: () => Promise<RunOutcome>): Promise<RunResult> {
@@ -105,6 +128,11 @@ export class RunReporter implements RunRecorder {
     } catch (err) {
       running = Promise.reject(err);
     }
+    this.#executing = runId;
+    const settled = () => {
+      if (this.#executing === runId) this.#executing = undefined;
+    };
+    running.then(settled, settled);
     this.#starting--;
     if (this.#stopPending) {
       this.#stopPending = false;
