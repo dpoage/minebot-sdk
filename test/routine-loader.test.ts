@@ -1,15 +1,20 @@
 import osDefault from "node:os";
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { execFile } from "node:child_process";
+import { cpSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { after, describe, it } from "node:test";
 import { pathToFileURL } from "node:url";
+import { promisify } from "node:util";
 import mineflayer from "mineflayer";
 import { Vec3 } from "vec3";
 import { z } from "zod";
 import { RoutineLoader, RoutineNotFoundError } from "../src/host/routines/loader.ts";
+import { PACKAGE_ROOT } from "../src/package.ts";
 import * as routine from "../src/routine/public.ts";
+
+const run = promisify(execFile);
 
 // The libraries live in a scratch directory outside the package: no node_modules above them, so only the loader can find `vec3`.
 const SCRATCH = realpathSync(mkdtempSync(path.join(tmpdir(), "routine-loader-")));
@@ -241,5 +246,87 @@ describe("RoutineLoader: generations", () => {
     const old = await load(loader, "a");
     writeFileSync(path.join(dir, "late.ts"), "export const n = 1;");
     await assert.rejects(async () => old.default(), (error: unknown) => error instanceof Error && error.message.includes('"./late.ts"'));
+  });
+});
+
+describe("RoutineLoader: every module that is not a routine resolves and loads as Node's own", () => {
+  it("leaves a package under the library's node_modules and a file imported directly from the library alone", async () => {
+    const dir = scratch({
+      "node_modules/lazy/package.json": '{ "name": "lazy", "main": "index.js" }',
+      "node_modules/lazy/index.js": 'exports.later = () => require("./lib/part.js").value;',
+      "node_modules/lazy/lib/part.js": "exports.value = 42;",
+      "plain.ts": 'import { dep } from "./sub/dep.ts"; export const plain: number = dep + 1;',
+      "sub/dep.ts": "export const dep = 1;",
+      "r.ts": 'import { Vec3 } from "vec3"; import * as routine from "minebot-sdk/routine"; export default () => [new Vec3(0, 5, 0).y, routine];',
+    });
+    const loader = new RoutineLoader(dir);
+    assert.deepEqual(await (await load(loader, "r")).default(), [5, routine]);
+    // Both import relative files a routine may not: neither is a routine.
+    const lazy = (await import(pathToFileURL(path.join(dir, "node_modules/lazy/index.js")).href)) as { default: { later(): number } };
+    assert.equal(lazy.default.later(), 42);
+    const plain = (await import(pathToFileURL(path.join(dir, "plain.ts")).href)) as { plain: number };
+    assert.equal(plain.plain, 2);
+  });
+
+  it("loads routines from a directory that holds the body package, and leaves the package's own imports alone", async () => {
+    // The library is `.` and an ancestor of a copy of the package, so the loader itself, and every
+    // module of the package, sits in the library directory's tree.
+    const ancestor = scratch({
+      "r.ts": 'import { Vec3 } from "vec3"; import * as routine from "minebot-sdk/routine"; import { n } from "./helper.ts"; export default () => [new Vec3(n, 0, 0).x, typeof routine.defineRoutine, import.meta.resolve("minebot-sdk/routine")];',
+      "helper.ts": "export const n: number = 3;",
+    });
+    const pkg = path.join(ancestor, "pkg");
+    cpSync(path.join(PACKAGE_ROOT, "src"), path.join(pkg, "src"), { recursive: true });
+    cpSync(path.join(PACKAGE_ROOT, "package.json"), path.join(pkg, "package.json"));
+    symlinkSync(realpathSync(path.join(PACKAGE_ROOT, "node_modules")), path.join(pkg, "node_modules"));
+    const driver = path.join(SCRATCH, `driver${counter++}.mjs`);
+    writeFileSync(
+      driver,
+      `
+        const src = (file) => new URL(file, ${JSON.stringify(pathToFileURL(path.join(pkg, "src", path.sep)).href)}).href;
+        const { RoutineLoader } = await import(src("host/routines/loader.ts"));
+        const routine = await (await new RoutineLoader(".").load("r")).default();
+        const later = [typeof (await import(src("program/runner.ts"))).ProgramRunner, typeof (await import(src("routine/invoke.ts"))).invokeRoutine];
+        console.log(JSON.stringify({ routine, later }));
+      `,
+    );
+    const { stdout } = await run(process.execPath, ["--conditions=minebot-sdk:source", driver], { cwd: ancestor });
+    assert.deepEqual(JSON.parse(stdout), {
+      routine: [3, "function", pathToFileURL(path.join(pkg, "src/routine/public.ts")).href],
+      later: ["function", "function"],
+    });
+  });
+});
+
+describe("RoutineLoader: memory", () => {
+  it("grows by the changed modules and the loaded graph per generation, not by the library", async () => {
+    // 20 modules of 64 KiB that the graph never imports; one small module changes per generation.
+    const filler = `// ${"x".repeat(64 * 1024)}\n`;
+    const files: Record<string, string> = { "a.ts": `import { h } from "./helper.ts"; export default () => h;`, "helper.ts": "export const h = 1;" };
+    for (let i = 0; i < 20; i++) files[`f${i}.ts`] = `export const f${i} = ${i};\n${filler}`;
+    const dir = scratch(files);
+    const libraryBytes = Object.values(files).reduce((sum, text) => sum + text.length, 0);
+    const driver = path.join(SCRATCH, `driver${counter++}.mjs`);
+    writeFileSync(
+      driver,
+      `
+        import { writeFileSync } from "node:fs";
+        const { RoutineLoader } = await import(${JSON.stringify(pathToFileURL(path.join(PACKAGE_ROOT, "src/host/routines/loader.ts")).href)});
+        const dir = ${JSON.stringify(dir)};
+        const loader = new RoutineLoader(dir);
+        await loader.load("a");
+        gc(); gc();
+        const before = process.memoryUsage().heapUsed;
+        for (let g = 1; g <= 20; g++) {
+          writeFileSync(dir + "/m.ts", "export const m = " + g + ";");
+          await loader.load("a");
+        }
+        gc(); gc();
+        console.log((process.memoryUsage().heapUsed - before) / 20);
+      `,
+    );
+    const { stdout } = await run(process.execPath, ["--expose-gc", driver]);
+    const perGeneration = Number(stdout);
+    assert.ok(perGeneration < libraryBytes / 4, `${Math.round(perGeneration / 1024)} KiB per generation for a ${Math.round(libraryBytes / 1024)} KiB library`);
   });
 });

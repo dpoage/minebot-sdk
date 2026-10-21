@@ -1,5 +1,6 @@
+import { realpathSync } from "node:fs";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import { inspect } from "node:util";
 import vm from "node:vm";
 import { DEFAULT_TIMEOUT_MS, MAX_TIMEOUT_MS, type RunResult, type RunStatus } from "../protocol/index.ts";
@@ -294,19 +295,29 @@ function formatError(err: unknown): string {
 
 /**
  * A routine's error: its message and the stack frames inside `sourceDir`, each naming `<file>:<line>:<column>`.
- * Library modules are loaded under `file:` URLs stamped `?g=<generation>`, which names an evaluation and not a file, so frames drop it.
+ * Frames name library modules by `file:` URL; what a URL adds to the file (a query, a fragment) names an
+ * evaluation and not a file, so frames give the file's path.
  */
 function formatRoutineError(err: unknown, sourceDir: string): string {
   if (typeof err !== "object" || err === null || !("stack" in err) || typeof err.stack !== "string") return String(err);
   const name = "name" in err && typeof err.name === "string" ? err.name : "Error";
   const message = "message" in err && typeof err.message === "string" ? err.message : "";
-  const dirUrl = pathToFileURL(path.join(sourceDir, path.sep)).href;
-  const stamped = new RegExp(`${RegExp.escape(dirUrl)}([^\\s?]*)\\?g=[0-9a-f]+`, "g");
-  const readable = (line: string) => line.replace(stamped, (_, file: string) => path.join(sourceDir, decodeURIComponent(file)));
-  const lines = err.stack.split("\n").map(readable);
+  // Modules load from the directory's real path, so its frames name that (a directory gone since has none to resolve).
+  let real = path.resolve(sourceDir);
+  try {
+    real = realpathSync(real);
+  } catch {}
+  const inside = path.join(real, path.sep);
+  // A frame ends with `<url>:<line>:<column>`, maybe in parentheses; a compile error's excerpt starts with `<url>:<line>`.
+  const located = (line: string): string | undefined => {
+    const match = /file:\/\/\/\S*?(?=:\d+(?::\d+)?\)?$)/.exec(line);
+    const file = match ? fileURLToPath(match[0]) : undefined;
+    return match && file?.startsWith(inside) ? line.slice(0, match.index) + file + line.slice(match.index + match[0].length) : undefined;
+  };
+  const [first = "", ...rest] = err.stack.split("\n");
   // A module that does not compile starts with a source excerpt ("<file>:N", the line, a caret) before a blank line.
-  const excerptEnd = lines[0]?.startsWith(sourceDir) ? lines.indexOf("") : 0;
-  const excerpt = lines.slice(0, Math.max(excerptEnd, 0));
-  const frames = lines.filter((line) => line.trimStart().startsWith("at ") && line.includes(sourceDir));
+  const excerptStart = located(first);
+  const excerpt = excerptStart === undefined ? [] : [excerptStart, ...rest.slice(0, Math.max(rest.indexOf(""), 0))];
+  const frames = rest.flatMap((line) => (line.trimStart().startsWith("at ") ? (located(line) ?? []) : []));
   return [...excerpt, `${name}: ${message}`, ...frames].join("\n");
 }

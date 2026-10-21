@@ -3,18 +3,23 @@
 // directory). Library modules are flat `<dir>/<name>.ts` files that may import each other, the
 // body's packages, and Node built-ins.
 //
+// The hooks touch only library modules: a `<dir>/<name>.ts` of a library directory, under a URL
+// stamped with one of that library's generations (only this loader writes such URLs), and the
+// imports such a module makes. Every other module — the body package, node_modules, any file in or
+// under a library directory that was not loaded as a routine — resolves and loads as Node would.
+//
 // A library module's bare specifiers resolve as the body package's own would (the library
 // usually sits outside the package, where `vec3` or `minebot-sdk/routine` cannot be found).
-// A library module's URL carries `?g=<generation>`, the hash of every library module's bytes, so
-// a save anywhere in the library evaluates the whole graph again, and the bytes a URL loads are the
-// bytes of its generation, not whatever the disk holds when the import happens. A module
-// imported by a library module takes its importer's generation: one load is one generation,
-// also for imports that run later. Modules of the body's packages have one instance per process.
+// The stamp names a generation, the hash of every library module's bytes, so a save anywhere in
+// the library evaluates the whole graph again, and the bytes a URL loads are the bytes of its
+// generation, not whatever the disk holds when the import happens. A module imported by a library
+// module takes its importer's generation: one load is one generation, also for imports that run
+// later. Modules of the body's packages have one instance per process.
 import { createHash } from "node:crypto";
 import { readdirSync, readFileSync, realpathSync } from "node:fs";
 import { registerHooks } from "node:module";
 import path from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { pathToFileURL } from "node:url";
 import { PACKAGE_ROOT } from "../../package.ts";
 
 export class RoutineNotFoundError extends Error {}
@@ -24,28 +29,37 @@ const MODULE_FILE = /^([a-z][a-z0-9_-]{0,47})\.ts$/;
 
 /** One library directory: the module sources of every generation loaded so far. */
 interface Library {
-  /** `file:` URL of the directory, ending in `/`. */
-  readonly url: string;
-  /** Generation → module name → source. */
+  /** Generation → module name → source. Generations share the text of a module whose bytes they share. */
   readonly generations: Map<string, Map<string, string>>;
+  /** Every module text loaded so far, by the hash of its bytes. */
+  readonly texts: Map<string, string>;
 }
 
-/** Library directories by real path. */
+/** Library directories by the `file:` URL of their real path, ending in `/`. */
 const libraries = new Map<string, Library>();
 
 /** The body package's manifest: where bare specifiers of library modules are resolved from. */
 const PACKAGE_MANIFEST = pathToFileURL(path.join(PACKAGE_ROOT, "package.json")).href;
 
-/** The library a module URL belongs to, with its generation: the innermost directory that holds it. */
-function libraryOf(url: string | undefined): { library: Library; generation: string | undefined } | undefined {
-  if (url === undefined) return undefined;
-  let found: Library | undefined;
-  for (const library of libraries.values()) {
-    if (url.startsWith(library.url) && (found === undefined || library.url.length > found.url.length)) found = library;
-  }
-  if (!found) return undefined;
-  const generation = /\?g=([0-9a-f]+)$/.exec(url)?.[1];
-  return { library: found, generation };
+/** The query parameter of a library module's URL that names its generation. */
+const STAMP = "g";
+
+/** `url` stamped with `generation`, replacing any query it had. */
+function stamped(url: URL, generation: string): string {
+  url.search = `?${STAMP}=${generation}`;
+  return url.href;
+}
+
+/** The library module `url` names, or undefined when it names any other module (see the top of this file). */
+function moduleOf(url: string | undefined): { library: Library; generation: string; source: string } | undefined {
+  if (url === undefined || !url.startsWith("file:") || !url.includes("?")) return undefined;
+  const parsed = new URL(url);
+  const generation = parsed.searchParams.get(STAMP);
+  if (generation === null) return undefined;
+  const library = libraries.get(new URL(".", parsed).href);
+  const name = MODULE_FILE.exec(parsed.pathname.slice(parsed.pathname.lastIndexOf("/") + 1))?.[1];
+  const source = name === undefined ? undefined : library?.generations.get(generation)?.get(name);
+  return library === undefined || source === undefined ? undefined : { library, generation, source };
 }
 
 /** A specifier that names a file by path or URL, rather than a package, a built-in, or another kind of URL. */
@@ -55,31 +69,25 @@ function isFileSpecifier(specifier: string): boolean {
 
 registerHooks({
   resolve(specifier, context, nextResolve) {
-    const parent = libraryOf(context.parentURL);
+    const parent = moduleOf(context.parentURL);
     if (!parent) return nextResolve(specifier, context);
     if (!isFileSpecifier(specifier)) {
       // `node:os` and other URLs resolve alone; a package name (or a built-in without `node:`) resolves from the body package.
       return nextResolve(specifier, /^[a-z][a-z0-9+.-]*:/i.test(specifier) ? context : { ...context, parentURL: PACKAGE_MANIFEST });
     }
     const resolved = nextResolve(specifier, context);
-    const modules = parent.generation === undefined ? undefined : parent.library.generations.get(parent.generation);
-    const target = new URL(resolved.url);
-    const file = target.protocol === "file:" ? path.relative(fileURLToPath(parent.library.url), fileURLToPath(target)) : "";
-    const match = MODULE_FILE.exec(file);
-    if (!modules || !match || !modules.has(match[1]!)) {
+    // Only a file of the importer's library and generation is a module of it; any other URL is refused below.
+    const url = stamped(new URL(resolved.url), parent.generation);
+    if (moduleOf(url)?.library !== parent.library) {
       throw new Error(`routine modules may import only the library's own modules (<name>.ts next to them), packages, and Node built-ins; "${specifier}" is none of these`);
     }
-    target.search = `?g=${parent.generation}`;
-    return { ...resolved, url: target.href };
+    return { ...resolved, url };
   },
   load(url, context, nextLoad) {
-    const owner = libraryOf(url);
-    if (!owner?.generation) return nextLoad(url, context);
-    const name = MODULE_FILE.exec(path.relative(fileURLToPath(owner.library.url), fileURLToPath(url.replace(/\?.*$/, ""))))?.[1];
-    const source = name === undefined ? undefined : owner.library.generations.get(owner.generation)?.get(name);
-    if (source === undefined) throw new Error(`"${url}" is not a module of the routine library`);
+    const module = moduleOf(url);
+    if (!module) return nextLoad(url, context);
     // The package.json above the library may say commonjs; a routine is always an ES module.
-    return { format: "module-typescript", source, shortCircuit: true };
+    return { format: "module-typescript", source: module.source, shortCircuit: true };
   },
 });
 
@@ -92,12 +100,13 @@ export class RoutineLoader {
   /** `dir` must exist. */
   constructor(dir: string) {
     this.dir = realpathSync(dir);
-    const existing = libraries.get(this.dir);
+    const url = pathToFileURL(path.join(this.dir, path.sep)).href;
+    const existing = libraries.get(url);
     if (existing) {
       this.#library = existing;
     } else {
-      this.#library = { url: pathToFileURL(path.join(this.dir, path.sep)).href, generations: new Map() };
-      libraries.set(this.dir, this.#library);
+      this.#library = { generations: new Map(), texts: new Map() };
+      libraries.set(url, this.#library);
     }
   }
 
@@ -113,12 +122,16 @@ export class RoutineLoader {
     const files = readdirSync(this.dir, { withFileTypes: true }).filter((entry) => entry.isFile() && MODULE_FILE.test(entry.name));
     for (const entry of files.sort((a, b) => (a.name < b.name ? -1 : 1))) {
       const bytes = readFileSync(path.join(this.dir, entry.name));
-      hash.update(`${entry.name}\0${bytes.length}\0`).update(bytes);
-      sources.set(entry.name.slice(0, -".ts".length), bytes.toString("utf8"));
+      const digest = createHash("sha256").update(bytes).digest("hex");
+      hash.update(`${entry.name}\0${digest}\0`);
+      // A generation holds the text every earlier generation with these bytes holds, so a save costs the changed modules only.
+      let text = this.#library.texts.get(digest);
+      if (text === undefined) this.#library.texts.set(digest, (text = bytes.toString("utf8")));
+      sources.set(entry.name.slice(0, -".ts".length), text);
     }
     if (!sources.has(name)) throw new RoutineNotFoundError(`no routine named "${name}"`);
     const generation = hash.digest("hex").slice(0, 16);
     if (!this.#library.generations.has(generation)) this.#library.generations.set(generation, sources);
-    return import(`${new URL(`${name}.ts`, this.#library.url).href}?g=${generation}`);
+    return import(stamped(pathToFileURL(path.join(this.dir, `${name}.ts`)), generation));
   }
 }

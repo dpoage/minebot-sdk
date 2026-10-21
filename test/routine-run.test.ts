@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSyn
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { after, describe, it } from "node:test";
+import { pathToFileURL } from "node:url";
 import type { Bot } from "mineflayer";
 import { RoutineLoader } from "../src/host/routines/loader.ts";
 import { ProgramRunner } from "../src/program/runner.ts";
@@ -68,8 +69,35 @@ describe("a routine's error", () => {
         return `${match[1]}:${match[2]}`;
       });
       assert.deepEqual(located, ["helper.ts:2", "action.ts:7"]);
-      assert.ok(!(run.error ?? "").includes("?g="));
+      assert.ok(!(run.error ?? "").includes("?"));
       assert.ok(!(run.error ?? "").includes("file://"));
+    });
+  }
+
+  for (const viaSymlink of [false, true]) {
+    it(`names a frame's file whatever its module URL adds, and keeps only the frames inside the directory${viaSymlink ? ", given through a symlink" : ""}`, async () => {
+      const real = library({});
+      const link = path.join(SCRATCH, `link${counter++}`);
+      if (viaSymlink) symlinkSync(real, link);
+      const url = (file: string) => pathToFileURL(path.join(real, file)).href;
+      const error = new Error("made up");
+      // The loader decides what a library module's URL adds to the file; the frames must not depend on it.
+      error.stack = [
+        "Error: made up",
+        `    at first (${url("a.ts")}?v=1:2:9)`,
+        `    at ${url("b.ts")}#x:3:1`,
+        `    at async ${url("c.ts")}:4:2`,
+        `    at elsewhere (${pathToFileURL(`${real}-sibling/d.ts`).href}?v=1:5:5)`,
+        "    at node:internal/modules/esm/module_job:1:1",
+      ].join("\n");
+      const runner = new ProgramRunner({ globals: () => ({}) });
+      const run = await runner.call(
+        async () => {
+          throw error;
+        },
+        { sourceDir: viaSymlink ? link : real },
+      );
+      assert.equal(run.error, ["Error: made up", `    at first (${real}/a.ts:2:9)`, `    at ${real}/b.ts:3:1`, `    at async ${real}/c.ts:4:2`].join("\n"));
     });
   }
 
@@ -86,7 +114,7 @@ describe("a routine's error", () => {
     assert.equal(run.status, "error");
     assert.match(run.error ?? "", new RegExp(`^${RegExp.escape(dir)}/bad\\.ts:2\\n`));
     assert.match(run.error ?? "", /SyntaxError: /);
-    assert.ok(!(run.error ?? "").includes("?g="));
+    assert.ok(!(run.error ?? "").includes("file://"));
   });
 
   it("reports a value that is not an error as its text", async () => {
