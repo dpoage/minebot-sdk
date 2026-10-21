@@ -32,12 +32,18 @@ function isErrno(err: unknown, ...codes: string[]): boolean {
   return err instanceof Error && "code" in err && typeof err.code === "string" && codes.includes(err.code);
 }
 
+/** The routine a library directory entry `fileName` is named for: `<name>.ts` with a valid routine name; undefined for any other entry. */
+export function moduleName(fileName: string): string | undefined {
+  const name = fileName.endsWith(".ts") ? fileName.slice(0, -".ts".length) : undefined;
+  return name !== undefined && RoutineName.safeParse(name).success ? name : undefined;
+}
+
 /**
  * The text of library module file `file`, or undefined when there is no module there: the file is
- * absent or is not a regular file (a symlink, or a directory named `<name>.ts`), which the loader
- * does not load either.
+ * absent or is not a regular file (a symlink, or a directory named `<name>.ts`). The loader reads
+ * modules through this too, so both agree on what a module is.
  */
-function readModule(file: string): string | undefined {
+export function readModule(file: string): string | undefined {
   try {
     if (!lstatSync(file).isFile()) return undefined;
     return readFileSync(file, "utf8");
@@ -83,9 +89,8 @@ export class RoutineLibrary {
     }
     const routines: RoutineInfo[] = [];
     for (const file of files.sort()) {
-      if (!file.endsWith(".ts")) continue;
-      const name = file.slice(0, -3);
-      if (!RoutineName.safeParse(name).success) continue;
+      const name = moduleName(file);
+      if (name === undefined) continue;
       const current = readModule(path.join(this.dir, file));
       if (current === undefined) continue;
       const entry = this.#currentEntry(name, current);

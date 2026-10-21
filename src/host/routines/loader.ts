@@ -16,16 +16,14 @@
 // module takes its importer's generation: one load is one generation, also for imports that run
 // later. Modules of the body's packages have one instance per process.
 import { createHash } from "node:crypto";
-import { readdirSync, readFileSync, realpathSync } from "node:fs";
+import { readdirSync, realpathSync } from "node:fs";
 import { registerHooks } from "node:module";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { PACKAGE_ROOT } from "../../package.ts";
+import { moduleName, readModule } from "./library.ts";
 
 export class RoutineNotFoundError extends Error {}
-
-/** A routine's name, as the library names its files. */
-const MODULE_FILE = /^([a-z][a-z0-9_-]{0,47})\.ts$/;
 
 /** One library directory: the module sources of every generation loaded so far. */
 interface Library {
@@ -57,7 +55,7 @@ function moduleOf(url: string | undefined): { library: Library; generation: stri
   const generation = parsed.searchParams.get(STAMP);
   if (generation === null) return undefined;
   const library = libraries.get(new URL(".", parsed).href);
-  const name = MODULE_FILE.exec(parsed.pathname.slice(parsed.pathname.lastIndexOf("/") + 1))?.[1];
+  const name = moduleName(parsed.pathname.slice(parsed.pathname.lastIndexOf("/") + 1));
   const source = name === undefined ? undefined : library?.generations.get(generation)?.get(name);
   return library === undefined || source === undefined ? undefined : { library, generation, source };
 }
@@ -119,15 +117,16 @@ export class RoutineLoader {
   async load(name: string): Promise<unknown> {
     const sources = new Map<string, string>();
     const hash = createHash("sha256");
-    const files = readdirSync(this.dir, { withFileTypes: true }).filter((entry) => entry.isFile() && MODULE_FILE.test(entry.name));
-    for (const entry of files.sort((a, b) => (a.name < b.name ? -1 : 1))) {
-      const bytes = readFileSync(path.join(this.dir, entry.name));
-      const digest = createHash("sha256").update(bytes).digest("hex");
-      hash.update(`${entry.name}\0${digest}\0`);
+    for (const file of readdirSync(this.dir).sort()) {
+      const module = moduleName(file);
+      const source = module === undefined ? undefined : readModule(path.join(this.dir, file));
+      if (module === undefined || source === undefined) continue;
+      const digest = createHash("sha256").update(source).digest("hex");
+      hash.update(`${file}\0${digest}\0`);
       // A generation holds the text every earlier generation with these bytes holds, so a save costs the changed modules only.
       let text = this.#library.texts.get(digest);
-      if (text === undefined) this.#library.texts.set(digest, (text = bytes.toString("utf8")));
-      sources.set(entry.name.slice(0, -".ts".length), text);
+      if (text === undefined) this.#library.texts.set(digest, (text = source));
+      sources.set(module, text);
     }
     if (!sources.has(name)) throw new RoutineNotFoundError(`no routine named "${name}"`);
     const generation = hash.digest("hex").slice(0, 16);
