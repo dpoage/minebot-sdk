@@ -1,4 +1,5 @@
 import { DEFAULT_TIMEOUT_MS, type BodyEvent, type EventsResponse, type WaitResponse } from "../protocol/index.ts";
+import type { EventSink } from "../protocol/host.ts";
 
 /** The filters of one wait: every given filter must match the same event. */
 export interface EventFilter {
@@ -34,7 +35,7 @@ export interface EventWaitOptions extends EventFilter {
 }
 
 /** Bounded, sequence-numbered log of things that happened to a body. */
-export class EventLog {
+export class EventLog implements EventSink {
   readonly #capacity: number;
   #events: BodyEvent[] = [];
   #waiters = new Set<Waiter>();

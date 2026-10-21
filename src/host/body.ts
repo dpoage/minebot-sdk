@@ -8,8 +8,7 @@ import type { KitHost } from "../kit/kit.ts";
 import type { Wiki } from "../wiki/wiki.ts";
 import { WikiAccess, wikiView } from "../wiki/access.ts";
 import { Connection, type ServerAuth } from "./connection.ts";
-import { EventLog } from "../body/events.ts";
-import type { ProgramHistory } from "../body/history.ts";
+import type { EventSink } from "../protocol/host.ts";
 import { programGlobals, type GlobalsDeps } from "./globals.ts";
 import { briefOf, observation } from "./observation.ts";
 import { Notes } from "./notes.ts";
@@ -43,8 +42,20 @@ export interface BodyOptions {
   kitAuthoring?: GlobalsDeps["kitAuthoring"];
   /** Let the agent register triggers. Default: true. A body without them neither mentions nor serves them. */
   triggersEnabled?: boolean;
-  /** Where trigger runs and registrations are recorded, as programs are. */
-  history?: ProgramHistory;
+  /** Where the body's events go; the supervisor's log numbers them and echoes them back. */
+  events: EventSink;
+  /** Where trigger runs and registrations are reported, as programs are. */
+  recorder: RunRecorder;
+  /** When the supervisor started; /status reports it. */
+  startedAt: string;
+}
+
+/** Reports program runs and registrations to whoever keeps the history; user code starts only once `record` has been answered. */
+export interface RunRecorder {
+  /** Records the start of `execute`, runs it once the history has it, and records its end. A run that throws leaves no end. */
+  record(run: { code: string; timeoutMs?: number; extra?: object }, execute: () => Promise<RunResult>): Promise<RunResult>;
+  /** Records code the body will run later. */
+  register(code: string, extra: object): Promise<void>;
 }
 
 /**
@@ -52,7 +63,7 @@ export interface BodyOptions {
  * kits, the wiki, and persistent notes and milestones.
  */
 export class Body {
-  readonly events = new EventLog();
+  readonly events: EventSink;
   readonly runner: ProgramRunner;
   readonly kits: KitHost;
   readonly wiki: WikiAccess;
@@ -63,10 +74,10 @@ export class Body {
   readonly #options: BodyOptions;
   readonly #connection: Connection;
   readonly #stall = new StallTracker();
-  readonly #startedAt = new Date().toISOString();
 
   constructor(options: BodyOptions) {
     this.#options = options;
+    this.events = options.events;
     this.state = options.state;
     this.kits = options.kits;
     this.notes = options.state.notes;
@@ -106,8 +117,7 @@ export class Body {
             bot: () => this.#connection.bot ?? undefined,
             run: (trigger, event, started) => this.#runTrigger(trigger, event, started),
             register: (trigger) =>
-              options.history?.register(`${trigger.run}\n${trigger.when ?? ""}`, { trigger: trigger.name, on: trigger.on, ...(trigger.when !== undefined && { when: trigger.when }) }) ??
-              Promise.resolve(),
+              options.recorder.register(`${trigger.run}\n${trigger.when ?? ""}`, { trigger: trigger.name, on: trigger.on, ...(trigger.when !== undefined && { when: trigger.when }) }),
           });
   }
 
@@ -152,9 +162,7 @@ export class Body {
       started();
       return this.runner.run(trigger.run, trigger.timeoutMs, { event: structuredClone(event) });
     };
-    const { history } = this.#options;
-    if (!history) return run();
-    return (await history.record(trigger.run, run, { trigger: trigger.name, event: { seq: event.seq, type: event.type } })) as RunResult;
+    return this.#options.recorder.record({ code: trigger.run, timeoutMs: trigger.timeoutMs, extra: { trigger: trigger.name, event: { seq: event.seq, type: event.type } } }, run);
   }
 
   get milestones(): MilestoneSet | null {
@@ -170,7 +178,7 @@ export class Body {
   async status(): Promise<StatusResponse> {
     const base = {
       connected: this.#connection.spawned,
-      startedAt: this.#startedAt,
+      startedAt: this.#options.startedAt,
       deaths: this.#connection.deaths,
       reconnects: this.#connection.reconnects,
     };
@@ -188,6 +196,14 @@ export class Body {
 
   get connected(): boolean {
     return this.#connection.spawned;
+  }
+
+  get deaths(): number {
+    return this.#connection.deaths;
+  }
+
+  get reconnects(): number {
+    return this.#connection.reconnects;
   }
 
   start(): void {

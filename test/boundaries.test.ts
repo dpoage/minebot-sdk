@@ -54,6 +54,16 @@ function dynamicImports(file: string): string[] {
   return [...source.matchAll(/await\s+import\(\s*["']([^"']+)["']\s*\)/g)].map((match) => match[1]!).filter((s) => s.startsWith("."));
 }
 
+/** The bare package specifiers a file loads at runtime (`closure()` drops them): `mineflayer`, `zod`, ... but not `node:` builtins. */
+function bareImports(file: string): string[] {
+  const source = stripTypeScriptTypes(readFileSync(file, "utf8")).replace(/`(?:\\[\s\S]|[^`\\])*`/g, "``");
+  const specifiers = [
+    ...source.matchAll(/(?:^|[;\n])\s*import\s+(?:[\w*{}\s,$]+\s+from\s+)?["']([^"']+)["']/g),
+    ...source.matchAll(/(?:^|[;\n])\s*export\s+(?:\*(?:\s+as\s+\w+)?|\{[^}]*\})\s*from\s*["']([^"']+)["']/g),
+  ].map((match) => match[1]!);
+  return specifiers.filter((specifier) => !/^(\.|\/|node:|minebot-sdk\/)/.test(specifier));
+}
+
 describe("package boundaries", () => {
   it("keeps the client entry inside the client modules", () => {
     const files = closure(path.join(ROOT, "src/cli.ts"));
@@ -115,7 +125,20 @@ describe("package boundaries", () => {
     const files = closure(path.join(ROOT, "src/testing/index.ts"));
     assert.ok(files.includes("src/testing/bot.ts") && files.includes("src/kit/kit.ts"), `closure too small: ${files.join(", ")}`);
     // The harness ships in dist/, so it may load the kit framework and the shipped kits, and nothing that starts a body or talks to one.
-    const outside = files.filter((file) => !file.startsWith("src/") || file.startsWith("src/body/") || file.startsWith("src/client/") || file === "src/cli.ts");
+    const outside = files.filter((file) => !file.startsWith("src/") || file.startsWith("src/body/") || file.startsWith("src/host/") || file.startsWith("src/client/") || file === "src/cli.ts");
     assert.deepEqual(outside, [], "the testing entry would ship or crash on body or client code");
+  });
+
+  it("keeps the supervisor free of the bot host, the kits, the programs, the wiki, and the Minecraft libraries", () => {
+    const files = closure(path.join(ROOT, "src/body/main.ts"));
+    assert.ok(files.includes("src/body/daemon.ts") && files.includes("src/body/host-process.ts") && files.includes("src/protocol/index.ts"), `closure too small: ${files.join(", ")}`);
+    const hostSide = files.filter((file) => ["src/host/", "src/kit/", "src/program/", "src/wiki/"].some((dir) => file.startsWith(dir)));
+    assert.deepEqual(hostSide, [], "the supervisor would load code that belongs to the bot host");
+    const libraries = files.flatMap((file) =>
+      bareImports(path.join(ROOT, file))
+        .filter((specifier) => /^(mineflayer|prismarine|minecraft-data$|vec3$)/.test(specifier))
+        .map((specifier) => `${file} imports ${specifier}`),
+    );
+    assert.deepEqual(libraries, [], "the supervisor would load a Minecraft library");
   });
 });

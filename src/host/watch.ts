@@ -7,7 +7,7 @@ import type { Vec3 } from "vec3";
 import { trackEffects } from "../mc/effects.ts";
 import { isHostile } from "../mc/hostile.ts";
 import { round, vec } from "../mc/position.ts";
-import type { EventLog } from "../body/events.ts";
+import type { EventSink } from "../protocol/host.ts";
 
 /** Health below this raises `low_health`. */
 const LOW_HEALTH = 8;
@@ -21,7 +21,7 @@ const HOSTILE_REARM_RADIUS = 32;
 const HOSTILE_CHECK_TICKS = 10;
 
 /** Translates the player's own actions and vitals into events. Call once per bot, before it joins. */
-export function watchGame(bot: Bot, events: EventLog): void {
+export function watchGame(bot: Bot, events: EventSink): void {
   trackEffects(bot);
 
   // The packet carries the picked-up count; the collect event of Mineflayer does not.

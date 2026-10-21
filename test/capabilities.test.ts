@@ -103,7 +103,7 @@ describe("the capability table", () => {
 
   it("gates every route and every command through the table", () => {
     // The daemon's routes name a capability; the CLI's feature commands use the same gates.
-    const daemon = readFileSync(new URL("../src/body/daemon.ts", import.meta.url), "utf8");
+    const daemon = readFileSync(new URL("../src/host/routes.ts", import.meta.url), "utf8");
     const routes = [...daemon.matchAll(/path: "(\/[a-z/:]+)",\s*(?:capability: "([a-zA-Z]+)",\s*)?/g)];
     assert.ok(routes.length >= 20, `expected the route table, found ${routes.length}`);
     for (const match of routes) {

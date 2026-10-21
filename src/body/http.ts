@@ -1,18 +1,12 @@
-// The HTTP transport of the body API: auth, request reading, routing over a table of routes,
-// and the error-to-status mapping. Routes are data; the daemon supplies them, each naming the
-// capability it belongs to, so a feature the body lacks answers like any unknown route.
+// The HTTP transport of the body API: auth, request reading, and relaying. The supervisor answers
+// the few routes that are its own (health, the event log, waits, stop); every other request is
+// forwarded raw to the bot host, which routes, gates by capability, parses, and maps its errors to
+// a status. Routes here are data; the daemon supplies them.
 import { timingSafeEqual } from "node:crypto";
 import http from "node:http";
 import { z } from "zod";
-import type { Capability } from "../protocol/index.ts";
-import { NotConnectedError } from "../host/connection.ts";
-import { NoteLimitError } from "../host/notes.ts";
-import { TriggerInvalidError, TriggerLimitError, TriggerNotFoundError } from "../host/triggers.ts";
-import { BusyError } from "../program/runner.ts";
-import { WikiDisabledError, WikiPageNotFoundError } from "../wiki/wiki.ts";
-import { KitSourceError } from "../kit/agent.ts";
 
-const MAX_BODY_BYTES = 1024 * 1024;
+export const MAX_BODY_BYTES = 1024 * 1024;
 
 export class HttpError extends Error {
   readonly status: number;
@@ -30,38 +24,30 @@ export interface RequestContext {
   read(): Promise<unknown>;
 }
 
+/** A route the supervisor answers itself. */
 export interface Route {
   method: "GET" | "POST" | "PUT" | "DELETE";
   path: string;
-  /** The capability this route belongs to; absent means every body serves it. */
-  capability?: Capability;
-  /** Path parameters, for the `/notes/:key` shape. */
-  pattern?: RegExp;
   handler: (ctx: RequestContext) => unknown;
 }
 
-/** HTTP status for an error thrown while handling a request. */
-export function statusFor(err: unknown): number {
-  if (err instanceof HttpError) return err.status;
-  if (err instanceof BusyError || err instanceof NoteLimitError || err instanceof TriggerLimitError) return 409;
-  if (err instanceof TriggerNotFoundError) return 404;
-  if (err instanceof TriggerInvalidError) return 400;
-  if (err instanceof NotConnectedError) return 503;
-  if (err instanceof WikiDisabledError) return 403;
-  if (err instanceof WikiPageNotFoundError) return 404;
-  if (err instanceof z.ZodError || err instanceof KitSourceError) return 400;
-  return 500;
+/** An API request as the bot host receives it: the body is the raw bytes, cut off past MAX_BODY_BYTES. */
+export interface ForwardedRequest {
+  method: string;
+  /** Path and query, as sent. */
+  url: string;
+  body: Buffer | null;
+  tooLarge: boolean;
 }
 
 export interface ServerOptions {
   token: string;
+  /** The routes the supervisor answers itself. */
   routes: Route[];
+  /** Answers every other authenticated request. */
+  forward: (request: ForwardedRequest) => Promise<{ status: number; body: unknown }>;
   /** What `GET /health` answers (served without auth): the name and connection state. */
   health: () => unknown;
-  /** Which capabilities the body offers right now; routes of the others answer 404. */
-  offered: (capability: Capability) => boolean;
-  /** Called with every request that reaches routing, for the event log. */
-  onNotFound?: (method: string, path: string) => void;
 }
 
 /** Serves the routes over HTTP with bearer auth. Publishes nothing; the daemon owns the endpoint. */
@@ -69,46 +55,49 @@ export function serveBodyApi(options: ServerOptions): http.Server {
   const expectedAuth = Buffer.from(`Bearer ${options.token}`);
   return http.createServer((req, res) => {
     handle(req, res)
-      .then((payload) => send(res, 200, payload))
-      .catch((err: unknown) => send(res, statusFor(err), { error: err instanceof Error ? err.message : String(err) }));
+      .then(({ status, body }) => send(res, status, body))
+      .catch((err: unknown) => send(res, err instanceof HttpError ? err.status : 500, { error: err instanceof Error ? err.message : String(err) }));
   });
 
-  async function handle(req: http.IncomingMessage, res: http.ServerResponse): Promise<unknown> {
+  async function handle(req: http.IncomingMessage, res: http.ServerResponse): Promise<{ status: number; body: unknown }> {
     const url = new URL(req.url ?? "/", "http://localhost");
-    if (req.method === "GET" && url.pathname === "/health") return options.health();
+    if (req.method === "GET" && url.pathname === "/health") return { status: 200, body: options.health() };
     const auth = Buffer.from(req.headers.authorization ?? "");
     if (auth.length !== expectedAuth.length || !timingSafeEqual(auth, expectedAuth)) {
       throw new HttpError(401, "missing or invalid bearer token");
     }
-    const route = match(req.method ?? "", url.pathname);
-    if (!route) {
-      options.onNotFound?.(req.method ?? "", url.pathname);
-      throw new HttpError(404, `no route for ${req.method} ${url.pathname}`);
-    }
-    return route.handler({ req, res, url, read: () => readJson(req) });
-  }
-
-  function match(method: string, pathname: string): Route | undefined {
-    for (const route of options.routes) {
-      if (route.method !== method) continue;
-      if (route.capability && !options.offered(route.capability)) continue;
-      if (route.pattern ? route.pattern.test(pathname) : route.path === pathname) return route;
-    }
-    return undefined;
+    const method = req.method ?? "";
+    const route = options.routes.find((candidate) => candidate.method === method && candidate.path === url.pathname);
+    if (route) return { status: 200, body: await route.handler({ req, res, url, read: () => readJson(req) }) };
+    // The host parses the body only when the route it matches reads one, so an unknown route answers 404 whatever the body.
+    const raw = method === "POST" || method === "PUT" ? await readRaw(req) : { body: null, tooLarge: false };
+    return options.forward({ method, url: req.url ?? "/", ...raw });
   }
 }
 
-export async function readJson(req: http.IncomingMessage): Promise<unknown> {
+/** The request body's bytes, up to MAX_BODY_BYTES; a longer body is cut off and flagged. */
+async function readRaw(req: http.IncomingMessage): Promise<{ body: Buffer; tooLarge: boolean }> {
   const chunks: Buffer[] = [];
   let size = 0;
   // http.IncomingMessage yields Buffers when no encoding is set.
   for await (const chunk of req as AsyncIterable<Buffer>) {
     size += chunk.length;
-    if (size > MAX_BODY_BYTES) throw new HttpError(413, "request body too large");
+    if (size > MAX_BODY_BYTES) return { body: Buffer.alloc(0), tooLarge: true };
     chunks.push(chunk);
   }
+  return { body: Buffer.concat(chunks), tooLarge: false };
+}
+
+export async function readJson(req: http.IncomingMessage): Promise<unknown> {
+  const { body, tooLarge } = await readRaw(req);
+  if (tooLarge) throw new HttpError(413, "request body too large");
+  return parseJson(body.toString("utf8"));
+}
+
+/** Parses a request body's text; an empty body is `{}`. */
+export function parseJson(text: string): unknown {
   try {
-    return JSON.parse(Buffer.concat(chunks).toString("utf8") || "{}");
+    return JSON.parse(text || "{}");
   } catch {
     throw new HttpError(400, "request body is not valid JSON");
   }

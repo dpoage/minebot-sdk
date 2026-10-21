@@ -5,7 +5,7 @@ import mineflayer, { type Bot } from "mineflayer";
 import pathfinderPkg from "mineflayer-pathfinder";
 import { round, vec } from "../mc/position.ts";
 import { MC_VERSION } from "../mc/version.ts";
-import { EventLog } from "../body/events.ts";
+import type { EventSink } from "../protocol/host.ts";
 import { watchGame } from "./watch.ts";
 
 const { pathfinder, Movements } = pathfinderPkg;
@@ -47,7 +47,7 @@ export interface ConnectionOptions {
   authCacheDir: string;
   host: string;
   port: number;
-  events: EventLog;
+  events: EventSink;
 }
 
 export class Connection {

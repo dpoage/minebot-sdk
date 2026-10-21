@@ -16,7 +16,8 @@ import {
   type TriggerInfo,
 } from "../protocol/index.ts";
 import type { JsonStore } from "../store.ts";
-import { eventMatches, type EventLog } from "../body/events.ts";
+import { eventMatches } from "../body/events.ts";
+import type { EventSink } from "../protocol/host.ts";
 
 /** A trigger's `when` is an expression over two names, so it is cut off quickly. */
 const WHEN_TIMEOUT_MS = 100;
@@ -53,7 +54,7 @@ interface Queued {
 
 export interface TriggersDeps {
   store: JsonStore;
-  events: EventLog;
+  events: EventSink;
   runner: { readonly running: unknown; stop(): boolean };
   connected: () => boolean;
   /** The bot a `when` expression sees. */
