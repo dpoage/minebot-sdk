@@ -50,12 +50,12 @@ import {
   type WikiMode,
 } from "../protocol/index.ts";
 import { Wiki } from "../wiki/wiki.ts";
-import { typeCheckKit, typeCheckLog } from "./typecheck.ts";
-import { Body } from "./body.ts";
-import type { ServerAuth } from "./connection.ts";
+import { typeCheckKit, typeCheckLog } from "../host/typecheck.ts";
+import { Body } from "../host/body.ts";
+import type { ServerAuth } from "../host/connection.ts";
 import { HttpError, parse, type Route, serveBodyApi } from "./http.ts";
 import { ProgramHistory } from "./history.ts";
-import { BodyState } from "./state.ts";
+import { BodyState } from "../host/state.ts";
 
 export interface DaemonOptions {
   name: string;

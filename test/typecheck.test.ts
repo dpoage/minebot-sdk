@@ -3,7 +3,7 @@ import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, it } from "node:test";
 import { PACKAGE_ROOT } from "../src/package.ts";
-import { typeCheckKit } from "../src/body/typecheck.ts";
+import { typeCheckKit } from "../src/host/typecheck.ts";
 import type { KitSchema } from "../src/protocol/index.ts";
 
 const kit = (body: string, uses = '["move"]') => `import { action, defineKit, z } from "minebot-sdk/kit";

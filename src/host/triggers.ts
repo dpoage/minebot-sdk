@@ -16,7 +16,7 @@ import {
   type TriggerInfo,
 } from "../protocol/index.ts";
 import type { JsonStore } from "../store.ts";
-import { eventMatches, type EventLog } from "./events.ts";
+import { eventMatches, type EventLog } from "../body/events.ts";
 
 /** A trigger's `when` is an expression over two names, so it is cut off quickly. */
 const WHEN_TIMEOUT_MS = 100;

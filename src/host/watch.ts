@@ -7,7 +7,7 @@ import type { Vec3 } from "vec3";
 import { trackEffects } from "../mc/effects.ts";
 import { isHostile } from "../mc/hostile.ts";
 import { round, vec } from "../mc/position.ts";
-import type { EventLog } from "./events.ts";
+import type { EventLog } from "../body/events.ts";
 
 /** Health below this raises `low_health`. */
 const LOW_HEALTH = 8;

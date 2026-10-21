@@ -5,7 +5,7 @@ import path from "node:path";
 import { describe, it } from "node:test";
 import { setImmediate, setTimeout as sleep } from "node:timers/promises";
 import { EventLog } from "../src/body/events.ts";
-import { TriggerInvalidError, TriggerLimitError, Triggers, type StoredTrigger } from "../src/body/triggers.ts";
+import { TriggerInvalidError, TriggerLimitError, Triggers, type StoredTrigger } from "../src/host/triggers.ts";
 import { BusyError } from "../src/program/runner.ts";
 import { MAX_TRIGGERS, type BodyEvent, type RunResult } from "../src/protocol/index.ts";
 import { JsonStore } from "../src/store.ts";
