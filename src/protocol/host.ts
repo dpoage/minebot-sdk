@@ -15,6 +15,28 @@ export function supervisorPidOf(argv: readonly string[]): number | undefined {
   return Number.isInteger(pid) && pid > 0 ? pid : undefined;
 }
 
+/** How long a program gets to settle after it is aborted (stop, timeout, preemption) before the host is restarted. */
+export const STOP_GRACE_MS = 5_000;
+/**
+ * Extra time the supervisor gives a live host to report a hung program before it kills the host
+ * itself: with none, the supervisor's deadline (which it measures from its own clock) wins the race
+ * against the host's report about a third of the time.
+ */
+export const KILL_MARGIN_MS = 500;
+
+/** What a request answers while the body has no player connection, and while the host is down for good. */
+export const NOT_CONNECTED_MESSAGE = "the body is not connected to a server";
+
+/** Why the host was restarted when a program did not stop. */
+export function hungCause(graceMs: number): string {
+  return `the program did not stop within ${graceMs / 1000} s`;
+}
+
+/** The error a run carries when its host was restarted. */
+export function restartedError(cause: string): string {
+  return `${cause}; the bot host was restarted`;
+}
+
 /** Where events are pushed and heard: the supervisor's EventLog, and the bot host's stand-in that sends them there. */
 export interface EventSink {
   push(type: string, data?: Record<string, unknown>): void;
@@ -63,10 +85,18 @@ export type FromHost =
   | { kind: "response"; id: number; status: number; body: unknown }
   /** An event for the supervisor's log; the supervisor numbers it and echoes it back. */
   | { kind: "event"; type: string; data: Record<string, unknown> }
-  /** A program is about to run; user code starts only after the matching `run_ack`. */
-  | { kind: "run_started"; runId: number; code: string; timeoutMs: number; extra: object; kits: string[] }
-  /** The run ended; the run settles once the matching `run_ack` arrives. `result: null` means it threw before producing one (not connected, busy): the run is over and leaves no final history line. */
-  | { kind: "run_finished"; runId: number; result: RunResult | null }
+  /**
+   * A program is about to run; user code starts only after the matching `run_ack`. `requestId` is
+   * the forwarded request the run answers (/run, /kits/try); a trigger's run has none.
+   */
+  | { kind: "run_started"; runId: number; code: string; timeoutMs: number; extra: object; kits: string[]; requestId?: number }
+  /**
+   * The run ended; the run settles once the matching `run_ack` arrives. `result: null` means it threw
+   * before producing one (not connected, busy): the run is over and leaves no final history line.
+   * `hung` means the program was aborted and has not settled within the grace: `result` holds what
+   * the run had, the supervisor kills the host and restarts it, and no `run_ack` is sent.
+   */
+  | { kind: "run_finished"; runId: number; result: RunResult | null; hung?: true }
   /** Code the body will run later (a trigger), for the history's audit; answered by `run_ack` like a run. */
   | { kind: "register"; runId: number; code: string; extra: object; kits: string[] }
   | { kind: "state"; connected: boolean; deaths: number; reconnects: number; active: string[] };

@@ -48,6 +48,8 @@ export interface RequestContext {
   url: URL;
   /** The parsed request body (POST/PUT); throws a 413 or 400 only when a handler asks for it. */
   read(): Promise<unknown>;
+  /** The id the supervisor gave the request; a run it starts is reported with it, so the supervisor can answer it if this host is killed. */
+  requestId: number;
 }
 
 export interface Route {
@@ -62,6 +64,7 @@ export interface Route {
 
 /** One API request as the supervisor forwards it: the body is the raw text, cut off when it was too large. */
 export interface ApiRequest {
+  id: number;
   method: string;
   /** Path and query, as sent. */
   url: string;
@@ -95,7 +98,7 @@ export async function serve(routes: Route[], body: Body, request: ApiRequest): P
     if (!route) throw new HttpError(404, `no route for ${request.method} ${url.pathname}`);
     // The body is read only when the route asks, so an unknown route answers 404 whatever the body holds.
     const read = async (): Promise<unknown> => parseBody(request);
-    return { status: 200, body: await route.handler({ url, read }) };
+    return { status: 200, body: await route.handler({ url, read, requestId: request.id }) };
   } catch (err) {
     return { status: statusFor(err), body: { error: err instanceof Error ? err.message : String(err) } };
   }
@@ -174,9 +177,9 @@ export function bodyRoutes({ body, kits: host, library, syncKits, saveKit, rever
     {
       method: "POST",
       path: "/run",
-      handler: async ({ read }) => {
+      handler: async ({ read, requestId }) => {
         const { code, timeoutMs } = parse(RunInput, await read());
-        return recorder.record({ code, timeoutMs }, () => body.run(code, timeoutMs));
+        return recorder.record({ code, timeoutMs, requestId }, () => body.run(code, timeoutMs));
       },
     },
     {
@@ -287,10 +290,10 @@ export function bodyRoutes({ body, kits: host, library, syncKits, saveKit, rever
       method: "POST",
       path: "/kits/try",
       capability: "agentKits",
-      handler: async ({ read }) => {
+      handler: async ({ read, requestId }) => {
         const { source, action, args, timeoutMs } = parse(TryKitInput, await read());
         const code = `return await kits.try(${JSON.stringify(source)}, ${JSON.stringify({ action, args })});`;
-        return recorder.record({ code, timeoutMs }, () => body.run(code, timeoutMs));
+        return recorder.record({ code, timeoutMs, requestId }, () => body.run(code, timeoutMs));
       },
     },
     { method: "GET", path: "/triggers", capability: "triggers", handler: () => triggersResponse() },

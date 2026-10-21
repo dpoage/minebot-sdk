@@ -5,7 +5,7 @@ import mineflayer, { type Bot } from "mineflayer";
 import pathfinderPkg from "mineflayer-pathfinder";
 import { round, vec } from "../mc/position.ts";
 import { MC_VERSION } from "../mc/version.ts";
-import type { EventSink } from "../protocol/host.ts";
+import { NOT_CONNECTED_MESSAGE, type EventSink } from "../protocol/host.ts";
 import { watchGame } from "./watch.ts";
 
 const { pathfinder, Movements } = pathfinderPkg;
@@ -32,7 +32,7 @@ const NIGHT_START_TICK = 12542;
 
 export class NotConnectedError extends Error {
   constructor() {
-    super("the body is not connected to a server");
+    super(NOT_CONNECTED_MESSAGE);
   }
 }
 
@@ -48,6 +48,9 @@ export interface ConnectionOptions {
   host: string;
   port: number;
   events: EventSink;
+  /** Deaths and reconnects the previous host counted, when this connection replaces one. */
+  deaths?: number;
+  reconnects?: number;
 }
 
 export class Connection {
@@ -63,6 +66,8 @@ export class Connection {
 
   constructor(options: ConnectionOptions) {
     this.#options = options;
+    this.#deaths = options.deaths ?? 0;
+    this.#reconnects = options.reconnects ?? 0;
   }
 
   get bot(): Bot | null {

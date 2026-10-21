@@ -3,7 +3,7 @@
 // the kit catalog and the wiki; Body wires them into the program environment.
 import { grade, MilestoneSet, type MilestoneProgress } from "../milestones/milestones.ts";
 import { capabilities, type BodyEvent, type BodyFeatures, type Observation, type RunResult, type StatusResponse, type WikiMode } from "../protocol/index.ts";
-import { BusyError, ProgramRunner } from "../program/runner.ts";
+import { BusyError, ProgramRunner, type RunOutcome } from "../program/runner.ts";
 import type { KitHost } from "../kit/kit.ts";
 import type { Wiki } from "../wiki/wiki.ts";
 import { WikiAccess, wikiView } from "../wiki/access.ts";
@@ -48,12 +48,18 @@ export interface BodyOptions {
   recorder: RunRecorder;
   /** When the supervisor started; /status reports it. */
   startedAt: string;
+  /** Deaths and reconnects the previous host counted, when this host replaces one. */
+  deaths?: number;
+  reconnects?: number;
 }
 
 /** Reports program runs and registrations to whoever keeps the history; user code starts only once `record` has been answered. */
 export interface RunRecorder {
-  /** Records the start of `execute`, runs it once the history has it, and records its end. A run that throws leaves no end; a start or end the history cannot write fails the run. */
-  record(run: { code: string; timeoutMs?: number; extra?: object }, execute: () => Promise<RunResult>): Promise<RunResult>;
+  /**
+   * Records the start of `execute`, runs it once the history has it, and records its end. A run that throws leaves no end; a start or end the history cannot write fails the run.
+   * `requestId` is the API request the run answers, so the supervisor can answer it when this host is killed mid-run.
+   */
+  record(run: { code: string; timeoutMs?: number; extra?: object; requestId?: number }, execute: () => Promise<RunOutcome>): Promise<RunResult>;
   /** Records code the body will run later. */
   register(code: string, extra: object): Promise<void>;
 }
@@ -88,6 +94,8 @@ export class Body {
       host: options.host,
       port: options.port,
       events: this.events,
+      deaths: options.deaths,
+      reconnects: options.reconnects,
     });
     this.wiki = new WikiAccess(options.wiki, options.wikiMode, options.username, () => wikiView(this.features));
     this.runner = new ProgramRunner({
@@ -141,6 +149,8 @@ export class Body {
   async run(code: string, timeoutMs?: number): Promise<RunResult> {
     this.#options.syncKits?.();
     const result = await this.runner.run(code, timeoutMs);
+    // A hung run ends with its host: the supervisor, which kills it, logs the end of the program.
+    if (result.hung) return result;
     this.events.push("program_finished", { status: result.status, durationMs: result.durationMs });
     this.triggers?.idle();
     const bot = this.#connection.bot;

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import { afterEach, beforeEach, describe, it, mock } from "node:test";
+import { hungCause, restartedError } from "../src/protocol/host.ts";
 import { BusyError, ProgramRunner } from "../src/program/runner.ts";
 
 function makeRunner(globals: Record<string, unknown> = {}) {
@@ -117,5 +118,73 @@ describe("ProgramRunner", () => {
     const runner = new ProgramRunner({ globals: () => ({}), maxLogBytes: 20 });
     const run = await runner.run(`for (let i = 0; i < 10; i++) log("0123456789");`);
     assert.equal(run.logs, "0123456789\n[logs truncated at 20 bytes]");
+  });
+});
+
+// An aborted program gets a grace to settle; one that does not ends the run as hung, and the host is restarted.
+describe("restart: ProgramRunner after an abort", () => {
+  const GRACE_MS = 80;
+  const HUNG_ERROR = restartedError(hungCause(GRACE_MS));
+  const hungRunner = () => new ProgramRunner({ globals: () => ({}), graceMs: GRACE_MS });
+
+  it("returns a program that settles within the grace exactly as before, without the hung flag", async () => {
+    const runner = hungRunner();
+    const pending = runner.run(`try { await sleep(60_000); } catch { await sleep(0).catch(() => {}); }`);
+    runner.stop();
+    const run = await pending;
+    assert.deepEqual({ ...run, durationMs: 0 }, { status: "stopped", result: undefined, error: undefined, logs: "", durationMs: 0 });
+    assert.ok(!("hung" in run));
+    assert.equal(runner.running, null);
+  });
+
+  it("lets a program that handles its abort write what it was doing, and counts its logs", async () => {
+    const runner = hungRunner();
+    const pending = runner.run(`try { await sleep(60_000); } catch (err) { log("cleaning up"); }`);
+    runner.stop();
+    const run = await pending;
+    assert.equal(run.status, "stopped");
+    assert.equal(run.logs, "cleaning up");
+    assert.ok(!("hung" in run));
+  });
+
+  it("reports a program that never settles as hung after the grace, with the logs it wrote and the abort's status", async () => {
+    const runner = hungRunner();
+    const pending = runner.run(`log("before"); await new Promise(() => {});`);
+    const t0 = performance.now();
+    runner.stop();
+    const run = await pending;
+    const took = performance.now() - t0;
+    assert.ok(took >= GRACE_MS - 10 && took < GRACE_MS + 1000, `the run ended after ${took} ms`);
+    assert.deepEqual({ ...run, durationMs: 0 }, { status: "stopped", result: undefined, error: HUNG_ERROR, logs: "before", durationMs: 0, hung: true });
+    assert.equal(runner.running, null, "the runner is free once the run has ended");
+  });
+
+  it("reports a timed-out program that never settles as hung with status timeout", async () => {
+    const runner = hungRunner();
+    const run = await runner.run(`for (;;) await new Promise((resolve) => setTimeout(resolve, 5));`, 30);
+    assert.equal(run.status, "timeout");
+    assert.equal(run.hung, true);
+    assert.equal(run.error, HUNG_ERROR);
+  });
+
+  it("treats a program waiting on a raw timer as hung: the timer is cleared at the abort", async () => {
+    const runner = hungRunner();
+    const pending = runner.run(`await new Promise((resolve) => setTimeout(resolve, 60_000));`);
+    runner.stop();
+    assert.equal((await pending).hung, true);
+  });
+
+  it("stays busy until the grace has passed, then accepts the next run right after a stop (no 409)", async () => {
+    const runner = hungRunner();
+    const pending = runner.run(`await new Promise(() => {});`);
+    runner.stop();
+    await assert.rejects(runner.run(`return 1;`), BusyError);
+    await pending;
+    assert.equal((await runner.run(`return 1;`)).result, 1);
+
+    const settling = runner.run(`while (!signal.aborted) await sleep(5);`);
+    runner.stop();
+    await settling;
+    assert.equal((await runner.run(`return 2;`)).result, 2);
   });
 });

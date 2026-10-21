@@ -1,22 +1,87 @@
 // The supervisor's side of the bot host: forks the child process that holds the Minecraft player
 // and runs agent programs, forwards API requests to it, and turns what it reports into the event
-// log and the program history. Callers do not know the body lives in another process.
+// log and the program history. Callers do not know the body lives in another process that may
+// crash, hang, or be killed: the supervisor is the only killer, and it forks a replacement that
+// reconnects as the same player.
 import { fork, type ChildProcess } from "node:child_process";
+import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
-import { hostArguments, type FromHost, type HostInit, type ToHost } from "../protocol/host.ts";
+import { MAX_TIMEOUT_MS, type RunResult, type RunStatus } from "../protocol/index.ts";
+import {
+  hostArguments,
+  hungCause,
+  KILL_MARGIN_MS,
+  NOT_CONNECTED_MESSAGE,
+  restartedError,
+  STOP_GRACE_MS,
+  type FromHost,
+  type HostInit,
+  type ToHost,
+} from "../protocol/host.ts";
 import type { EventLog } from "./events.ts";
 import type { ForwardedRequest } from "./http.ts";
 import type { ProgramHistory, RunEnd } from "./history.ts";
 
 /** How long the host gets to run its shutdown before it is killed. */
 const SHUTDOWN_GRACE_MS = 5_000;
+/** How long after a host's exit the supervisor waits for its channel to drain, so the host's last messages are handled before its death is. */
+const CHANNEL_DRAIN_MS = 500;
+
+export const RESTART_BASE_MS = 1_000;
+export const RESTART_MAX_MS = 60_000;
+/** A host that stays up this long was not crashing: the next restart starts the schedule over. */
+export const STABLE_UP_MS = 60_000;
+
+/**
+ * How long to wait before the next host is forked: 1 s, doubling per consecutive restart up to
+ * 60 s. `consecutive` counts the restarts since a host last stayed up for STABLE_UP_MS, and
+ * `upMs` is how long the host that just ended was up.
+ */
+export function restartDelay(consecutive: number, upMs: number): number {
+  const streak = upMs >= STABLE_UP_MS ? 0 : consecutive;
+  return Math.min(RESTART_BASE_MS * 2 ** streak, RESTART_MAX_MS);
+}
 
 /** The host's entry, with this module's own extension: `.ts` from source, `.js` from a build. */
 const DEFAULT_ENTRY = fileURLToPath(new URL(`../host/main${import.meta.url.slice(import.meta.url.lastIndexOf("."))}`, import.meta.url));
 
+type Answer = PromiseWithResolvers<{ status: number; body: unknown }>;
+
+const NOT_CONNECTED = { status: 503, body: { error: NOT_CONNECTED_MESSAGE } };
+
+/** A program the host reported and the supervisor has not seen end. */
 interface RunInFlight {
+  id: number;
   end: RunEnd;
   finished: PromiseWithResolvers<void>;
+  /** When the supervisor acked it: the program's own clock starts here. */
+  startedAt: number;
+  /** When the program's timeout aborts it, by the supervisor's clock. */
+  timeoutAt: number;
+  /** When POST /stop reached the supervisor. */
+  stopAt?: number;
+  /** The API request this run answers, absent for a trigger's. */
+  requestId?: number;
+  /** The trigger the run fires, absent for a program. */
+  trigger?: string;
+  /** What the host reported about a program that did not stop: its result, with the logs it held. */
+  hung?: RunResult;
+  /** Kills the host when the program neither settles nor is reported hung in time. */
+  deadline?: NodeJS.Timeout;
+}
+
+/** One forked host. */
+interface Attempt {
+  child: ChildProcess;
+  /** Settles when the host is ready, or fails to be. */
+  ready: PromiseWithResolvers<void>;
+  /** Resolves when the process has exited. */
+  exited: Promise<void>;
+  built: boolean;
+  /** When it reported ready. */
+  readyAt: number;
+  /** Why the supervisor killed it, when it did. */
+  cause?: string;
 }
 
 export class HostProcess {
@@ -24,28 +89,38 @@ export class HostProcess {
   readonly #events: EventLog;
   readonly #history: ProgramHistory;
   readonly #entry: string;
+  readonly #graceMs: number;
   readonly #unsubscribe: () => void;
-  readonly #ready = Promise.withResolvers<void>();
-  readonly #requests = new Map<number, PromiseWithResolvers<{ status: number; body: unknown }>>();
+  readonly #requests = new Map<number, Answer>();
+  /** Requests that arrived while no host was ready; the next host answers them. */
+  #queued: { request: ForwardedRequest; answer: Answer }[] = [];
   readonly #runs = new Map<number, RunInFlight>();
-  #child: ChildProcess | undefined;
-  #exited: Promise<void> | undefined;
+  #attempt: Attempt | undefined;
   #nextRequest = 0;
   #connected = false;
-  #built = false;
+  #joined = false;
   /** Set when the supervisor ends the host on purpose, so its exit is not a failure. */
   #ending = false;
+  /** The latest restart attempt failed before its host was ready: requests answer 503 until one is. */
+  #attemptFailed = false;
+  /** Restarts since a host last stayed up for STABLE_UP_MS. */
+  #consecutive = 0;
+  #restartTimer: NodeJS.Timeout | undefined;
+  /** What the host last reported of what a replacement carries over. */
+  #carried: { deaths: number; reconnects: number; active?: string[] };
   /** The host's messages are handled one at a time, in order: a history line is on disk before the response that follows it is relayed. */
   #handling = Promise.resolve();
 
-  constructor(o: { init: HostInit; events: EventLog; history: ProgramHistory; entry?: string /* tests only */ }) {
+  constructor(o: { init: HostInit; events: EventLog; history: ProgramHistory; entry?: string /* tests only */; graceMs?: number /* tests only */ }) {
     this.#init = o.init;
     this.#events = o.events;
     this.#history = o.history;
     this.#entry = o.entry ?? DEFAULT_ENTRY;
+    this.#graceMs = o.graceMs ?? STOP_GRACE_MS;
+    this.#carried = { deaths: o.init.deaths, reconnects: o.init.reconnects, active: o.init.active };
     // The host's own copy of the log: its triggers hear events with the seq the log gave them.
     this.#unsubscribe = o.events.subscribe((event) => {
-      if (this.#child?.connected) this.#send({ kind: "event", event });
+      if (this.#attempt?.child.connected) this.#send(this.#attempt, { kind: "event", event });
     });
   }
 
@@ -54,45 +129,37 @@ export class HostProcess {
     return this.#connected;
   }
 
-  /** Forks the host and resolves once it has built its world; rejects with the reason it could not. */
+  /** Forks the first host and resolves once it has built its world; rejects with the reason it could not. A host that dies later is replaced, not reported here. */
   start(): Promise<void> {
-    // The host watches this pid: it exits when its supervisor is gone, even with its main thread blocked.
-    const child = fork(this.#entry, hostArguments(process.pid));
-    this.#child = child;
-    this.#exited = new Promise((resolve) => child.once("exit", () => resolve()));
-    child.on("message", (message: FromHost) => {
-      this.#handling = this.#handling.then(() => this.#handle(message)).catch((err: unknown) => console.error("[minebot] bot host message failed:", err));
-    });
-    child.once("exit", (code, signal) => this.#onExit(code, signal));
-    child.once("error", (err) => this.#ready.reject(err));
-    this.#send({ kind: "init", init: this.#init });
-    return this.#ready.promise;
+    return this.#fork(this.#init).ready.promise;
   }
 
-  /** Tells the host to join the server. */
+  /** Tells the host to join the server, and every host that replaces it. */
   join(): void {
-    this.#send({ kind: "start" });
+    this.#joined = true;
+    if (this.#readyAttempt()) this.#send(this.#attempt!, { kind: "start" });
   }
 
-  /** Relays one API request the supervisor does not answer itself. */
+  /** Relays one API request the supervisor does not answer itself; a host that is down answers it when it is back. */
   forward(r: ForwardedRequest): Promise<{ status: number; body: unknown }> {
-    const id = ++this.#nextRequest;
-    const answer = Promise.withResolvers<{ status: number; body: unknown }>();
-    this.#requests.set(id, answer);
-    try {
-      this.#send({ kind: "request", id, method: r.method, url: r.url, body: r.body?.toString("utf8") ?? null, tooLarge: r.tooLarge });
-    } catch (err) {
-      this.#requests.delete(id);
-      throw err;
-    }
+    if (this.#ending) return Promise.reject(new Error("the body is shutting down"));
+    const answer: Answer = Promise.withResolvers();
+    if (this.#readyAttempt()) this.#dispatch(r, answer);
+    else if (this.#attemptFailed) answer.resolve(NOT_CONNECTED);
+    else this.#queued.push({ request: r, answer });
     return answer.promise;
   }
 
-  /** Aborts the running program, if there is one, and resolves once it has ended. */
+  /** Aborts the running program, if there is one, and resolves once it has ended: settled, or the host killed after the grace. */
   async stop(): Promise<{ stopped: boolean }> {
     if (this.#runs.size === 0) return { stopped: false };
-    const ending = [...this.#runs.values()].map((run) => run.finished.promise);
-    this.#send({ kind: "stop" });
+    const now = Date.now();
+    const ending = [...this.#runs.values()].map((run) => {
+      run.stopAt ??= now;
+      this.#arm(run);
+      return run.finished.promise;
+    });
+    if (this.#attempt?.child.connected) this.#send(this.#attempt, { kind: "stop" });
     await Promise.all(ending);
     return { stopped: true };
   }
@@ -101,35 +168,135 @@ export class HostProcess {
   async close(): Promise<void> {
     this.#unsubscribe();
     this.#ending = true;
-    await this.#terminate();
-    this.#failRequests(new Error("the body is shutting down"));
+    clearTimeout(this.#restartTimer);
+    for (const run of this.#runs.values()) clearTimeout(run.deadline);
+    await this.#terminate(this.#attempt);
+    for (const run of this.#runs.values()) run.finished.resolve();
+    this.#runs.clear();
+    const err = new Error("the body is shutting down");
+    for (const request of this.#requests.values()) request.reject(err);
+    this.#requests.clear();
+    for (const { answer } of this.#queued) answer.reject(err);
+    this.#queued = [];
   }
 
-  async #terminate(): Promise<void> {
-    const child = this.#child;
-    if (!child || !this.#exited) return;
-    this.#ending = true;
-    if (child.connected) this.#send({ kind: "shutdown" });
-    const killer = setTimeout(() => child.kill("SIGKILL"), SHUTDOWN_GRACE_MS);
-    await this.#exited;
+  #readyAttempt(): boolean {
+    return this.#attempt !== undefined && this.#attempt.built && this.#attempt.child.connected;
+  }
+
+  #send(attempt: Attempt, message: ToHost): void {
+    attempt.child.send(message);
+  }
+
+  #fork(init: HostInit): Attempt {
+    // The host watches this pid: it exits when its supervisor is gone, even with its main thread blocked.
+    const child = fork(this.#entry, hostArguments(process.pid));
+    const exited = Promise.withResolvers<void>();
+    child.once("exit", () => exited.resolve());
+    const attempt: Attempt = { child, ready: Promise.withResolvers(), exited: exited.promise, built: false, readyAt: 0 };
+    attempt.ready.promise.catch(() => {}); // whoever forked it reports its failure
+    this.#attempt = attempt;
+    child.on("message", (message: FromHost) => {
+      this.#handling = this.#handling.then(() => this.#handle(attempt, message)).catch((err: unknown) => console.error("[minebot] bot host message failed:", err));
+    });
+    child.once("exit", (code, signal) => void this.#onExit(attempt, signal ? `signal ${signal}` : `code ${code}`));
+    child.once("error", (err) => attempt.ready.reject(err));
+    this.#send(attempt, { kind: "init", init });
+    return attempt;
+  }
+
+  /** Forks the replacement host, carrying over what the old one last reported. */
+  async #restart(): Promise<void> {
+    if (this.#ending) return;
+    const { deaths, reconnects, active } = this.#carried;
+    // A restart is a reconnect of the same player; milestones the agent may have changed since the first start are kept.
+    const init: HostInit = { ...this.#init, deaths, reconnects: reconnects + 1, ...(active && { active }), applyMilestones: false };
+    try {
+      await this.#fork(init).ready.promise;
+    } catch (err) {
+      if (this.#ending) return;
+      console.error(`[minebot] the replacement bot host did not start: ${errorText(err)}`);
+      this.#attemptFailed = true;
+      for (const { answer } of this.#queued) answer.resolve(NOT_CONNECTED);
+      this.#queued = [];
+      this.#schedule(0);
+    }
+  }
+
+  #schedule(upMs: number): void {
+    const delay = restartDelay(this.#consecutive, upMs);
+    this.#consecutive = upMs >= STABLE_UP_MS ? 1 : this.#consecutive + 1;
+    console.error(`[minebot] restarting the bot host in ${delay} ms`);
+    this.#restartTimer = setTimeout(() => {
+      this.#restartTimer = undefined;
+      void this.#restart();
+    }, delay);
+  }
+
+  #dispatch(r: ForwardedRequest, answer: Answer): void {
+    const id = ++this.#nextRequest;
+    this.#requests.set(id, answer);
+    try {
+      this.#send(this.#attempt!, { kind: "request", id, method: r.method, url: r.url, body: r.body?.toString("utf8") ?? null, tooLarge: r.tooLarge });
+    } catch {
+      this.#requests.delete(id);
+      answer.resolve(NOT_CONNECTED);
+    }
+  }
+
+  async #terminate(attempt: Attempt | undefined): Promise<void> {
+    if (!attempt) return;
+    if (attempt.child.connected) {
+      try {
+        this.#send(attempt, { kind: "shutdown" });
+      } catch {
+        // The channel closed under us; the host is on its way out.
+      }
+    }
+    const killer = setTimeout(() => attempt.child.kill("SIGKILL"), SHUTDOWN_GRACE_MS);
+    await attempt.exited;
     clearTimeout(killer);
   }
 
-  #send(message: ToHost): void {
-    if (!this.#child?.connected) throw new Error("the bot host is not running");
-    this.#child.send(message);
+  /** The only place a host is killed on the supervisor's say-so besides shutdown. */
+  #kill(attempt: Attempt, cause: string): void {
+    attempt.cause ??= cause;
+    attempt.child.kill("SIGKILL");
   }
 
-  async #handle(message: FromHost): Promise<void> {
+  /**
+   * (Re)arms the run's kill deadline: the program's clock (its timeout, or the stop that reached
+   * the supervisor, whichever is first) + the grace + a margin that lets a live host's own report win.
+   * It fires through the message chain, so a run_finished already received settles the run first.
+   */
+  #arm(run: RunInFlight): void {
+    const attempt = this.#attempt;
+    if (!attempt) return;
+    clearTimeout(run.deadline);
+    const at = Math.min(run.timeoutAt, run.stopAt ?? Infinity) + this.#graceMs + KILL_MARGIN_MS;
+    run.deadline = setTimeout(() => {
+      this.#handling = this.#handling.then(() => {
+        if (this.#runs.get(run.id) === run) this.#kill(attempt, hungCause(this.#graceMs));
+      });
+    }, Math.max(0, at - Date.now()));
+  }
+
+  async #handle(attempt: Attempt, message: FromHost): Promise<void> {
+    // A host that was replaced or is gone has nothing to say.
+    if (attempt !== this.#attempt) return;
     switch (message.kind) {
       case "ready":
-        this.#built = true;
-        this.#ready.resolve();
+        attempt.built = true;
+        attempt.readyAt = Date.now();
+        this.#attemptFailed = false;
+        attempt.ready.resolve();
+        if (this.#joined) this.#send(attempt, { kind: "start" });
+        for (const { request, answer } of this.#queued.splice(0)) this.#dispatch(request, answer);
         return;
       case "failed":
         // The host exits on its own after reporting; wait for it so nothing outlives the failed start.
-        await this.#terminate();
-        this.#ready.reject(new Error(message.message));
+        await this.#terminate(attempt);
+        attempt.ready.reject(new Error(message.message));
         return;
       case "response":
         this.#requests.get(message.id)?.resolve({ status: message.status, body: message.body });
@@ -140,24 +307,46 @@ export class HostProcess {
         return;
       case "state":
         this.#connected = message.connected;
+        this.#carried = { deaths: message.deaths, reconnects: message.reconnects, active: message.active };
         return;
       case "run_started":
         try {
           const end = await this.#history.begin(message.code, message.kits, message.extra);
-          this.#runs.set(message.runId, { end, finished: Promise.withResolvers<void>() });
-          this.#sendIfOpen({ kind: "run_ack", runId: message.runId });
+          const now = Date.now();
+          const run: RunInFlight = {
+            id: message.runId,
+            end,
+            finished: Promise.withResolvers<void>(),
+            startedAt: now,
+            timeoutAt: now + Math.min(Math.max(message.timeoutMs, 0), MAX_TIMEOUT_MS),
+            requestId: message.requestId,
+            trigger: triggerOf(message.extra),
+          };
+          this.#runs.set(message.runId, run);
+          // Armed before the host may run the code: a program that blocks its host is still ended.
+          this.#arm(run);
+          this.#sendIfOpen(attempt, { kind: "run_ack", runId: message.runId });
         } catch (err) {
-          this.#sendIfOpen({ kind: "run_ack", runId: message.runId, error: errorText(err) });
+          this.#sendIfOpen(attempt, { kind: "run_ack", runId: message.runId, error: errorText(err) });
         }
         return;
       case "run_finished": {
         const run = this.#runs.get(message.runId);
+        if (message.hung) {
+          // The program did not stop and the host is alive to say so. Kill it; its death ends the run, with the logs it reported.
+          if (run) {
+            run.hung = message.result ?? undefined;
+            this.#kill(attempt, hungCause(this.#graceMs));
+          }
+          return;
+        }
+        if (run) clearTimeout(run.deadline);
         try {
           if (run && message.result) await run.end(message.result);
-          this.#sendIfOpen({ kind: "run_ack", runId: message.runId });
+          this.#sendIfOpen(attempt, { kind: "run_ack", runId: message.runId });
         } catch (err) {
           // The run fails as it did when the history was written in-process.
-          this.#sendIfOpen({ kind: "run_ack", runId: message.runId, error: errorText(err) });
+          this.#sendIfOpen(attempt, { kind: "run_ack", runId: message.runId, error: errorText(err) });
         }
         this.#runs.delete(message.runId);
         run?.finished.resolve();
@@ -166,40 +355,82 @@ export class HostProcess {
       case "register":
         try {
           await this.#history.register(message.code, message.kits, message.extra);
-          this.#sendIfOpen({ kind: "run_ack", runId: message.runId });
+          this.#sendIfOpen(attempt, { kind: "run_ack", runId: message.runId });
         } catch (err) {
-          this.#sendIfOpen({ kind: "run_ack", runId: message.runId, error: errorText(err) });
+          this.#sendIfOpen(attempt, { kind: "run_ack", runId: message.runId, error: errorText(err) });
         }
         return;
     }
   }
 
-  #sendIfOpen(message: ToHost): void {
-    if (this.#child?.connected) this.#send(message);
+  #sendIfOpen(attempt: Attempt, message: ToHost): void {
+    if (attempt.child.connected) this.#send(attempt, message);
   }
 
-  #failRequests(err: Error): void {
-    for (const request of this.#requests.values()) request.reject(err);
-    this.#requests.clear();
+  /** A host's process ended. Its last messages are handled before its death. */
+  async #onExit(attempt: Attempt, how: string): Promise<void> {
+    if (attempt.child.connected) {
+      const drained = Promise.withResolvers<void>();
+      attempt.child.once("disconnect", () => drained.resolve());
+      await Promise.race([drained.promise, sleep(CHANNEL_DRAIN_MS, undefined, { ref: false })]);
+    }
+    this.#handling = this.#handling.then(() => this.#gone(attempt, how)).catch((err: unknown) => console.error("[minebot] handling the bot host's exit failed:", err));
   }
 
-  #onExit(code: number | null, signal: NodeJS.Signals | null): void {
-    const how = signal ? `signal ${signal}` : `code ${code}`;
+  async #gone(attempt: Attempt, how: string): Promise<void> {
+    if (this.#attempt === attempt) this.#attempt = undefined;
     if (this.#ending) return;
-    if (!this.#built) {
-      // startDaemon rejects with this; the supervisor has nothing running to stop.
-      this.#ready.reject(new Error(`the bot host exited before it was ready (${how})`));
+    if (!attempt.built) {
+      // startDaemon rejects with this for the first host; a replacement's failure is handled where it was forked.
+      attempt.ready.reject(new Error(`the bot host exited before it was ready (${how})`));
       return;
     }
-    this.#failRequests(new Error(`the bot host exited (${how})`));
-    exitWithHost(how);
+    const cause = attempt.cause ?? `the bot host exited (${how})`;
+    this.#connected = false;
+
+    // Everything the dead host could not say: how its runs ended, then that it is gone, then the answers.
+    const runs = [...this.#runs.values()];
+    this.#runs.clear();
+    const results = new Map<RunInFlight, RunResult>();
+    for (const run of runs) {
+      clearTimeout(run.deadline);
+      const result = run.hung ?? lostRun(run, cause);
+      results.set(run, result);
+      try {
+        await run.end(result);
+      } catch (err) {
+        console.error("[minebot] could not write the history line of a program its host did not finish:", err);
+      }
+      this.#events.push(
+        run.trigger === undefined ? "program_finished" : "trigger_finished",
+        run.trigger === undefined
+          ? { status: result.status, durationMs: result.durationMs }
+          : { name: run.trigger, status: result.status, durationMs: result.durationMs, ...(result.error !== undefined && { error: result.error }) },
+      );
+    }
+    this.#events.push("disconnected", { reason: `bot host restarted: ${cause}` });
+    for (const run of runs) {
+      if (run.requestId !== undefined) this.#requests.get(run.requestId)?.resolve({ status: 200, body: results.get(run) });
+      if (run.requestId !== undefined) this.#requests.delete(run.requestId);
+      run.finished.resolve();
+    }
+    for (const request of this.#requests.values()) request.resolve(NOT_CONNECTED);
+    this.#requests.clear();
+    this.#schedule(Date.now() - attempt.readyAt);
   }
 }
 
-/** What the supervisor does when the host dies on its own: stop. A later round replaces this with restarting the host. */
-function exitWithHost(how: string): never {
-  console.error(`[minebot] the bot host exited unexpectedly (${how}); stopping`);
-  process.exit(1);
+/** How a run ended that its host could not report: stopped or timed out when it was aborted, else failed with the host. */
+function lostRun(run: RunInFlight, cause: string): RunResult {
+  const now = Date.now();
+  let status: RunStatus = "error";
+  if (run.stopAt !== undefined && run.stopAt <= run.timeoutAt) status = "stopped";
+  else if (now >= run.timeoutAt) status = "timeout";
+  return { status, error: restartedError(cause), logs: "", durationMs: now - run.startedAt };
+}
+
+function triggerOf(extra: object): string | undefined {
+  return "trigger" in extra && typeof extra.trigger === "string" ? extra.trigger : undefined;
 }
 
 function errorText(err: unknown): string {

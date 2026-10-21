@@ -1,7 +1,11 @@
 import { inspect } from "node:util";
 import vm from "node:vm";
 import { DEFAULT_TIMEOUT_MS, MAX_TIMEOUT_MS, type RunResult, type RunStatus } from "../protocol/index.ts";
+import { hungCause, restartedError, STOP_GRACE_MS } from "../protocol/host.ts";
 import type { ProgramEventSource, ProgramScope } from "./scope.ts";
+
+/** A run's result; `hung` marks a program that was aborted and had not settled when the grace ran out, so the host must be restarted. */
+export type RunOutcome = RunResult & { hung?: true };
 
 const PROGRAM_FILENAME = "program.js";
 const DEFAULT_MAX_LOG_BYTES = 64 * 1024;
@@ -20,6 +24,8 @@ export interface RunnerOptions {
   /** Halts in-flight actions of the body when a program is aborted. */
   onAbort?: () => void;
   maxLogBytes?: number;
+  /** How long an aborted program gets to settle before the run reports itself hung. Default: STOP_GRACE_MS. */
+  graceMs?: number;
 }
 
 interface Running {
@@ -48,8 +54,11 @@ export class ProgramRunner {
     return true;
   }
 
-  /** `extraGlobals` are visible to this run only, on top of the injected globals; they are removed when it ends. */
-  async run(code: string, timeoutMs = DEFAULT_TIMEOUT_MS, extraGlobals: Record<string, unknown> = {}): Promise<RunResult> {
+  /**
+   * `extraGlobals` are visible to this run only, on top of the injected globals; they are removed when it ends.
+   * An aborted program gets `graceMs` to settle (resolve or reject); one that does not ends the run with `hung`.
+   */
+  async run(code: string, timeoutMs = DEFAULT_TIMEOUT_MS, extraGlobals: Record<string, unknown> = {}): Promise<RunOutcome> {
     if (this.#running) throw new BusyError();
     const startedAt = Date.now();
     const controller = new AbortController();
@@ -122,37 +131,47 @@ export class ProgramRunner {
     let status: RunStatus;
     let result: unknown;
     let error: string | undefined;
+    let program: Promise<unknown> | undefined;
     const timeout = setTimeout(
       () => controller.abort(new Error("timeout")),
       Math.min(Math.max(timeoutMs, 0), MAX_TIMEOUT_MS),
     );
     try {
-      // lineOffset keeps reported line numbers aligned with the agent's source.
-      const fn = vm.runInContext(`(async () => {\n${code}\n})`, this.#context, {
-        filename: PROGRAM_FILENAME,
-        lineOffset: -1,
-      }) as () => Promise<unknown>;
-      const program = fn();
-      program.catch(() => {}); // late rejections after an abort are expected
-      const aborted = Promise.withResolvers<never>();
-      if (signal.aborted) aborted.reject(signal.reason);
-      signal.addEventListener("abort", () => aborted.reject(signal.reason), { once: true });
-      result = toWire(await Promise.race([program, aborted.promise]));
-      status = "ok";
-    } catch (err) {
-      if (signal.aborted) {
-        status = signal.reason instanceof Error && signal.reason.message === "timeout" ? "timeout" : "stopped";
-        this.#options.onAbort?.();
-      } else {
-        status = "error";
-        error = formatError(err);
+      try {
+        // lineOffset keeps reported line numbers aligned with the agent's source.
+        const fn = vm.runInContext(`(async () => {\n${code}\n})`, this.#context, {
+          filename: PROGRAM_FILENAME,
+          lineOffset: -1,
+        }) as () => Promise<unknown>;
+        program = fn();
+        program.catch(() => {}); // late rejections after an abort are expected
+        const aborted = Promise.withResolvers<never>();
+        if (signal.aborted) aborted.reject(signal.reason);
+        signal.addEventListener("abort", () => aborted.reject(signal.reason), { once: true });
+        result = toWire(await Promise.race([program, aborted.promise]));
+        status = "ok";
+      } catch (err) {
+        if (signal.aborted) {
+          status = signal.reason instanceof Error && signal.reason.message === "timeout" ? "timeout" : "stopped";
+          this.#options.onAbort?.();
+        } else {
+          status = "error";
+          error = formatError(err);
+        }
+      } finally {
+        clearTimeout(timeout);
+        if (!signal.aborted) controller.abort(new Error("finished"));
+        for (const timer of timers) clearTimeout(timer);
+        for (const [emitter, event, handler] of listeners) emitter.off(event, handler);
+        for (const name of Object.keys(extraGlobals)) delete this.#context[name];
+      }
+      // The timers and listeners are gone, so a program waiting on one never settles: it is hung.
+      // The runner stays busy meanwhile, so a program that is still running is never joined by another.
+      const graceMs = this.#options.graceMs ?? STOP_GRACE_MS;
+      if (program && (status === "stopped" || status === "timeout") && !(await settledWithin(program, graceMs))) {
+        return { status, result: undefined, error: restartedError(hungCause(graceMs)), logs: logs.toString(), durationMs: Date.now() - startedAt, hung: true };
       }
     } finally {
-      clearTimeout(timeout);
-      if (!signal.aborted) controller.abort(new Error("finished"));
-      for (const timer of timers) clearTimeout(timer);
-      for (const [emitter, event, handler] of listeners) emitter.off(event, handler);
-      for (const name of Object.keys(extraGlobals)) delete this.#context[name];
       this.#running = null;
     }
     return { status, result, error, logs: logs.toString(), durationMs: Date.now() - startedAt };
@@ -195,6 +214,19 @@ function toWire(value: unknown): unknown {
     return JSON.parse(JSON.stringify(value, (_, v: unknown) => (typeof v === "bigint" ? v.toString() : v)));
   } catch {
     return inspect(value, { depth: 2, breakLength: 120 });
+  }
+}
+
+/** Whether the program's promise resolved or rejected within `ms`. */
+async function settledWithin(program: Promise<unknown>, ms: number): Promise<boolean> {
+  let timer: NodeJS.Timeout | undefined;
+  const expired = new Promise<false>((resolve) => {
+    timer = setTimeout(() => resolve(false), ms);
+  });
+  try {
+    return await Promise.race([program.then(() => true, () => true), expired]);
+  } finally {
+    clearTimeout(timer);
   }
 }
 

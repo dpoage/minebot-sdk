@@ -95,7 +95,10 @@ export function buildWorld(options: HostInit, io: { events: EventSink; recorder:
     kits: catalog,
     stores: (kit) => state.store(kit),
     // A locked body fixes its active set: saved kits are offered, but only a restart without the lock activates them.
-    active: options.lockKits ? catalog.filter((kit) => !library.isAgent(kit.name)).map((kit) => kit.name) : undefined,
+    // A replacement host carries the previous host's set over, less the kits this catalog no longer offers (a deleted agent kit).
+    active: options.lockKits
+      ? catalog.filter((kit) => !library.isAgent(kit.name)).map((kit) => kit.name)
+      : options.active?.filter((name) => catalog.some((kit) => kit.name === name)),
     locked: options.lockKits,
     agent: (name) => library.isAgent(name),
     stats,
@@ -176,6 +179,8 @@ export function buildWorld(options: HostInit, io: { events: EventSink; recorder:
     events: io.events,
     recorder: io.recorder,
     startedAt: options.startedAt,
+    deaths: options.deaths,
+    reconnects: options.reconnects,
     syncKits,
     kitAuthoring: {
       save: saveKit,

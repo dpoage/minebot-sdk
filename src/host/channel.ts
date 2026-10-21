@@ -3,6 +3,7 @@
 // seq, and the reporter that has the supervisor record each program run before its code starts.
 import { DEFAULT_TIMEOUT_MS, type BodyEvent, type RunResult } from "../protocol/index.ts";
 import type { EventSink, FromHost } from "../protocol/host.ts";
+import type { RunOutcome } from "../program/runner.ts";
 import type { RunRecorder } from "./body.ts";
 
 /**
@@ -74,18 +75,26 @@ export class RunReporter implements RunRecorder {
     if (!this.#options.stop() && this.#starting > 0) this.#stopPending = true;
   }
 
-  async record(run: { code: string; timeoutMs?: number; extra?: object }, execute: () => Promise<RunResult>): Promise<RunResult> {
+  async record(run: { code: string; timeoutMs?: number; extra?: object; requestId?: number }, execute: () => Promise<RunOutcome>): Promise<RunResult> {
     const runId = this.#nextId++;
     this.#starting++;
     try {
-      await this.#acked(runId, { kind: "run_started", runId, code: run.code, timeoutMs: run.timeoutMs ?? DEFAULT_TIMEOUT_MS, extra: run.extra ?? {}, kits: this.#options.kits() });
+      await this.#acked(runId, {
+        kind: "run_started",
+        runId,
+        code: run.code,
+        timeoutMs: run.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+        extra: run.extra ?? {},
+        kits: this.#options.kits(),
+        ...(run.requestId !== undefined && { requestId: run.requestId }),
+      });
     } catch (err) {
       // The run never starts; a stop meant for it must not abort the next one.
       if (--this.#starting === 0) this.#stopPending = false;
       throw err;
     }
     // The program starts synchronously inside `execute`, in this same turn.
-    let running: Promise<RunResult>;
+    let running: Promise<RunOutcome>;
     try {
       running = execute();
     } catch (err) {
@@ -115,17 +124,21 @@ export class RunReporter implements RunRecorder {
     await Promise.allSettled([...this.#open]);
   }
 
-  /** Reports the run's end and settles once the supervisor has recorded it; a failure to record fails the run. */
-  async #finish(runId: number, running: Promise<RunResult>): Promise<RunResult> {
-    let result: RunResult;
+  /**
+   * Reports the run's end and settles once the supervisor has recorded it; a failure to record fails the run.
+   * A hung run is reported as such and never settles: the supervisor kills this host instead of acking.
+   */
+  async #finish(runId: number, running: Promise<RunOutcome>): Promise<RunResult> {
+    let outcome: RunOutcome;
     try {
-      result = await running;
+      outcome = await running;
     } catch (err) {
       // It threw before producing a result (not connected, busy): the run is over, with nothing to record.
       await this.#acked(runId, { kind: "run_finished", runId, result: null });
       throw err;
     }
-    await this.#acked(runId, { kind: "run_finished", runId, result });
+    const { hung, ...result } = outcome;
+    await this.#acked(runId, { kind: "run_finished", runId, result, ...(hung && { hung }) });
     return result;
   }
 
