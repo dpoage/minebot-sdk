@@ -16,7 +16,7 @@ import { after, before, describe, it } from "node:test";
 import { z } from "zod";
 import type { DaemonOptions } from "../src/body/daemon.ts";
 import type { KitHost } from "../src/kit/kit.ts";
-import type { BodyFeatures } from "../src/protocol/index.ts";
+import type { BodyFeatures, Capability } from "../src/protocol/index.ts";
 
 // Everything the suite writes lives under ROOT, the typechecker's scratch directories included.
 const ROOT = mkdtempSync(path.join(tmpdir(), "minebot-body-api-"));
@@ -37,17 +37,29 @@ type Features = BodyFeatures;
 /** The largest request body the API reads (MAX_BODY_BYTES in src/body/http.ts). */
 const MAX_BODY_BYTES = 1024 * 1024;
 const MAX_NOTES = 200;
+const MAX_TRIGGERS = 50;
 
 // minecraft-protocol arms a 30 s timer when a client ends and keeps the process alive for it. The
-// suite unrefs every such timer once its body is closed, so the test process exits when its tests do.
+// suite unrefs those timers, and only those, once their body is closed, so the test process exits
+// when its tests do; any other timer a closed body leaves running still holds the process.
 interface DelayedTimer extends NodeJS.Timeout {
   /** Node's own record of the delay; not in the public typings. */
   _idleTimeout: number;
 }
+const MINECRAFT_PROTOCOL_FRAME = /[\\/]node_modules[\\/]minecraft-protocol[\\/]/;
+/** Whether minecraft-protocol's code is on the stack that is creating the timer. */
+function createdByMinecraftProtocol(): boolean {
+  const limit = Error.stackTraceLimit;
+  Error.stackTraceLimit = 50;
+  const site: { stack?: string } = {};
+  Error.captureStackTrace(site);
+  Error.stackTraceLimit = limit;
+  return MINECRAFT_PROTOCOL_FRAME.test(site.stack ?? "");
+}
 const longTimers: NodeJS.Timeout[] = [];
 createHook({
   init(_id, type, _trigger, resource) {
-    if (type === "Timeout" && (resource as DelayedTimer)._idleTimeout >= 30_000) longTimers.push(resource as NodeJS.Timeout);
+    if (type === "Timeout" && (resource as DelayedTimer)._idleTimeout >= 30_000 && createdByMinecraftProtocol()) longTimers.push(resource as NodeJS.Timeout);
   },
 }).enable();
 function releaseLongTimers(): void {
@@ -147,7 +159,7 @@ const ROUTES = [
   "POST /wiki/lessons",
 ] as const;
 
-/** The routes a request reached in a body that serves them (not the unknown-route answer). */
+/** The routes a request reached in a body that serves them (not the missing-token or unknown-route answer). */
 const reached = new Set<string>();
 
 function routeKey(method: string, url: string): string {
@@ -282,8 +294,9 @@ async function startBody(scenario: Scenario = {}): Promise<Running> {
       const actual = await send(method, url, call);
       const message = `${method} ${url} answered ${actual.status} ${JSON.stringify(actual.body)}`;
       assert.deepStrictEqual({ status: actual.status, body: normalize(actual.body, { token, ports }) }, { status: expected.status ?? 200, body: expected.body }, message);
+      // Neither the answer to a missing token nor the unknown-route answer comes from the route.
       const error = typeof actual.body === "object" && actual.body !== null && "error" in actual.body ? String(actual.body.error) : "";
-      if (!error.startsWith("no route for")) reached.add(routeKey(method, url));
+      if (actual.status !== 401 && !error.startsWith("no route for")) reached.add(routeKey(method, url));
     },
     async close() {
       await daemon.close();
@@ -361,6 +374,15 @@ describe("body API on a body with every feature on", () => {
     await body.call("PUT", "/notes/lazy", { status: 400, body: { error: "request body is not valid JSON" } }, { raw: "x".repeat(MAX_BODY_BYTES) });
     await body.call("PUT", "/notes/lazy", { status: 413, body: { error: "request body too large" } }, { raw: "x".repeat(MAX_BODY_BYTES + 1) });
     await body.call("GET", "/notes/lazy", { status: 404, body: { error: 'no note "lazy"' } });
+  });
+
+  it("reads an empty request body as an empty object", async () => {
+    const missing = (field: string) => ({ status: 400, body: { error: `✖ Invalid input: expected string, received undefined\n  → at ${field}` } });
+    await body.call("PUT", "/notes/empty-body", missing("text"));
+    await body.call("PUT", "/notes/empty-body", missing("text"), { raw: "" });
+    await body.call("POST", "/triggers/remove", missing("name"));
+    await body.call("POST", "/triggers/remove", missing("name"), { raw: "" });
+    await body.call("POST", "/run", missing("code"));
   });
 
   it("GET /status: connected false, counters, milestones null", async () => {
@@ -646,6 +668,98 @@ describe("body API on a body with locked kits, agent kits off, and a read-only w
   });
 });
 
+/** One request to a capability-gated route, and what the route answers on a body that serves it. */
+interface GatedProbe {
+  capability: Capability;
+  method: string;
+  url: string;
+  call?: Call;
+  served: (features: Features) => Expected;
+}
+
+const KIT_NAME_RULE = { status: 400, body: { error: "✖ use 1-32 lowercase letters, digits, and _; start with a letter\n  → at name" } };
+const NO_TRIGGER = { status: 404, body: { error: 'no trigger "ghost"' } };
+
+/** Every capability-gated route of the table, once, with a request whose answer does not depend on which other capabilities the body offers. */
+const GATED: GatedProbe[] = [
+  { capability: "milestones", method: "GET", url: "/milestones", served: () => ({ body: { milestones: null } }) },
+  { capability: "milestones", method: "PUT", url: "/milestones", call: { json: { milestones: null } }, served: () => ({ body: { milestones: null } }) },
+  { capability: "kits", method: "GET", url: "/kits", served: (f) => ({ body: wire({ kits: referenceKits(["move"], f.kitsLocked).info(), active: ["move"], locked: f.kitsLocked }) }) },
+  { capability: "kitSwitching", method: "POST", url: "/kits", call: { json: { use: ["move"] } }, served: () => ({ body: wire({ kits: referenceKits(["move"]).info(), active: ["move"], locked: false }) }) },
+  { capability: "kits", method: "GET", url: "/kits/docs?names=move", served: (f) => ({ body: { docs: referenceKits(["move"], f.kitsLocked).docs(["move"]) } }) },
+  { capability: "kits", method: "GET", url: "/kits/schemas", served: (f) => ({ body: wire({ kits: referenceKits(["move"], f.kitsLocked).schemas() }) }) },
+  { capability: "kits", method: "GET", url: "/kits/search?q=walk&limit=1", served: (f) => ({ body: wire({ hits: referenceKits(["move"], f.kitsLocked).search("walk", 1) }) }) },
+  { capability: "agentKits", method: "GET", url: "/kits/source?name=greeter", served: () => ({ status: 404, body: { error: 'no kit "greeter"' } }) },
+  { capability: "agentKits", method: "POST", url: "/kits/save", call: { json: { source: "" } }, served: () => ({ status: 400, body: { error: "✖ Too small: expected string to have >=1 characters\n  → at source" } }) },
+  { capability: "agentKits", method: "POST", url: "/kits/remove", call: { json: { name: "Bad" } }, served: () => KIT_NAME_RULE },
+  { capability: "agentKits", method: "GET", url: "/kits/versions?name=Bad", served: () => KIT_NAME_RULE },
+  { capability: "agentKits", method: "POST", url: "/kits/revert", call: { json: { name: "Bad", version: 1 } }, served: () => KIT_NAME_RULE },
+  { capability: "agentKits", method: "POST", url: "/kits/try", call: { json: { source: kitSource("try"), action: "hi" } }, served: () => ({ status: 503, body: NOT_CONNECTED }) },
+  { capability: "triggers", method: "GET", url: "/triggers", served: () => ({ body: { triggers: [] } }) },
+  { capability: "triggers", method: "POST", url: "/triggers", call: { json: { name: "bad" } }, served: () => ({ status: 400, body: { error: "✖ Invalid input: expected array, received undefined\n  → at on\n✖ Invalid input: expected string, received undefined\n  → at run" } }) },
+  { capability: "triggers", method: "POST", url: "/triggers/remove", call: { json: { name: "ghost" } }, served: () => NO_TRIGGER },
+  { capability: "triggers", method: "POST", url: "/triggers/enabled", call: { json: { name: "ghost", enabled: true } }, served: () => NO_TRIGGER },
+  { capability: "wiki", method: "GET", url: "/wiki/search?q=zzzz", served: () => ({ body: { hits: [] } }) },
+  {
+    capability: "wiki",
+    method: "GET",
+    url: "/wiki/page?id=mechanics/smelting",
+    served: () => ({
+      body: {
+        page: { id: "mechanics/smelting", meta: { title: "Smelting", tags: ["furnace"], verified_by: "body-api test", requires: [] }, status: "unverified", body: "A furnace smelts raw iron into ingots." },
+        text: "# Smelting\n[mechanics/smelting | unverified | body-api test]\n\nA furnace smelts raw iron into ingots.",
+      },
+    }),
+  },
+  { capability: "wiki", method: "GET", url: "/wiki/list?section=quirks", served: (f) => ({ body: { pages: [{ id: "quirks/drops", title: "Drops fall out of reach", tags: ["items", "drops"], status: "verified" }], mode: f.wiki } }) },
+  { capability: "lessons", method: "POST", url: "/wiki/lessons", call: { json: { title: "ab", body: "x" } }, served: () => ({ status: 400, body: { error: "✖ Too small: expected string to have >=3 characters\n  → at title\n✖ Too small: expected string to have >=10 characters\n  → at body" } }) },
+];
+
+/** A body that offers every capability; each profile below turns one off. */
+const EVERY_CAPABILITY: Scenario = { kits: ["move"], lockKits: false, agentKits: true, wikiMode: "write", milestonesEnabled: true, triggers: true };
+
+interface Profile {
+  /** The capabilities the body lacks: the one turned off, and those that cannot be on without it. */
+  off: Capability[];
+  scenario: Scenario;
+  features: Features;
+}
+
+// Each capability off on its own, every other one on. Two cannot be off alone (CAPABILITY_GATES):
+// kit switching and agent kits both need kits offered, so a body without kits lacks all three;
+// lessons need a writable wiki, so a body without a wiki lacks lessons. Those pairs are told apart
+// by the profiles that turn off kit switching, agent kits, or lessons alone.
+const PROFILES: Profile[] = [
+  { off: ["kits", "kitSwitching", "agentKits"], scenario: { kits: [], lockKits: true }, features: { ...FEATURES_ALL, kits: [], kitsLocked: true } },
+  { off: ["kitSwitching"], scenario: { lockKits: true }, features: { ...FEATURES_ALL, kitsLocked: true } },
+  { off: ["agentKits"], scenario: { agentKits: false }, features: { ...FEATURES_ALL, agentKits: false } },
+  { off: ["wiki", "lessons"], scenario: { wikiMode: "off" }, features: { ...FEATURES_ALL, wiki: "off", lessons: false } },
+  { off: ["lessons"], scenario: { wikiMode: "read" }, features: { ...FEATURES_ALL, wiki: "read", lessons: false } },
+  { off: ["milestones"], scenario: { milestonesEnabled: false }, features: { ...FEATURES_ALL, milestones: false } },
+  { off: ["triggers"], scenario: { triggers: false }, features: { ...FEATURES_ALL, triggers: false } },
+];
+
+describe("body API: each capability gates exactly its own routes", () => {
+  for (const profile of PROFILES) {
+    describe(`on a body without ${profile.off.join(", ")}`, () => {
+      let body: Running;
+
+      before(async () => {
+        body = await startBody({ ...EVERY_CAPABILITY, ...profile.scenario });
+      });
+      after(() => body.close());
+
+      it("answers 404 on the routes of the capabilities it lacks and serves every other gated route", async () => {
+        await body.call("GET", "/features", { body: profile.features });
+        for (const probe of GATED) {
+          const absent = { status: 404, body: NO_ROUTE(probe.method, new URL(probe.url, "http://x").pathname) };
+          await body.call(probe.method, probe.url, profile.off.includes(probe.capability) ? absent : probe.served(profile.features), probe.call);
+        }
+      });
+    });
+  }
+});
+
 describe("body API: limits", () => {
   let body: Running;
 
@@ -662,6 +776,13 @@ describe("body API: limits", () => {
     await body.call("DELETE", "/notes/note-001", { body: { deleted: true } });
     await body.call("PUT", "/notes/one-too-many", { body: { key: "one-too-many", text: "room now", updated: "<timestamp>" } }, { json: { text: "room now" } });
     await body.call("PUT", "/notes/another", limit, { json: { text: "no room again" } });
+  });
+
+  it("refuses a new trigger at 50 triggers with 409", async () => {
+    for (let i = 0; i < MAX_TRIGGERS; i++) {
+      await body.call("POST", "/triggers", { body: { trigger: { name: `t${i}`, on: ["hurt"], run: "log(1)", cooldownMs: 1000, timeoutMs: 30_000, enabled: true, preempt: false, priority: 0, updated: "<timestamp>", fired: 0, failures: 0 }, replaced: false } }, { json: { name: `t${i}`, on: ["hurt"], run: "log(1)" } });
+    }
+    await body.call("POST", "/triggers", { status: 409, body: { error: `a body keeps at most ${MAX_TRIGGERS} triggers; remove some first` } }, { json: { name: "one-too-many", on: ["hurt"], run: "log(1)" } });
   });
 });
 
@@ -720,6 +841,10 @@ describe("body API: events and waits", () => {
     await body.call("POST", "/wait", { body: { event: null, next: 5, timedOut: true } }, { json: { from: "someone", since: 0, timeoutMs: 50 } });
     await body.call("POST", "/wait", { body: { event: events[2], next: 3, timedOut: false } }, { json: { types: ["error"], since: 999, timeoutMs: 5000 } });
   });
+
+  it("POST /wait without since waits for new events only: a buffered match is not returned", async () => {
+    await body.call("POST", "/wait", { body: { event: null, next: 5, timedOut: true } }, { json: { types: ["error"], timeoutMs: 50 } });
+  });
 });
 
 describe("body API: the program history file", () => {
@@ -747,7 +872,7 @@ describe("body API: the program history file", () => {
     assert.deepStrictEqual(lines(), []);
   });
 
-  it("writes the flagged program's started line before it runs, so a failed run still leaves it, and the failed run consumed a seq", async () => {
+  it("writes a started line for a flagged program whose run failed, numbered with the seq the run consumed; /stop then answers at once", async () => {
     assert.deepStrictEqual(findEscapeAttempts(flagged), ["process"]);
     await body.call("POST", "/run", { status: 503, body: NOT_CONNECTED }, { json: { code: flagged } });
     // A run that threw before producing a result has ended: stopping answers at once that nothing runs.
@@ -755,6 +880,16 @@ describe("body API: the program history file", () => {
     await body.call("POST", "/stop", { body: { stopped: false } });
     assert.ok(Date.now() - stopped < 1000, "POST /stop answered within a second");
     assert.deepStrictEqual(lines(), [{ seq: 2, startedAt: "<timestamp>", kits: ["move"], code: flagged, escapeAttempts: ["process"], status: "started" }]);
+  });
+
+  it("records no program_finished event for a run that failed to start", async () => {
+    const event = (seq: number, type: string, data: object) => ({ seq, time: "<ms>", type, data });
+    await body.call("GET", "/events", {
+      body: {
+        events: [event(1, "error", { message: "connect ECONNREFUSED 127.0.0.1:<port>" }), event(2, "disconnected", { reason: "socketClosed" }), event(3, "reconnect_scheduled", { inMs: 5000, attempt: 1 })],
+        next: 3,
+      },
+    });
   });
 
   it("writes one registered line, with the next seq, for a trigger added after it", async () => {
@@ -771,6 +906,13 @@ describe("body API: the program history file", () => {
     const trigger = { name: "plain", on: ["chat"], run: "log('hi')" };
     await body.call("POST", "/triggers", { body: { trigger: { ...trigger, cooldownMs: 1000, timeoutMs: 30_000, enabled: true, preempt: false, priority: 0, updated: "<timestamp>", fired: 0, failures: 0 }, replaced: false } }, { json: trigger });
     assert.deepStrictEqual(lines().slice(2), [{ seq: 5, startedAt: "<timestamp>", kits: ["move"], code: "log('hi')\n", escapeAttempts: [], trigger: "plain", on: ["chat"], status: "registered" }]);
+  });
+
+  it("writes no line and takes no seq for a trigger that does not compile", async () => {
+    const written = lines();
+    await body.call("POST", "/triggers", { status: 400, body: { error: "run does not compile: Unexpected token '}'" } }, { json: { name: "broken", on: ["chat"], run: "return process.pid(" } });
+    await body.call("POST", "/triggers", { status: 400, body: { error: "when does not compile: Unexpected token ')'" } }, { json: { name: "broken", on: ["chat"], run: flagged, when: "process.pid +" } });
+    assert.deepStrictEqual(lines(), written);
   });
 
   it("records a /kits/try as a program: its code, flagged by what it carries", async () => {
