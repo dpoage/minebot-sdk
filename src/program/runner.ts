@@ -132,7 +132,7 @@ export class ProgramRunner {
     let result: unknown;
     let error: string | undefined;
     let program: Promise<unknown> | undefined;
-    /** What the program had logged when it was aborted: a program that settles in its grace returns this, as one that stopped at once always did. */
+    /** The log as of the abort: a program that settles within its grace returns this, as one that stopped at once does. */
     let loggedAtAbort: string | undefined;
     const timeout = setTimeout(
       () => controller.abort(new Error("timeout")),
@@ -168,8 +168,8 @@ export class ProgramRunner {
         for (const [emitter, event, handler] of listeners) emitter.off(event, handler);
         for (const name of Object.keys(extraGlobals)) delete this.#context[name];
       }
-      // The timers and listeners are gone, so a program waiting on one never settles: it is hung.
-      // The runner stays busy meanwhile, so a program that is still running is never joined by another.
+      // With its timers and listeners gone, a program waiting on one never settles: it is hung.
+      // The runner stays busy meanwhile, so no other program joins one that is still running.
       const graceMs = this.#options.graceMs ?? STOP_GRACE_MS;
       if (program && (status === "stopped" || status === "timeout") && !(await settledWithin(program, graceMs))) {
         return { status, result: undefined, error: restartedError(hungCause(graceMs)), logs: logs.toString(), durationMs: Date.now() - startedAt, hung: true };

@@ -62,9 +62,9 @@ export function programApiDoc(features: BodyFeatures): string {
     "- log(...args) / console.log(...args): append to the program output.",
     "- sleep(ms): resolves after ms; rejects when the program is aborted.",
     "- signal: AbortSignal that fires on timeout or stop. Check signal.aborted in long loops.",
-    "- on(event, handler): subscribe to a bot event for the lifetime of this program only.",
-    "- setTimeout / setInterval and their clear functions: cleared when the program ends.",
-    "- globalThis: persists between programs until the body restarts. A restart of the bot host, the process that runs programs, also clears it: that happens after a crash, and when a program does not stop within 5 s of a stop or timeout. Store helpers and state on it.",
+    "- on(event, handler): subscribe to a bot event until this program ends or is aborted.",
+    "- setTimeout / setInterval and their clear functions: the timers pending when the program ends or is aborted are cleared.",
+    "- globalThis: persists between programs. A restart of the body clears it, and so does a restart of the bot host, the process that runs programs. The bot host restarts after a crash, and when the body kills it for a program that does not stop. Store helpers and state on it.",
     '- notes: your notepad on this body; it survives body restarts and resets of your context. notes.set(key, text), notes.get(key) -> text, notes.list() -> [{ key, text, updated }], notes.delete(key). Keys are lowercase, e.g. "plan" or "places/base".',
     caps.milestones
       ? "- status(): resolves to { deaths, reconnects, milestones }; milestones is progress toward this body's milestones, graded from the server's statistics, or null."
@@ -95,10 +95,10 @@ export function programApiDoc(features: BodyFeatures): string {
     const write = caps.lessons ? ", wiki.addLesson({ title, tags, body }) to record what you learned" : "";
     globals.push(`- wiki: notes on mechanics, flows, and quirks${lessons}. wiki.search(query, limit?) -> hits, wiki.read(id) -> markdown, wiki.list(section?)${write}.`);
   }
-  return `A program is the body of an async JavaScript function. It runs inside the body daemon, against a live Mineflayer bot. require() and import() are not available.
+  return `A program is the body of an async JavaScript function. It runs inside the body, against a live Mineflayer bot. require() and import() are not available.
 
 Globals:
 ${globals.join("\n")}
 
-The value you return is sent back as the result. On timeout or stop, the body halts pathfinding, digging and movement; a program that has not ended 5 s later is killed with the bot host, which restarts and reconnects as the same player. Check signal.aborted in long loops so the program ends in time.`;
+The value you return is sent back as the result. On timeout or stop, the body halts pathfinding, digging and movement, clears your timers, and removes your on() handlers. If the program does not end, the body can kill the bot host and restart it; the restart reconnects as the same player. A program that blocks the host with synchronous code after it catches the abort can run on without being killed. Check signal.aborted in long loops so the program ends in time.`;
 }

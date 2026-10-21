@@ -1,6 +1,6 @@
-// The bot host's world: what the supervisor's daemon used to build in one process: the state
-// directory, the kit library and host with their sync/save/revert/try, the wiki, and the Body,
-// served through the route table. Everything a program reads synchronously lives here.
+// The bot host's world: the state directory, the kit library and host with their
+// sync/save/revert/try, the wiki, and the Body, served through the route table. Everything a
+// program reads synchronously lives here.
 import path from "node:path";
 import type { Bot } from "mineflayer";
 import type { Kit } from "../kit/kit.ts";

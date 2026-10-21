@@ -19,8 +19,7 @@ export function supervisorPidOf(argv: readonly string[]): number | undefined {
 export const STOP_GRACE_MS = 5_000;
 /**
  * Extra time the supervisor gives a live host to report a hung program before it kills the host
- * itself: with none, the supervisor's deadline (which it measures from its own clock) wins the race
- * against the host's report about a third of the time.
+ * itself: with none, the supervisor's deadline (on its own clock) races the host's report.
  */
 export const KILL_MARGIN_MS = 500;
 
@@ -47,12 +46,12 @@ export type ProgramFinished = { status: RunStatus; durationMs: number };
 export type TriggerFinished = { name: string; status: RunStatus; durationMs: number; error?: string; logs?: string };
 export type TriggerDisabled = { name: string; failures: number; reason: string };
 
-/** The data of a `program_finished` event: the one builder, for the host that ran the program and the supervisor that ends it for a dead host. */
+/** The data of a `program_finished` event, built by the host that ran the program and by the supervisor that ends it for a dead host. */
 export function programFinished(end: FinishedEnd): ProgramFinished {
   return { status: end.status, durationMs: end.durationMs };
 }
 
-/** The data of a `trigger_finished` event: the one builder, for the host that ran the firing and the supervisor that ends it for a dead host. */
+/** The data of a `trigger_finished` event, built by the host that ran the firing and by the supervisor that ends it for a dead host. */
 export function triggerFinished(name: string, end: FinishedEnd): TriggerFinished {
   const logs = end.logs ? end.logs.slice(0, MAX_EVENT_LOGS) : undefined;
   return { name, status: end.status, durationMs: end.durationMs, ...(end.error !== undefined && { error: end.error }), ...(logs && { logs }) };
@@ -136,10 +135,10 @@ export type FromHost =
    */
   | { kind: "run_finished"; runId: number; result: RunResult | null; hung?: true }
   /**
-   * The end of a run, reported and acked (with or without an error), reached where it goes: its
-   * request was answered (sent after the `response`), or, for a trigger's run, `finished` is the
-   * trigger_finished that ends it, `disabled` the trigger_disabled the firing caused, and
-   * `triggerFailures` the triggers' failures with the firing counted, all taken in as part of this message.
+   * The end of a run, reported and acked, reached where it goes: its request was answered (sent
+   * after the `response`) or, for a trigger's run, `finished` is the trigger_finished, `disabled`
+   * the trigger_disabled the firing caused, and `triggerFailures` the failures with the firing
+   * counted, all taken in as one message.
    */
   | { kind: "run_delivered"; runId: number; finished?: TriggerFinished; disabled?: TriggerDisabled; triggerFailures?: Record<string, number> }
   /** Code the body will run later (a trigger), for the history's audit; answered by `run_ack` like a run. */
@@ -147,9 +146,9 @@ export type FromHost =
   /**
    * The triggers' failures after a change no run's delivery carries: the counts a host starts with
    * (the firing it was started to count included), a firing that ended with no run of the
-   * supervisor's behind it, a trigger saved, enabled or removed. For such a firing, `finished` is its
-   * trigger_finished and `disabled` the trigger_disabled it caused, taken in with the counts as one
-   * message. With `run_delivered`, the only way counts reach the supervisor.
+   * supervisor's behind it, a trigger saved, enabled or removed. For such a firing, `finished` and
+   * `disabled` are taken in with the counts as one message. With `run_delivered`, the only way
+   * counts reach the supervisor.
    */
   | { kind: "trigger_counts"; triggerFailures: Record<string, number>; finished?: TriggerFinished; disabled?: TriggerDisabled }
   | { kind: "state"; connected: boolean; deaths: number; reconnects: number; active: string[] };

@@ -52,9 +52,9 @@ export class RunReporter implements RunRecorder {
   readonly #options: RunReporterOptions;
   readonly #acks = new Map<number, PromiseWithResolvers<void>>();
   readonly #open = new Set<Promise<unknown>>();
-  /** Requests answered by a run whose end the supervisor holds (recorded, or refused by the history): the request id → that run, until the answer is sent. */
+  /** Request id → the run whose end the supervisor holds (recorded or refused), until the answer is sent. */
   readonly #answering = new Map<number, number>();
-  /** What trigger runs whose end the supervisor holds returned or threw → their run, until `deliver`. */
+  /** A trigger run's returned or thrown end → its run, until `deliver`. */
   readonly #delivering = new WeakMap<object, number>();
   #nextId = 0;
   /** Runs reported whose code has not started yet. */

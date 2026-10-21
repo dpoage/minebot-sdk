@@ -59,15 +59,16 @@ export interface BodyOptions {
 /** Reports program runs and registrations to whoever keeps the history; user code starts only once `record` has been answered. */
 export interface RunRecorder {
   /**
-   * Records the start of `execute`, runs it once the history has it, and records its end. A run that throws leaves no end; a start or end the history cannot write fails the run.
-   * `requestId` is the API request the run answers, and `trigger` the trigger definition it fires, so the supervisor can end it when this host is killed mid-run.
+   * Records the start of `execute`, runs it once the history has it, and records its end. A run that
+   * throws leaves no end; a start or end the history cannot write fails the run. `requestId` is the
+   * API request the run answers and `trigger` the definition it fires, so the supervisor can end the run if this host is killed.
    */
   record(run: { code: string; timeoutMs?: number; extra?: object; requestId?: number; trigger?: FiringOf }, execute: () => Promise<RunOutcome>): Promise<RunResult>;
   /**
-   * Ends a trigger's run: `end` is what `record` returned or threw for it. Its trigger_finished, the
-   * trigger_disabled it caused, and the triggers' failures with the firing counted reach the
-   * history's keeper together, as that run's delivery. Returns false, sending nothing, for an end of
-   * no recorded run (its start was refused, it never ran): the caller hands it to `counts`.
+   * Ends a trigger's run: `end` is what `record` returned or threw for it. The trigger_finished, the
+   * trigger_disabled it caused, and the failures with the firing counted go to the supervisor as
+   * that run's delivery. Returns false, sending nothing, for an end with no recorded run (its start
+   * was refused, or it never ran): the caller hands it to `counts`.
    */
   deliver(end: unknown, finished: TriggerFinished, disabled: TriggerDisabled | undefined, triggerFailures: Record<string, number>): boolean;
   /**

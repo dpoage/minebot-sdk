@@ -6,7 +6,7 @@ The minebot SDK is the part of a Minecraft agent that is the same for every agen
 
 | Layer | Contents | Who uses it |
 | - | - | - |
-| Body | One Mineflayer player connection, the program runner, the event log, and the body's state | Every agent, through an adapter |
+| Body | The supervisor (API transport, event log, program history) and the bot host it forks (one Mineflayer player connection, the program runner, the body's state) | Every agent, through an adapter |
 | Adapters | HTTP API, `minebot` CLI, MCP server | Harnesses |
 | Libraries | Kits — built-in and agent-written — and the wiki | Agents, when the body offers them |
 | Bench | Harbor tasks, the verifier, the escape audit, launchers | People who evaluate agents |
@@ -21,9 +21,11 @@ flowchart LR
   E[Bench: tasks, verifier] -.-> B
 ```
 
-One module map holds the boundaries: `src/protocol/` is the whole wire contract (zod schemas for every request, the response types, the endpoint file, the capability table, and the TypeScript declarations derived from kit schemas); `src/mc/` holds neutral Mineflayer helpers; `src/milestones/` is pure grading; `src/program/` runs programs; `src/kit/` is the kit framework and the kits; `src/body/` is the body and its daemon; `src/wiki/` serves pages; `src/client/` is the CLI, the MCP server, and the renderers. The client loads only `src/protocol/` and what the protocol itself needs (`src/milestones/` and `src/mc/names.ts`) plus `src/package.ts`, which `minebot init` uses to find the package manifest. A test resolves the runtime import closure of the client and of the verifier, fails when either leaves its set, and checks that the image copy lists match it.
+One module map holds the boundaries: `src/protocol/` holds the wire contract (zod schemas for every request, the response types, the endpoint file, the capability table, and the TypeScript declarations derived from kit schemas) and, in `host.ts`, `request.ts`, and `event-filter.ts`, the contract between the supervisor and the bot host; `src/mc/` holds neutral Mineflayer helpers; `src/milestones/` is pure grading; `src/program/` runs programs; `src/kit/` is the kit framework and the kits; `src/body/` is the supervisor: the HTTP transport, the event log, the program history, and the code that forks, watches, and restarts the bot host; `src/host/` is the bot host: the Mineflayer connection, the body's state, the API routes, and the triggers; `src/wiki/` serves pages; `src/client/` is the CLI, the MCP server, and the renderers. The client loads only the wire-contract part of `src/protocol/` (not `host.ts`, `request.ts`, or `event-filter.ts`) and what the protocol itself needs (`src/milestones/` and `src/mc/names.ts`) plus `src/package.ts`, which `minebot init` uses to find the package manifest. A test resolves the runtime import closure of the client and of the verifier, fails when either leaves its set, and checks that the image copy lists match it. Two more tests check that the supervisor loads no code from `src/host/`, `src/kit/`, `src/program/`, or `src/wiki/` and no Minecraft library, and that the bot host loads nothing from `src/body/`.
 
 The npm package `minebot-sdk` is the authoring library plus the CLI; the body stays a separate runtime process that the CLI starts and that every other layer reaches over HTTP. Three entry points are public: `minebot-sdk/kit` (`src/kit/public.ts`, the one surface that built-in and agent kits write against), `minebot-sdk/client` (`src/client/public.ts`, the typed HTTP client and the wire types, with no CLI or MCP code), and `minebot-sdk/testing` (`src/testing/index.ts`, the kit test harness). Each export has a package-scoped `minebot-sdk:source` condition that resolves to the TypeScript under `src/`, and a default that resolves to the compiled `dist/`. The repository runs with `--conditions=minebot-sdk:source` and a published package without it, so a specifier such as `minebot-sdk/kit` means the same module in both. A test that resolves import closures follows these self-references to their `source` files. Kit sources (`src/kit/kits/`) and the wiki ship beside `dist/`, found through `PACKAGE_ROOT` (`src/package.ts`), so `kits source` and the default wiki directory work from either layout.
+
+A body is two processes. The supervisor answers health, events, waits, and stop, and forwards every other request to the bot host, which holds the player connection and runs the programs. If the bot host crashes, or the supervisor kills it for a program that does not stop, the supervisor forks a replacement that reconnects as the same player. The restart waits 1 second; each restart in quick succession doubles the wait, up to 60 seconds, and a host that stays up for 60 seconds starts over at 1 second. A restart loses what the old host held in memory, such as `globalThis` and the running program; state on disk stays. The supervisor ends the lost program's run with an error that says the bot host was restarted.
 
 The MCP server has two tool sets. `core`, the default, serves what an agent needs to act through programs: `observe`, `run_program`, `stop_program`, `wait_for`, `get_events`, `api_reference`, and `kit_docs`. Programs reach every other operation through their globals, so the core set loses no capability and keeps the tool list small. `minebot mcp --tools full` also serves notes, status, chat, kit management, the wiki, and triggers as tools of their own. In both sets, the capability table decides which gated tools appear (`toolPlan` in `src/client/mcp.ts`).
 
@@ -31,7 +33,7 @@ The MCP server has two tool sets. `core`, the default, serves what an agent need
 
 Two rules decide where a feature belongs.
 
-1. **If a feature acts without the agent asking, it belongs to the agent.** The body does not eat, flee, plan, retry, or give advice. The exceptions are things the connection requires: the body reconnects after a disconnect, and it pauses after each inventory click so that crafting does not lose items. A trigger is not an exception: the agent wrote its code, chose its events, and can remove it, so the body acts only because the agent registered it.
+1. **If a feature acts without the agent asking, it belongs to the agent.** The body does not eat, flee, plan, retry, or give advice. The exceptions are things the connection requires: the body reconnects after a disconnect, it restarts a bot host that crashed, and it pauses after each inventory click so that crafting does not lose items. A trigger is not an exception: the agent wrote its code, chose its events, and can remove it, so the body acts only because the agent registered it.
 2. **If every harness needs a feature in the same form, it belongs to the SDK.** Observations, actions, events, and waits are the same for every harness. Context compaction, planning, todo lists, and restart loops differ between harnesses, so the harness supplies them.
 
 State that must outlive a harness session belongs to the body. The body is the only part that persists when the context resets, the harness restarts, or the operator changes the harness. For this reason, notes, agent kits, and triggers live on the body.
@@ -43,7 +45,7 @@ State that must outlive a harness session belongs to the body. The body is the o
 | Notes, milestones, kits, kit stores, and triggers, on disk | What to keep in the context window |
 | Status: deaths, reconnects | Plans and todo lists |
 | Running the triggers the agent registered | Which reflexes to install, and what they do |
-| Reconnect and click pacing | Restarts of the agent session |
+| Reconnect, host restart, and click pacing | Restarts of the agent session |
 | Kits and the wiki, when offered | Prompts and instructions |
 
 ## Kits
@@ -130,7 +132,7 @@ Saving validates before it writes, and writes atomically: the source must compil
 
 Trying comes before saving. `kits.try(source, { action, args })` (`minebot kits try [file] --action <name> [--args <json>]`, `kit_try`, `POST /kits/try`) validates the source exactly like a save, then calls one action once against the live bot as part of the current program, and returns its result or throws its error. Nothing is written or registered, the `ctx.store` of the tried kit and of every kit it calls is thrown away, and no call is counted. Over MCP, CLI, and HTTP the try runs as a program, so it appears in the history like one.
 
-Saving and trying type-check the source (`src/body/typecheck.ts`). The body writes the source and a `KitRegistry` block for its other agent kits (from their schemas, the same printer as `minebot types`) to a temporary directory, and runs the TypeScript compiler on it with the options of the `minebot init` workspace and `minebot-sdk/kit` mapped onto the package's own types. Only diagnostics in the kit's file count. The check never blocks: `kits.save` returns `typeCheck` (`passed`, `failed` with the errors, or `skipped` with a reason), and `kits.try` runs the check beside the action and writes failures to the program log. TypeScript is an optional peer dependency; without it the check reports `skipped`.
+Saving and trying type-check the source (`src/host/typecheck.ts`). The body writes the source and a `KitRegistry` block for its other agent kits (from their schemas, the same printer as `minebot types`) to a temporary directory, and runs the TypeScript compiler on it with the options of the `minebot init` workspace and `minebot-sdk/kit` mapped onto the package's own types. Only diagnostics in the kit's file count. The check never blocks: `kits.save` returns `typeCheck` (`passed`, `failed` with the errors, or `skipped` with a reason), and `kits.try` runs the check beside the action and writes failures to the program log. TypeScript is an optional peer dependency; without it the check reports `skipped`.
 
 Saving over a kit keeps the old source as a numbered version: `.history/<kit>/<n>.ts` and `<n>.json` (`version`, `savedAt`, `savedBy` — the body's name) inside the agent-kit directory. A save of the source that is already saved adds no version. `kits.versions(name)` lists the versions and marks the current one; `kits.revert(name, version)` saves an earlier version again as a new version, validated like any save, so the history only grows. A removed kit keeps its history. Saving a different source for a kit, and removing it, resets that kit's counts, whichever body did it.
 
@@ -158,7 +160,7 @@ A trigger is a program that the body runs when an event arrives. It gives an age
 
 - **Events.** `on` lists event types from the event log. The filters `from` and `match` work as in `wait`, and `when` is a JavaScript expression over `event` and `bot` that must be truthy. A trigger cannot listen to `trigger_*` events, so reflexes do not trigger each other.
 - **The run.** `run` is a program with the usual globals plus `event`. It uses the same runner as every program, so one program runs at a time, and the run ends with a `trigger_finished` event, not `program_finished`.
-- **Scheduling.** A firing waits until no program is running. It waits at most once per trigger, and waiting firings run by `priority`. A trigger with `preempt: true` stops the running program instead, unless that is a trigger of equal or higher priority. The firing runs when the stopped program has ended. If that takes more than 5 seconds, the bot host restarts and the firing does not run. `cooldownMs` limits how often a trigger fires.
+- **Scheduling.** A firing waits until no program is running. It waits at most once per trigger, and waiting firings run by `priority`. A trigger with `preempt: true` stops the running program instead, unless that is a trigger of equal or higher priority. The firing runs when the stopped program has ended. `cooldownMs` limits how often a trigger fires.
 - **Failure.** A failing trigger never affects the body. A trigger that errors or times out three times in a row disables itself and emits `trigger_disabled`; enabling it again clears the count.
 - **State.** Triggers persist in the state directory as `triggers.json`, written atomically, so they survive a restart. A stored trigger that no longer loads is skipped and reported as a `trigger_error` event.
 - **Audit.** The code of a trigger is checked with the escape audit like a program. The history records it when it is saved and records each firing with the trigger's name.
@@ -182,7 +184,7 @@ A body started with `--no-triggers` has no trigger routes, tools, commands, glob
 
 ## Features
 
-Each body offers a set of features. The operator chooses the set when the body starts. One capability table derives every agent-facing surface — the CLI help, `minebot api`, the MCP tool list and descriptions, the program globals, the daemon routes, the wiki pages, and the observation — so an agent never learns about a feature that its body does not offer.
+Each body offers a set of features. The operator chooses the set when the body starts. One capability table derives every agent-facing surface — the CLI help, `minebot api`, the MCP tool list and descriptions, the program globals, the API routes, the wiki pages, and the observation — so an agent never learns about a feature that its body does not offer.
 
 | Feature | Body option | Default |
 | - | - | - |
@@ -196,4 +198,4 @@ The benchmark starts every body with `--no-agent-kits` and `--no-milestones`, wi
 
 ## Run an agent for a long time
 
-The SDK does not include a supervisor. To run an agent for days, run the harness in a loop that you control. Start each session with a prompt that tells the agent to read its notes, its status, and the events since its last session. The body keeps the notes, the milestones, the kit stores, and the agent kits between sessions.
+The SDK does not include a loop that restarts the agent. To run an agent for days, run the harness in a loop that you control. Start each session with a prompt that tells the agent to read its notes, its status, and the events since its last session. The body keeps the notes, the milestones, the kit stores, and the agent kits between sessions.

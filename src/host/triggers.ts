@@ -121,7 +121,7 @@ export class Triggers {
     // Only to the definition that fired: one replaced during the firing has no say, as in #record.
     const lostDef = deps.lost && this.#defs.get(deps.lost.name);
     const disabled = deps.lost && lostDef?.updated === deps.lost.updated ? this.#record(lostDef, deps.lost) : undefined;
-    // The starting counts, with the disable the lost firing caused, as one report: the supervisor stops passing the firing on once it has them.
+    // One report holds the starting counts and the disable the lost firing caused: once the supervisor has them it stops passing the firing on.
     if (deps.counts) deps.counts(this.failures(), disabled && { disabled });
     else if (disabled) deps.events.push("trigger_disabled", disabled);
     this.#unsubscribe = deps.events.subscribe((event) => this.#onEvent(event));
@@ -359,8 +359,8 @@ export class Triggers {
   }
 
   /**
-   * Reports how a firing ended and records it. The end of a run (`end`, what it returned or threw) is
-   * delivered as that run's, with what it caused; any other end is reported with the counts it leaves, in one report.
+   * Reports how a firing ended and records it. A run's own end (`end`, what it returned or threw) is
+   * delivered as that run's; any other end is reported with the counts it leaves, in one report.
    */
   #finish(def: Stored, outcome: FinishedEnd, end?: unknown): void {
     const finished = triggerFinished(def.name, outcome);

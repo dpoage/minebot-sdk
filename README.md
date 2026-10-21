@@ -1,10 +1,10 @@
 # minebot SDK
 
-The minebot SDK gives AI agents a body in Minecraft Java Edition. A body is a long-running process that holds one Mineflayer player connection and serves an API. Any agent harness, such as Claude Code, Codex, or your own loop, controls the body through MCP, a CLI, or HTTP.
+The minebot SDK gives AI agents a body in Minecraft Java Edition. A body is a long-running supervisor process that serves an API and forks a bot host process. The bot host holds one Mineflayer player connection and runs the programs. Any agent harness, such as Claude Code, Codex, or your own loop, controls the body through MCP, a CLI, or HTTP.
 
 The agent acts by writing JavaScript programs. The body runs each program against the live bot and returns the logs and the result.
 
-The SDK does not decide anything for the agent. The harness owns the turn loop, the context, the prompts, and every decision. The body acts on its own only where the connection requires it (it reconnects after a disconnect and paces inventory clicks) or where the agent registered a trigger. See [docs/sdk.md](docs/sdk.md) for the layers and the boundary between the SDK and a harness.
+The SDK does not decide anything for the agent. The harness owns the turn loop, the context, the prompts, and every decision. The body acts on its own only where the connection requires it (it reconnects after a disconnect, restarts a bot host that crashed, and paces inventory clicks) or where the agent registered a trigger. See [docs/sdk.md](docs/sdk.md) for the layers and the boundary between the SDK and a harness.
 
 ## Requirements
 
@@ -118,9 +118,9 @@ A program is the body of an async function. These globals are available:
 - `log(...)` and `console.log(...)`: append to the program output.
 - `sleep(ms)`: waits, and rejects when the program is aborted.
 - `signal`: an `AbortSignal` that fires on timeout or stop.
-- `on(event, handler)`: subscribes to a bot event until the program ends.
-- `setTimeout` and `setInterval`: cleared when the program ends.
-- `globalThis`: keeps its values between programs, until the body restarts. A restart of the bot host, the process that runs programs, also clears them: that happens after a crash, and when a program does not stop within 5 seconds of a stop or timeout.
+- `on(event, handler)`: subscribes to a bot event until the program ends or is aborted.
+- `setTimeout` and `setInterval`: the timers that are pending when the program ends or is aborted are cleared.
+- `globalThis`: keeps its values between programs. A restart of the body clears them, and so does a restart of the bot host, the process that runs programs. The bot host restarts after a crash, and when the body kills it for a program that does not stop.
 - `notes`: the agent's persistent notes. See [Long-running bodies](#long-running-bodies).
 - `status()`: resolves to deaths and reconnects, and to progress toward the body's milestones when the body has them.
 - `triggers`: register, list, and remove triggers. Only when the body has triggers. See [Triggers](#triggers).
@@ -141,7 +141,7 @@ await bot.dig(bot.blockAt(block.position));
 return block.name;
 ```
 
-The body runs one program at a time. A second request gets HTTP 409. The default timeout is 60 seconds; the maximum is 30 minutes. If a program times out or stops, the body halts pathfinding, digging, item use, and movement keys. A program that has not ended 5 seconds after the abort is killed with the bot host, which restarts and reconnects as the same player. The run then answers with its `status` (`stopped` or `timeout`) and an `error` that says the program did not stop. Long loops must check `signal.aborted` so the program ends in time.
+The body runs one program at a time. A second request gets HTTP 409. The default timeout is 60 seconds; the maximum is 30 minutes. If a program times out or stops, the body halts pathfinding, digging, item use, and movement keys, clears the program's timers, and removes its `on` handlers. The program then gets a grace period to end. If it does not end, the body can kill the bot host and restart it: the restart reconnects as the same player, and the run answers with its `status` (`stopped` or `timeout`) and an `error` that says the program did not stop. The kill time is not fixed: a program that blocks the host with synchronous code after it catches the abort can run on without being killed. The restart can start late: it waits 1 second, and the wait doubles after each restart in quick succession, up to 60 seconds. See [How it works](#how-it-works). Long loops must check `signal.aborted` so the program ends in time.
 
 The body does not add notices to run results. Facts stay in the observation: it keeps the open-sky view and `programsWithoutChange`, and `minebot observe --brief` adds `no change for N programs` when 3 or more programs in a row changed neither position nor inventory.
 
@@ -309,7 +309,7 @@ In a program: `triggers.add({ name, on, run, ... })`, `triggers.list()`, `trigge
 | `preempt`, `priority` | Whether the firing may stop the running program, and the order of waiting firings. |
 | `enabled` | Default true. |
 
-The body runs one program at a time, and a trigger run is a program. A firing that arrives while a program runs waits until the program ends. A trigger waits at most once, so repeated events while it waits do not queue repeats. Waiting triggers run highest `priority` first. With `preempt: true`, the firing stops the running program (it ends as `stopped`, like `minebot stop`) and runs when that program has ended; it does not stop a running trigger of equal or higher priority. If the stopped program takes more than 5 seconds to end, the bot host restarts and the firing does not run. A `run` request that arrives while a trigger runs gets HTTP 409.
+The body runs one program at a time, and a trigger run is a program. A firing that arrives while a program runs waits until the program ends. A trigger waits at most once, so repeated events while it waits do not queue repeats. Waiting triggers run highest `priority` first. With `preempt: true`, the firing stops the running program (it ends as `stopped`, like `minebot stop`) and runs when that program has ended; it does not stop a running trigger of equal or higher priority. A `run` request that arrives while a trigger runs gets HTTP 409.
 
 Each firing adds a `trigger_fired { name, event }` event and, when the run ends, `trigger_finished { name, status, durationMs, error?, logs? }`. A trigger run ends with `trigger_finished` and not with `program_finished`. A trigger that fails three times in a row (an error or a timeout) disables itself and adds `trigger_disabled { name, failures, reason }`. A failure never affects the body. An event that arrives while the body is not connected fires nothing.
 
@@ -423,15 +423,21 @@ To reach a body in another container, set `MINEBOT_URL` and `MINEBOT_TOKEN`. Cli
 
 ## How it works
 
-Each body serves its API on `127.0.0.1` with a random bearer token. On start, the body writes its URL and token to `.minebot/<name>.json` with mode 0600. The URL names the address the body listens on (IPv6 addresses in brackets), or loopback when the body listens on a wildcard address. Clients find a body by its name through this file. On SIGINT or SIGTERM, the body disconnects and deletes the file.
+Each body serves its API on `127.0.0.1` with a random bearer token. On start, the body writes its URL and token to `.minebot/<name>.json` with mode 0600. The URL names the address the body listens on (IPv6 addresses in brackets), or loopback when the body listens on a wildcard address. Clients find a body by its name through this file. On SIGINT or SIGTERM, the body shuts down its bot host, which disconnects the player, and deletes the file.
+
+A body is two processes. The supervisor (`src/body/`) serves the API, keeps the event log, writes the program history when `--history` is set, and writes the endpoint file. It answers health, events, wait, and stop itself, and forwards every other request to the bot host (`src/host/`), a child process that it forks. The bot host holds the Minecraft connection, runs the programs and the triggers, and keeps the kits, the notes, and the wiki. The two processes talk over the channel that the fork opens; `src/protocol/host.ts` defines its messages.
+
+If the bot host crashes, or the supervisor kills it, the supervisor forks a replacement that reconnects as the same player. The first restart waits 1 second. Each restart in quick succession doubles the wait, up to 60 seconds, and a host that stays up for 60 seconds starts the schedule over. A request that arrives during a restart waits for the new host; if the new host fails to start, the supervisor retries on the same schedule and requests get HTTP 503 until a host is ready.
+
+A restart loses what the old host held in memory: `globalThis` and the program that ran. The supervisor ends that program's run with an `error` that says the bot host was restarted, and adds a `disconnected` event. Notes, milestones, kit stores, agent kits, and triggers are on disk and stay. The replacement counts the restart as a reconnect and continues the death count, the active kits, and each trigger's count of failures.
 
 If the server disconnects or kicks the body, the body records the event and reconnects, with the waits described in [Long-running bodies](#long-running-bodies). Mineflayer respawns the player after a death.
 
-The body waits 100 ms after each inventory click. Mineflayer 4.39 sends clicks without waiting for the server. On 26.1, the server's resync packets then arrive between clicks and corrupt Mineflayer's model of the inventory. Without the wait, crafting loses or duplicates items. See `CLICK_PACE_MS` in `src/body/connection.ts`.
+The bot host waits 100 ms after each inventory click. Mineflayer 4.39 sends clicks without waiting for the server. On 26.1, the server's resync packets then arrive between clicks and corrupt Mineflayer's model of the inventory. Without the wait, crafting loses or duplicates items. See `CLICK_PACE_MS` in `src/host/connection.ts`.
 
 ## Security
 
-A program runs inside the body process in a `node:vm` context. The VM context is not a sandbox. The bearer token is the only barrier, and anyone who has the token can run code as your user. Keep the API on loopback, and keep `.minebot/` private.
+A program runs inside the bot host process in a `node:vm` context. The VM context is not a sandbox. The bearer token is the only barrier, and anyone who has the token can run code as your user. Keep the API on loopback, and keep `.minebot/` private.
 
 A program can leave the context with `bot.constructor.constructor("return process")()`, and then load any module. The body does not try to prevent that. It audits instead: `src/audit.ts` scans the source of every program for `constructor.constructor` (also as `["constructor"]`), `process`, `getBuiltinModule`, `require(`, `import(`, `globalThis.constructor`, and `Function(`. A program that matches has the pattern names in `escapeAttempts` on its history line. The body writes that line before it runs a flagged program, so a program that kills the body is still recorded, and the benchmark verifier fails the trial. The agent is not told mid-run; the audit record is what counts. The scan is an audit, not a security boundary: code that builds the names at run time passes it, and a comment that contains `process` is flagged. Anything that relies on `--lock-kits`, `--no-agent-kits`, or `--no-milestones` for more than fair play needs a real boundary, such as a separate container for the agent, as in the benchmark.
 

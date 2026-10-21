@@ -30,9 +30,9 @@ export class ProgramHistory {
   /**
    * Records the start of one program run and returns what records its end. The audit keeps its
    * flags in the history (the verifier fails a flagged trial); the agent is not told mid-run, so
-   * the run result is exactly what the program produced. `kits` is what the body was running when
-   * the program started; `extra` adds fields to the line, such as the trigger that ran it. The
-   * run's seq is taken when this is called, and a flagged program's line is on disk when it resolves.
+   * the result is what the program produced. `kits` is what the body was running at the start;
+   * `extra` adds fields to the line, such as the trigger that ran it. The seq is taken at the
+   * call, and a flagged program's line is on disk when it resolves.
    */
   async begin(code: string, kits: string[], extra: object = {}): Promise<RunEnd> {
     const file = this.#options.file;

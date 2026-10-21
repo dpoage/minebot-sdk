@@ -1,8 +1,7 @@
 // The supervisor's side of the bot host: forks the child process that holds the Minecraft player
 // and runs agent programs, forwards API requests to it, and turns what it reports into the event
-// log and the program history. Callers do not know the body lives in another process that may
-// crash, hang, or be killed: the supervisor is the only killer, and it forks a replacement that
-// reconnects as the same player.
+// log and the program history. The supervisor alone kills the host, and it forks a replacement
+// that reconnects as the same player.
 import { fork, type ChildProcess } from "node:child_process";
 import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
@@ -58,9 +57,8 @@ const NOT_CONNECTED = { status: 503, body: { error: NOT_CONNECTED_MESSAGE } };
 const LATE_CAUSE = "the program ended just as its deadline to stop ran out";
 
 /**
- * A run the host reported starting whose end has not reached where it goes. Its state, and nothing
- * else, decides what its deadline, a stop, and its host's death do with it; once the host has
- * delivered its end the record is removed.
+ * A run the host reported starting whose end has not been delivered. Its `state` decides what the
+ * deadline, a stop, and the host's death do with it; the record is removed on delivery.
  */
 interface Run {
   id: number;
@@ -78,7 +76,7 @@ interface Run {
   state: InFlight | Reported;
 }
 
-/** Acked, and no end handled yet: the only state a deadline kills, a stop waits for, and a death owes everything. */
+/** Acked, no end handled yet: the only state a deadline kills, a stop waits for, and a death owes a full end. */
 interface InFlight {
   kind: "in-flight";
   /** When POST /stop reached the supervisor. */
@@ -92,9 +90,8 @@ interface InFlight {
 }
 
 /**
- * Its end was reported and answered (the history wrote it, or refused it), and the host has yet to
- * deliver it: answer its request, log its trigger_finished. A death owes it only that delivery: the
- * end the host would have delivered.
+ * Its end was reported and acked (the history wrote it or refused it); the host has yet to deliver
+ * it: its request's answer, its trigger_finished. A death owes only that delivery.
  */
 interface Reported {
   kind: "reported";
@@ -165,7 +162,7 @@ export class HostProcess {
     return this.#connected;
   }
 
-  /** How many runs the supervisor holds, in flight or with their end not yet delivered. Test-facing: a run whose end reached where it goes leaves none. */
+  /** Runs held: in flight, or ended with their delivery pending. Test-facing. */
   get openRuns(): number {
     return this.#runs.size;
   }
@@ -308,10 +305,10 @@ export class HostProcess {
   }
 
   /**
-   * (Re)arms the kill deadline of a run in flight: the program's clock (its timeout, or the stop that
-   * reached the supervisor, whichever is first) + the grace + a margin that lets a live host's own report win.
-   * It fires through the message chain and kills only while the run is still in this flight: a
-   * run_finished handled before it, even one whose delivery is pending, has ended the run.
+   * (Re)arms the kill deadline of a run in flight: the earlier of the timeout and the stop, plus the
+   * grace and a margin that lets a live host's own report win. The deadline fires through the
+   * message chain and kills only while the run is still in this flight: a `run_finished` handled
+   * before it ended the run, even if its delivery is pending.
    */
   #arm(run: Run, flight: InFlight): void {
     const attempt = this.#attempt;
