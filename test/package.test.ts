@@ -18,7 +18,7 @@ const manifest = JSON.parse(readFileSync(path.join(ROOT, "package.json"), "utf8"
 describe("package layout", () => {
   it("publishes an entry for each public specifier, as source, types, and build", () => {
     assert.equal(manifest.private, undefined);
-    assert.deepEqual(Object.keys(manifest.exports).sort(), ["./client", "./kit", "./package.json", "./testing"]);
+    assert.deepEqual(Object.keys(manifest.exports).sort(), ["./client", "./kit", "./package.json", "./routine", "./testing"]);
     for (const [key, entry] of Object.entries(manifest.exports)) {
       if (typeof entry === "string") continue;
       const stem = entry["minebot-sdk:source"].replace(/^\.\/src\//, "").replace(/\.ts$/, "");

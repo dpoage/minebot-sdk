@@ -188,3 +188,153 @@ describe("restart: ProgramRunner after an abort", () => {
     assert.equal((await runner.run(`return 2;`)).result, 2);
   });
 });
+
+// A routine call is a run: it shares the lifecycle of `run(code)` (one entry at a time, abort, timeout, grace, hung).
+describe("ProgramRunner.call", () => {
+  const sourceDir = "/nonexistent/routines";
+  beforeEach(() => mock.timers.enable({ apis: ["setTimeout", "setInterval"] }));
+  afterEach(() => mock.timers.reset());
+
+  it("returns the function's value as JSON, its logs through the scope, and its duration", async () => {
+    const { runner } = makeRunner();
+    const run = await runner.call(
+      async (scope) => {
+        scope.log("hi", { a: 1 });
+        return { big: 5n, gone: undefined, n: 1 };
+      },
+      { sourceDir },
+    );
+    assert.equal(typeof run.durationMs, "number");
+    assert.deepEqual({ ...run, durationMs: 0 }, { status: "ok", result: { big: "5", n: 1 }, error: undefined, logs: "hi { a: 1 }", durationMs: 0 });
+    assert.equal(runner.running, null);
+  });
+
+  it("returns an inspected string for values that are not JSON-safe", async () => {
+    const { runner } = makeRunner();
+    const run = await runner.call(async () => {
+      const a: Record<string, unknown> = { name: "loop" };
+      a.self = a;
+      return a;
+    }, { sourceDir });
+    assert.match(String(run.result), /\[Circular \*1\]/);
+  });
+
+  it("reports a thrown error as status error with its message, also when the function throws before returning a promise", async () => {
+    const { runner } = makeRunner();
+    const run = await runner.call(async () => {
+      throw new Error("boom");
+    }, { sourceDir });
+    assert.equal(run.status, "error");
+    assert.match(run.error ?? "", /^Error: boom/);
+    const sync = await runner.call(() => {
+      throw new Error("sync boom");
+    }, { sourceDir });
+    assert.equal(sync.status, "error");
+    assert.match(sync.error ?? "", /^Error: sync boom/);
+    assert.equal(runner.running, null);
+  });
+
+  it("rejects a call while a program runs and a program while a call runs", async () => {
+    const { runner } = makeRunner();
+    const program = runner.run(`await sleep(30);`);
+    await assert.rejects(runner.call(async () => 1, { sourceDir }), BusyError);
+    mock.timers.tick(30);
+    assert.equal((await program).status, "ok");
+
+    const call = runner.call(async ({ sleep }) => sleep(30), { sourceDir });
+    await assert.rejects(runner.run(`return 1;`), BusyError);
+    await assert.rejects(runner.call(async () => 1, { sourceDir }), BusyError);
+    mock.timers.tick(30);
+    assert.equal((await call).status, "ok");
+    assert.equal((await runner.run(`return 1;`)).result, 1);
+  });
+
+  it("times out a call, rejects its sleep, halts the body, and frees the runner", async () => {
+    const { runner, aborts } = makeRunner();
+    const pending = runner.call(async ({ sleep }) => sleep(10_000), { timeoutMs: 50, sourceDir });
+    mock.timers.tick(50);
+    assert.equal((await pending).status, "timeout");
+    assert.equal(aborts(), 1);
+    assert.equal(runner.running, null);
+  });
+
+  it("stop() aborts a call with status stopped", async () => {
+    const { runner } = makeRunner();
+    const pending = runner.call(async ({ sleep, signal }) => {
+      while (!signal.aborted) await sleep(5);
+    }, { sourceDir });
+    assert.equal(runner.stop(), true);
+    assert.equal((await pending).status, "stopped");
+    assert.equal(runner.stop(), false);
+  });
+
+  it("subscribes through the scope's on and removes the subscription when the call ends", async () => {
+    const { runner, emitter } = makeRunner();
+    let heard = 0;
+    const pending = runner.call(async ({ on, sleep }) => {
+      on("ping", () => heard++);
+      await sleep(30);
+    }, { sourceDir });
+    emitter.emit("ping");
+    mock.timers.tick(30);
+    assert.equal((await pending).status, "ok");
+    emitter.emit("ping");
+    assert.equal(heard, 1);
+    assert.equal(emitter.listenerCount("ping"), 0);
+  });
+});
+
+describe("restart: ProgramRunner.call after an abort", () => {
+  const GRACE_MS = 80;
+  const HUNG_ERROR = restartedError(hungCause(GRACE_MS));
+  const sourceDir = "/nonexistent/routines";
+  const hungRunner = () => new ProgramRunner({ globals: () => ({}), graceMs: GRACE_MS });
+
+  it("returns a call that settles within the grace as stopped, without the hung flag", async () => {
+    const runner = hungRunner();
+    const pending = runner.call(async ({ log, sleep }) => {
+      log("working");
+      try {
+        await sleep(60_000);
+      } catch {
+        await sleep(0).catch(() => {});
+      }
+    }, { sourceDir });
+    runner.stop();
+    const run = await pending;
+    assert.deepEqual({ ...run, durationMs: 0 }, { status: "stopped", result: undefined, error: undefined, logs: "working", durationMs: 0 });
+    assert.ok(!("hung" in run));
+  });
+
+  it("reports a call that never settles as hung after the grace, with its logs and the abort's status", async () => {
+    const runner = hungRunner();
+    const pending = runner.call(async ({ log }) => {
+      log("before");
+      await new Promise(() => {});
+    }, { sourceDir });
+    const t0 = performance.now();
+    runner.stop();
+    const run = await pending;
+    const took = performance.now() - t0;
+    assert.ok(took >= GRACE_MS - 10 && took < GRACE_MS + 1000, `the run ended after ${took} ms`);
+    assert.deepEqual({ ...run, durationMs: 0 }, { status: "stopped", result: undefined, error: HUNG_ERROR, logs: "before", durationMs: 0, hung: true });
+    assert.equal(runner.running, null);
+  });
+
+  it("keeps a timed-out call that never settles busy for the grace, then reports it hung with status timeout", async () => {
+    const runner = hungRunner();
+    const pending = runner.call(() => new Promise(() => {}), { timeoutMs: 30, sourceDir });
+    runner.stop();
+    await assert.rejects(runner.run(`return 1;`), BusyError);
+    assert.equal((await pending).hung, true);
+    assert.equal((await runner.run(`return 1;`)).result, 1);
+  });
+
+  it("reports a call that times out and never settles as hung with status timeout", async () => {
+    const runner = hungRunner();
+    const run = await runner.call(() => new Promise(() => {}), { timeoutMs: 30, sourceDir });
+    assert.equal(run.status, "timeout");
+    assert.equal(run.hung, true);
+    assert.equal(run.error, HUNG_ERROR);
+  });
+});

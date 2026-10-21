@@ -10,6 +10,11 @@
       "types": "./dist/kit/public.d.ts",
       "default": "./dist/kit/public.js"
     },
+    "./routine": {
+      "minebot-sdk:source": "./src/routine/public.ts",
+      "types": "./dist/routine/public.d.ts",
+      "default": "./dist/routine/public.js"
+    },
     "./client": {
       "minebot-sdk:source": "./src/client/public.ts",
       "types": "./dist/client/public.d.ts",
