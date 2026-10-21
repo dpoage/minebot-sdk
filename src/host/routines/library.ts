@@ -3,9 +3,9 @@
 // Nothing here imports or evaluates a module: a routine runs only when something calls it. The
 // version log duplicates the mechanics of `src/kit/library.ts` (deviation D-B1, until the kits go).
 import { randomBytes } from "node:crypto";
-import { mkdirSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { ROUTINE_SOURCE_LIMIT, RoutineName, type RoutineInfo, type RoutineVersion } from "../../protocol/index.ts";
+import { RoutineName, RoutineSource, type RoutineInfo, type RoutineVersion } from "../../protocol/index.ts";
 
 /** Where earlier versions are kept, inside the library directory: `.history/<routine>/<n>.ts` beside `<n>.json`. */
 const HISTORY_DIR = ".history";
@@ -32,9 +32,14 @@ function isErrno(err: unknown, ...codes: string[]): boolean {
   return err instanceof Error && "code" in err && typeof err.code === "string" && codes.includes(err.code);
 }
 
-/** The text of a file, or undefined when it is absent or is not a file. */
-function readOptional(file: string): string | undefined {
+/**
+ * The text of library module file `file`, or undefined when there is no module there: the file is
+ * absent or is not a regular file (a symlink, or a directory named `<name>.ts`), which the loader
+ * does not load either.
+ */
+function readModule(file: string): string | undefined {
   try {
+    if (!lstatSync(file).isFile()) return undefined;
     return readFileSync(file, "utf8");
   } catch (err) {
     if (isErrno(err, "ENOENT", "EISDIR", "ENOTDIR")) return undefined;
@@ -67,7 +72,7 @@ export class RoutineLibrary {
     this.#savedBy = options.savedBy;
   }
 
-  /** The routines in the library by name: every flat `<name>.ts`, each with the version whose source is the file's. */
+  /** The routines in the library by name: every flat regular file `<name>.ts`, each with the version whose source is the file's. */
   list(): RoutineInfo[] {
     let files: string[];
     try {
@@ -81,7 +86,7 @@ export class RoutineLibrary {
       if (!file.endsWith(".ts")) continue;
       const name = file.slice(0, -3);
       if (!RoutineName.safeParse(name).success) continue;
-      const current = readOptional(path.join(this.dir, file));
+      const current = readModule(path.join(this.dir, file));
       if (current === undefined) continue;
       const entry = this.#currentEntry(name, current);
       routines.push({ name, ...(entry && { version: entry.meta.version, savedAt: entry.meta.savedAt }) });
@@ -92,7 +97,7 @@ export class RoutineLibrary {
   /** The source of a routine, or undefined when there is no such routine. */
   source(name: string): string | undefined {
     if (!RoutineName.safeParse(name).success) return undefined;
-    return readOptional(this.#file(name));
+    return readModule(this.#file(name));
   }
 
   /**
@@ -111,7 +116,7 @@ export class RoutineLibrary {
     const file = this.#file(name);
     // The file is read before the history: a writer renames the file only after its version is
     // visible, so a file this read finds is never newer than the history read next.
-    const current = readOptional(file);
+    const current = readModule(file);
     let latest = this.#latest(name);
     if (current !== undefined && latest?.source !== current && this.#currentEntry(name, current) === undefined) {
       // Source no save wrote (edited by hand) is about to be replaced: keep it as a version of its own.
@@ -127,7 +132,7 @@ export class RoutineLibrary {
   /** The saved versions of a routine, oldest first. Empty when nothing was saved under the name. */
   async versions(name: string): Promise<RoutineVersion[]> {
     this.#validateName(name);
-    const current = readOptional(this.#file(name));
+    const current = readModule(this.#file(name));
     const history = this.#entries(name);
     const currentVersion = current === undefined ? undefined : history.findLast((entry) => entry.source === current)?.meta.version;
     return history.map(({ meta }) => ({ ...meta, current: meta.version === currentVersion }));
@@ -153,12 +158,14 @@ export class RoutineLibrary {
   }
 
   #validateName(name: string): void {
-    if (!RoutineName.safeParse(name).success) throw new RoutineSourceError(`"${name}" is not a routine name: use 1-48 lowercase letters, digits, _ and -; start with a letter`);
+    const parsed = RoutineName.safeParse(name);
+    if (!parsed.success) throw new RoutineSourceError(`"${name}" is not a routine name: ${parsed.error.issues.map((issue) => issue.message).join("; ")}`);
   }
 
   #validate(name: string, source: string): void {
     this.#validateName(name);
-    if (Buffer.byteLength(source) > ROUTINE_SOURCE_LIMIT) throw new RoutineSourceError(`routine source is limited to ${ROUTINE_SOURCE_LIMIT / 1024} KiB`);
+    const parsed = RoutineSource.safeParse(source);
+    if (!parsed.success) throw new RoutineSourceError(parsed.error.issues.map((issue) => issue.message).join("; "));
   }
 
   /** The directory holding the saved versions of one routine. Only called with a valid name, so it cannot leave the history directory. */

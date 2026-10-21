@@ -46,8 +46,8 @@ export const ROUTINE_SOURCE_LIMIT = 128 * 1024;
 
 const utf8 = new TextEncoder();
 
-/** A routine's TypeScript source, within the library's limit. */
-export const RoutineSource = z.string().refine((source) => utf8.encode(source).length <= ROUTINE_SOURCE_LIMIT, "routine source is limited to 128 KiB");
+/** A routine's TypeScript source, within the library's limit. The library refuses a save with this schema's message. */
+export const RoutineSource = z.string().refine((source) => utf8.encode(source).length <= ROUTINE_SOURCE_LIMIT, `routine source is limited to ${ROUTINE_SOURCE_LIMIT / 1024} KiB`);
 
 export const EndpointSchema: z.ZodType<Endpoint> = z.object({
   name: z.string(),

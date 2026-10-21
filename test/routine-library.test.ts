@@ -1,14 +1,14 @@
 import assert from "node:assert/strict";
 import { fork, type ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { after, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import { RoutineLibrary, RoutineSourceError } from "../src/host/routines/library.ts";
 import { typeCheckRoutine } from "../src/host/typecheck.ts";
-import { ROUTINE_SOURCE_LIMIT, type RoutineVersion } from "../src/protocol/index.ts";
+import { ROUTINE_SOURCE_LIMIT, RoutineName, RoutineSource, type RoutineVersion } from "../src/protocol/index.ts";
 
 const scratch: string[] = [];
 after(() => {
@@ -184,6 +184,29 @@ describe("RoutineLibrary saves", () => {
     assert.equal(library.source(name), source);
   });
 
+  it("refuses a name or a source just over its limit with the message of the protocol schema", async () => {
+    const library = new RoutineLibrary({ dir: libraryDir(), savedBy: "tester" });
+    /** What the protocol says about `value`: the library's refusal must say the same. */
+    const schemaMessage = (schema: typeof RoutineName | typeof RoutineSource, value: string): string => {
+      const parsed = schema.safeParse(value);
+      assert.ok(!parsed.success, "the protocol accepts it");
+      return parsed.error.issues.map((issue) => issue.message).join("; ");
+    };
+    const refusedWith = (expected: string) => (err: unknown) => {
+      assert.ok(err instanceof RoutineSourceError, String(err));
+      assert.equal(err.message, expected);
+      return true;
+    };
+    const name = "x".repeat(49);
+    const nameRefusal = `"${name}" is not a routine name: ${schemaMessage(RoutineName, name)}`;
+    await assert.rejects(library.save(name, "export default 1;\n"), refusedWith(nameRefusal));
+    await assert.rejects(library.revert(name, 1), refusedWith(nameRefusal));
+    await assert.rejects(library.versions(name), refusedWith(nameRefusal));
+    for (const source of ["x".repeat(ROUTINE_SOURCE_LIMIT + 1), `${"é".repeat(ROUTINE_SOURCE_LIMIT / 2)}x`]) {
+      await assert.rejects(library.save("r", source), refusedWith(schemaMessage(RoutineSource, source)));
+    }
+  });
+
   it("replaces the file by rename and leaves no temporary file behind", async () => {
     const dir = libraryDir();
     const library = new RoutineLibrary({ dir, savedBy: "tester" });
@@ -248,6 +271,41 @@ describe("RoutineLibrary list and source", () => {
     mkdirSync(path.join(dir, "d.ts"));
     assert.equal(library.source("r"), "export default 1;\n");
     for (const name of ["missing", "d", "../routines/r", "r.ts", "R", ".history", ""]) assert.equal(library.source(name), undefined, JSON.stringify(name));
+  });
+
+  it("takes only a regular file for a module: not a symlink to a file inside or outside the library, nor a directory named like a module", async () => {
+    const dir = libraryDir();
+    const library = new RoutineLibrary({ dir, savedBy: "tester" });
+    await library.save("real", "export default 1;\n");
+    await library.save("linked", "export default 2;\n");
+    const outside = path.join(path.dirname(dir), "outside.ts");
+    writeFileSync(outside, "export default 'outside';\n");
+    symlinkSync(path.join(dir, "real.ts"), path.join(dir, "alias.ts"));
+    symlinkSync(outside, path.join(dir, "away.ts"));
+    mkdirSync(path.join(dir, "x.ts"));
+    // A saved routine whose file became a link to the very source it had saved.
+    rmSync(path.join(dir, "linked.ts"));
+    symlinkSync(path.join(dir, ".history/linked/1.ts"), path.join(dir, "linked.ts"));
+    writeFileSync(path.join(dir, "walk.ts"), 'import alias from "./alias.ts";\nexport default alias;\n');
+
+    assert.deepEqual(library.list().map((r) => r.name), ["real", "walk"]);
+    for (const name of ["alias", "away", "x", "linked"]) {
+      assert.equal(library.source(name), undefined, name);
+      const check = await typeCheckRoutine(dir, name);
+      assert.ok(check.status === "skipped" && /no routine/.test(check.reason), `${name}: ${JSON.stringify(check)}`);
+    }
+    assert.deepEqual((await library.versions("linked")).map((v) => [v.version, v.current]), [[1, false]]);
+    // The type check copies only the modules, so an import of the link fails as loading it would.
+    const walk = await typeCheckRoutine(dir, "walk");
+    assert.ok(walk.status === "failed" && walk.errors.some((error) => /^walk\.ts\(1,\d+\): error TS2307: .*\.\/alias\.ts/.test(error)), JSON.stringify(walk));
+
+    // A save over a link replaces the link with the module and takes nothing from where it pointed.
+    rmSync(path.join(dir, "linked.ts"));
+    symlinkSync(outside, path.join(dir, "linked.ts"));
+    await library.save("linked", "export default 3;\n");
+    assert.deepEqual((await library.versions("linked")).map((v) => [v.version, v.savedBy, v.current]), [[1, "tester", false], [2, "tester", true]]);
+    assert.ok(lstatSync(path.join(dir, "linked.ts")).isFile());
+    assert.equal(readFileSync(outside, "utf8"), "export default 'outside';\n");
   });
 });
 

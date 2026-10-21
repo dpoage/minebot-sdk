@@ -6,7 +6,7 @@ import { PACKAGE_ROOT } from "../src/package.ts";
 import { typeCheckKit } from "../src/host/typecheck.ts";
 import type { KitSchema } from "../src/protocol/index.ts";
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { after } from "node:test";
 import { promisify } from "node:util";
@@ -186,6 +186,52 @@ export default async function (bot: Bot, args: z.infer<typeof Args>): Promise<nu
     await writeFile(path.join(root, "node_modules/vec3/package.json"), '{ "name": "vec3", "version": "0.0.0", "types": "index.d.ts" }');
     await writeFile(path.join(root, "node_modules/vec3/index.d.ts"), "export declare const Imposter: number;\n");
     assert.deepEqual(await typeCheckRoutine(dir, "walk"), { status: "passed" });
+  });
+
+  it("reports the routine's errors, and only those, whether the temp directory and the working directory are real paths or symlinks", async () => {
+    const { dir, root } = await library({
+      enumeration: "enum Dir { N, S }\nexport default Dir.N;\n",
+      value: 'import { Bot } from "mineflayer";\nexport default (bot: Bot) => bot.health;\n',
+      plain: 'import { double } from "./helper.ts";\nconst f: (n: number) => string = (s: string) => s;\nexport default [f, double(1)];\n',
+      helper: 'export const double = (n: number): number => n * "2";\n',
+    });
+    const expected: Record<string, RegExp> = {
+      enumeration: /^enumeration\.ts\(1,\d+\): error TS1294: /,
+      value: /^value\.ts\(1,\d+\): error TS1484: /,
+      // A diagnostic over several lines, its continuation lines kept with it.
+      plain: /^plain\.ts\(2,\d+\): error TS2322: .*\n\s+Types of parameters/,
+    };
+    const real = await realpath(root);
+    const tmp = path.join(real, "tmp");
+    const cwd = path.join(real, "cwd");
+    for (const place of [tmp, cwd]) {
+      await mkdir(place);
+      await symlink(place, `${place}-link`);
+    }
+    const script = `import { typeCheckRoutine } from ${JSON.stringify(new URL("../src/host/typecheck.ts", import.meta.url).href)};
+const checks = {};
+for (const name of ${JSON.stringify(Object.keys(expected))}) checks[name] = await typeCheckRoutine(${JSON.stringify(dir)}, name);
+console.log(JSON.stringify(checks));`;
+    // os.tmpdir() is TMPDIR as given; a shell cd'd through a link exports PWD as the link.
+    const environments = [tmp, `${tmp}-link`].flatMap((tempDir) => [cwd, `${cwd}-link`].map((workDir) => ({ tempDir, workDir })));
+    const results = await Promise.all(
+      environments.map(async ({ tempDir, workDir }) => {
+        const { stdout } = await promisify(execFile)(process.execPath, ["--conditions=minebot-sdk:source", "--input-type=module", "--eval", script], {
+          cwd: workDir,
+          env: { ...process.env, TMPDIR: tempDir, PWD: workDir },
+        });
+        return { where: `TMPDIR=${tempDir} cwd=${workDir}`, checks: JSON.parse(stdout) as Record<string, KitTypeCheck> };
+      }),
+    );
+    for (const { where, checks } of results) {
+      for (const [name, pattern] of Object.entries(expected)) {
+        const check = checks[name]!;
+        assert.ok(check.status === "failed", `${where} ${name}: ${JSON.stringify(check)}`);
+        assert.equal(check.errors.length, 1, `${where} ${name}: ${check.errors.join("\n")}`);
+        assert.match(check.errors[0]!, pattern, `${where} ${name}`);
+      }
+    }
+    assert.deepEqual(await readdir(tmp), [], "the checks leave no temp project behind");
   });
 
   it("skips, with the reason, when there is no such routine", async () => {

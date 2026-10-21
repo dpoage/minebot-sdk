@@ -5,7 +5,7 @@
 // check types a library module as the body loads it. TypeScript is an optional peer dependency:
 // without it the check is skipped and says so. It never blocks a save or a try.
 import { execFile } from "node:child_process";
-import { access, copyFile, mkdir, mkdtemp, readdir, rm, symlink, writeFile } from "node:fs/promises";
+import { access, copyFile, mkdir, mkdtemp, readdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -205,6 +205,10 @@ export async function typeCheckRoutine(dir: string, name: string, signal?: Abort
     const modules = new RoutineLibrary({ dir, savedBy: "typecheck" }).list().map((routine) => routine.name);
     if (!modules.includes(name)) return { status: "skipped", reason: `there is no routine "${name}" to check` };
     project = await mkdtemp(path.join(tmpdir(), "minebot-routine-check-"));
+    // The compiler names each file relative to its working directory, which it knows by its real path:
+    // through a symlink (a linked TMPDIR) it would print `../../<link>/<name>.ts(...)`, and the routine's
+    // errors would not be recognised as the routine's.
+    project = await realpath(project);
     // Copies, not links: tsc resolves a linked file's packages from where it really is, not from here.
     await Promise.all(modules.map((module) => copyFile(path.join(dir, `${module}.ts`), path.join(project!, `${module}.ts`))));
     await linkPackages(project);
