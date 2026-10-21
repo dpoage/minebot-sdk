@@ -355,7 +355,7 @@ describe("restart: what a replacement host carries over", () => {
       reconnects: 3,
       milestones: MilestoneSet.parse({ milestones: [{ id: "logs", description: "Get logs", obtained: ["*_log"], count: 3 }] }),
     };
-    const io = { events: new HostEvents(() => {}), recorder: { record: async () => assert.fail("no run"), deliver: () => assert.fail("no run"), counts: () => {}, register: async () => {} } };
+    const io = { events: new HostEvents(() => {}), recorder: { record: async () => assert.fail("no run"), deliver: () => assert.fail("no run"), counts: () => {}, preempt: () => false, register: async () => {} } };
 
     it("starts from the counters and the start time, with the carried kits less the ones the catalog does not offer, and without the milestones", async () => {
       const world = buildWorld({ ...base, stateDir: path.join(ROOT, "world-a"), active: ["deleted-agent-kit", "move"], applyMilestones: false }, io);
@@ -781,7 +781,7 @@ describe("restart: backoff and failure", () => {
 describe("restart: the host's report of a hung run", () => {
   it("is run_finished with hung, the requestId on run_started, and a result without the flag", async () => {
     const sent: FromHost[] = [];
-    const reporter = new RunReporter({ send: (message) => sent.push(message), kits: () => [], stop: () => false });
+    const reporter = new RunReporter({ send: (message) => sent.push(message), kits: () => [], stop: () => false, running: () => false });
     const hung = reporter.record({ code: "x", timeoutMs: 5, requestId: 7 }, async () => ({ status: "stopped", error: "e", logs: "partial", durationMs: 1, hung: true }));
     hung.catch(() => {});
     reporter.acknowledge(0);
@@ -802,7 +802,7 @@ describe("restart: the host's report of a hung run", () => {
 
   it("delivers a run after the answer to its request, delivers a firing whose end the history refused, and leaves an end it holds no run for to the caller", async () => {
     const sent: FromHost[] = [];
-    const reporter = new RunReporter({ send: (message) => sent.push(message), kits: () => [], stop: () => false });
+    const reporter = new RunReporter({ send: (message) => sent.push(message), kits: () => [], stop: () => false, running: () => false });
     const ended = async (runId: number) => {
       reporter.acknowledge(runId);
       while (!sent.some((message) => message.kind === "run_finished" && message.runId === runId)) await sleep(1);

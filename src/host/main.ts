@@ -24,19 +24,24 @@ watchSupervisor(supervisorPid);
 
 const modules = Promise.all([import("./channel.ts"), import("./world.ts")]);
 
-function send(message: FromHost): void {
-  process.send!(message);
+/** Sends a message to the supervisor; `written` is called once it is written, or when it could not be. */
+function send(message: FromHost, written?: () => void): void {
+  if (!written) {
+    process.send!(message);
+    return;
+  }
+  try {
+    process.send!(message, () => written());
+  } catch {
+    written();
+  }
 }
 
 /** Sends a message and resolves once it is written; one sent after it is written too. */
 function sendWritten(message: FromHost): Promise<void> {
   const written = Promise.withResolvers<void>();
-  try {
-    process.send!(message, (err: Error | null) => (err ? written.reject(err) : written.resolve()));
-  } catch (err) {
-    written.reject(err);
-  }
-  return written.promise.catch(() => {});
+  send(message, written.resolve);
+  return written.promise;
 }
 
 let handling = modules.then(() => {});
@@ -73,7 +78,12 @@ async function handle(message: ToHost): Promise<void> {
         send(m);
         reportState();
       });
-      reporter = new RunReporter({ send, kits: () => world?.kits.active ?? [], stop: () => world?.body.runner.stop() ?? false });
+      reporter = new RunReporter({
+        send,
+        kits: () => world?.kits.active ?? [],
+        stop: () => world?.body.runner.stop() ?? false,
+        running: () => Boolean(world?.body.runner.running),
+      });
       try {
         world = buildWorld(message.init, { events, recorder: reporter });
       } catch (err) {

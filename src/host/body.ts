@@ -16,6 +16,7 @@ import { StallTracker } from "./progress.ts";
 import { requestStats } from "./stats.ts";
 import { BodyState } from "./state.ts";
 import { Triggers, type StoredTrigger } from "./triggers.ts";
+import { preemptingRunner } from "./channel.ts";
 
 export interface BodyOptions {
   username: string;
@@ -76,6 +77,12 @@ export interface RunRecorder {
    * of a firing that ended with no recorded run, and a trigger_disabled, go in the same message.
    */
   counts(triggerFailures: Record<string, number>, ended?: { finished?: TriggerFinished; disabled?: TriggerDisabled }): void;
+  /**
+   * Asks the recorded run whose code executes to stop, for a preempting firing that waits on it: true
+   * when one does at this moment, and the abort is then on its way (after the history's holder has been told, and only if that run still executes).
+   * False when no recorded run executes, a run acked but not started included; nothing is aborted.
+   */
+  preempt(): boolean;
   /** Records code the body will run later. */
   register(code: string, extra: object): Promise<void>;
 }
@@ -136,7 +143,7 @@ export class Body {
         : new Triggers({
             store: options.state.triggers,
             events: this.events,
-            runner: this.runner,
+            runner: preemptingRunner(this.runner, options.recorder),
             connected: () => this.#connection.spawned,
             bot: () => this.#connection.bot ?? undefined,
             run: (trigger, event, started) => this.#runTrigger(trigger, event, started),

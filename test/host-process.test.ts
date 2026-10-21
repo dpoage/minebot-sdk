@@ -151,6 +151,7 @@ describe("the run reporter", () => {
         stops++;
         return false;
       },
+      running: () => false,
     });
     const result: RunResult = { status: "ok", result: 1, logs: "", durationMs: 0 };
     const refused = reporter.record({ code: "return 1;" }, async () => result);

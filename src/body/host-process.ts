@@ -394,6 +394,14 @@ export class HostProcess {
           this.#sendIfOpen(attempt, { kind: "run_ack", runId: message.runId, error: errorText(err) });
         }
         return;
+      case "preempt": {
+        // Like POST /stop for this one run, whose deadline now counts from the abort the host is making.
+        const run = this.#runs.get(message.runId);
+        if (run?.state.kind !== "in-flight") return;
+        run.state.stopAt ??= Date.now();
+        this.#arm(run, run.state);
+        return;
+      }
       case "run_finished": {
         const run = this.#runs.get(message.runId);
         // A run's end is handled once, while it is in flight.
