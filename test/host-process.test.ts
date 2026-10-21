@@ -90,6 +90,14 @@ describe("one event log", () => {
   });
 });
 
+describe("a host that cannot start", () => {
+  it("rejects start() with how it exited, and leaves the supervisor running", async () => {
+    const host = new HostProcess({ init: {} as HostInit, events: new EventLog(), history: new ProgramHistory({}), entry: path.join(FIXTURES, "exit-host.ts") });
+    await assert.rejects(host.start(), { message: "the bot host exited before it was ready (code 3)" });
+    await host.close();
+  });
+});
+
 describe("the host's lifetime", () => {
   const bodies: ChildProcess[] = [];
   after(() => {
@@ -97,7 +105,7 @@ describe("the host's lifetime", () => {
   });
 
   /** `minebot body` in its own process group (as a terminal or systemd runs it), on a port that refuses connections. */
-  async function startBody(): Promise<{ body: ChildProcess; pid: number; hostPid: number; exited: Promise<number | null> }> {
+  async function startBody(): Promise<{ body: ChildProcess; pid: number; hostPid: number; exited: Promise<number | null>; state: string }> {
     const state = path.join(ROOT, `state-${bodies.length}`);
     mkdirSync(state, { recursive: true });
     const port = await refusedPort();
@@ -118,15 +126,17 @@ describe("the host's lifetime", () => {
     const pid = body.pid!;
     const [hostPid] = childrenOf(pid);
     assert.ok(hostPid !== undefined, "the body has no host child");
-    return { body, pid, hostPid, exited };
+    return { body, pid, hostPid, exited, state };
   }
 
   for (const signal of ["SIGINT", "SIGTERM"] as const) {
     it(`ends with the supervisor, exit 0 and no host left, on ${signal} to the whole process group`, async () => {
-      const { pid, hostPid, exited } = await startBody();
+      const { pid, hostPid, exited, state } = await startBody();
       process.kill(-pid, signal);
       assert.equal(await exited, 0);
       assert.ok(await goneWithin(hostPid, 2000), "the host outlived the supervisor");
+      // Only the host's own shutdown writes the kit stats file, with no program having run.
+      assert.ok(existsSync(path.join(state, "kit-stats.json")), "the host did not run its shutdown");
     });
   }
 

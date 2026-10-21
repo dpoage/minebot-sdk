@@ -32,6 +32,7 @@ export class HostProcess {
   #exited: Promise<void> | undefined;
   #nextRequest = 0;
   #connected = false;
+  #built = false;
   /** Set when the supervisor ends the host on purpose, so its exit is not a failure. */
   #ending = false;
   /** The host's messages are handled one at a time, in order: a history line is on disk before the response that follows it is relayed. */
@@ -122,6 +123,7 @@ export class HostProcess {
   async #handle(message: FromHost): Promise<void> {
     switch (message.kind) {
       case "ready":
+        this.#built = true;
         this.#ready.resolve();
         return;
       case "failed":
@@ -182,8 +184,12 @@ export class HostProcess {
 
   #onExit(code: number | null, signal: NodeJS.Signals | null): void {
     const how = signal ? `signal ${signal}` : `code ${code}`;
-    if (!this.#connected && !this.#ending) this.#ready.reject(new Error(`the bot host exited before it was ready (${how})`));
     if (this.#ending) return;
+    if (!this.#built) {
+      // startDaemon rejects with this; the supervisor has nothing running to stop.
+      this.#ready.reject(new Error(`the bot host exited before it was ready (${how})`));
+      return;
+    }
     this.#failRequests(new Error(`the bot host exited (${how})`));
     exitWithHost(how);
   }
