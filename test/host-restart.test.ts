@@ -387,4 +387,48 @@ describe("restart: the host's report of a hung run", () => {
     assert.ok(!("requestId" in sent[0]!));
     assert.deepEqual(sent[1], { kind: "run_finished", runId: 1, result: { status: "ok", result: 1, logs: "", durationMs: 2 } });
   });
+
+  it("starts a program only after the supervisor has acked its start", async () => {
+    const sent: FromHost[] = [];
+    const reporter = new RunReporter({ send: (message) => sent.push(message), kits: () => [], stop: () => false });
+    let started = false;
+    const running = reporter.record({ code: "x" }, async () => {
+      started = true;
+      return { status: "ok", logs: "", durationMs: 0 };
+    });
+    await sleep(20);
+    assert.equal(sent[0]?.kind, "run_started");
+    assert.equal(started, false, "the program started before the supervisor acked it");
+    reporter.acknowledge(0);
+    while (!sent.some((message) => message.kind === "run_finished")) await sleep(1);
+    assert.equal(started, true);
+    reporter.acknowledge(0);
+    await running;
+  });
+});
+
+describe("restart: a run's start is recorded before its code may run", () => {
+  it("acks run_started only once the history has the line, so a program that kills the supervisor leaves it", { timeout: 20_000 }, async () => {
+    let written = false;
+    // A history whose write is slow: the line is not on disk until a while after the run was reported.
+    const slow = {
+      start: async () => {},
+      register: async () => {},
+      begin: async () => {
+        await sleep(200);
+        written = true;
+        return async () => {};
+      },
+    } as unknown as InstanceType<typeof ProgramHistory>;
+    const events = new EventLog();
+    const host = new HostProcess({ init: { stateDir: ROOT, script: {} } as unknown as HostInit, events, history: slow, entry: FIXTURE, graceMs: GRACE_MS });
+    hosts.push(host);
+    await host.start();
+    host.join();
+    const request = host.forward({ method: "POST", url: "/run?mode=hang&timeoutMs=60000", body: null, tooLarge: false });
+    request.catch(() => {});
+    const { event } = await events.wait({ types: ["acked"], since: 0, timeoutMs: 10_000 });
+    assert.ok(event, "the host was never acked");
+    assert.equal(written, true, "the host was acked before the history had the line");
+  });
 });
