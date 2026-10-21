@@ -7,7 +7,7 @@ WORKDIR /opt/minebot
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev --ignore-scripts && npm cache clean --force
 COPY src ./src
-# The grading snapshot that the body takes after the agent is done (bench/verify/snapshot.ts).
+# The grading snapshot (bench/verify/snapshot.ts), which the grader sidecar runs from this image after the agent is done. The body's copy has no RCON or world to use.
 COPY bench/verify ./bench/verify
 COPY wiki ./wiki
 

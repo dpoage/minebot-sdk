@@ -16,6 +16,8 @@ services:
       LEVEL_SEED: "-1395321890861809374"
       DIFFICULTY: easy
       RESTRICT_TO_OWN_SUBNET: "true"
+      RCON_LOOPBACK_ONLY: "true"
+      WHITELIST: "[{\"uuid\":\"a1d20ed0-5e1d-362c-8cad-defa64a09a5f\",\"name\":\"agent\"}]"
     cap_add:
       - NET_ADMIN
     volumes:
@@ -23,7 +25,8 @@ services:
     networks:
       - game
     healthcheck:
-      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/25575"]
+      # RCON answers on loopback, and the server applied both protections: the whitelist is on and RCON is loopback-only. Fails closed.
+      test: ["CMD","bash","-c","exec 3<>/dev/tcp/127.0.0.1/25575 && grep -qx white-list=true /opt/minecraft/server.properties && nft list table inet rcon_guard | grep -q 'tcp dport 25575 drop'"]
       interval: 2s
       timeout: 2s
       retries: 90
@@ -49,9 +52,6 @@ services:
       - --no-triggers
     environment:
       MINEBOT_TOKEN: minebot-bench-body
-      RCON_PASSWORD: minebot-bench
-    volumes:
-      - world:/srv/minecraft-world:ro
     networks:
       - agent
       - game
@@ -68,6 +68,23 @@ services:
       timeout: 5s
       retries: 90
       start_period: 5s
+
+  grader:
+    image: minebot.local/minebot:dev
+    pull_policy: never
+    network_mode: "service:minecraft"
+    # Idle until Harbor runs the snapshot hook in it. A process that is PID 1 ignores SIGTERM unless it handles it.
+    command:
+      - node
+      - -e
+      - "process.on('SIGTERM', () => process.exit(0)); setInterval(() => {}, 1 << 30)"
+    environment:
+      RCON_PASSWORD: minebot-bench
+    volumes:
+      - world:/srv/minecraft-world:ro
+    depends_on:
+      minecraft:
+        condition: service_healthy
 
 networks:
   agent:

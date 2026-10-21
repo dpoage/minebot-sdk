@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, it } from "node:test";
-import { MilestoneSpec } from "../bench/verify/milestones.ts";
+import { parse } from "yaml";
+import { MilestoneSpec, offlineUuid } from "../bench/verify/milestones.ts";
 
 const BENCH = path.join(import.meta.dirname, "..", "bench");
 const TASKS = path.join(BENCH, "tasks");
@@ -109,5 +110,68 @@ describe("generated tasks", () => {
     const solve = await read("diamond-night-raw", "solution", "solve.sh");
     assert.match(solve, /const TARGET = "diamond_pickaxe"/);
     assert.match(solve, /bot\.time\.day < 1/);
+  });
+});
+
+interface ComposeService {
+  command?: string[];
+  environment?: Record<string, string>;
+  volumes?: string[];
+  network_mode?: string;
+  depends_on?: Record<string, { condition?: string }>;
+}
+
+/** The tables of the form `[[name]]` in a task.toml: each one's header line and the lines up to the next table. */
+function tomlTables(toml: string, name: string): string[] {
+  return toml.split(/^(?=\[)/m).filter((table) => table.startsWith(`[[${name}]]`));
+}
+
+describe("the grading boundary of every generated task", () => {
+  it("keeps RCON and the world out of every container but the grader", async () => {
+    const dirs = await readdir(TASKS);
+    assert.ok(dirs.length >= NEW_FAMILIES.length * TIERS.length);
+    for (const dir of dirs) {
+      const compose = parse(await read(dir, "environment", "docker-compose.yaml")) as { services: Record<string, ComposeService> };
+      assert.deepEqual(Object.keys(compose.services).sort(), ["body", "grader", "main", "minecraft"], dir);
+      for (const [name, service] of Object.entries(compose.services)) {
+        if (name === "minecraft" || name === "grader") continue;
+        assert.ok(!("RCON_PASSWORD" in (service.environment ?? {})), `${dir}: ${name} holds RCON_PASSWORD`);
+        for (const volume of service.volumes ?? []) assert.notEqual(volume.split(":")[0], "world", `${dir}: ${name} mounts the world volume`);
+      }
+      const { grader, minecraft } = compose.services as { grader: ComposeService; minecraft: ComposeService };
+      assert.equal(grader.network_mode, "service:minecraft", dir);
+      assert.equal(grader.depends_on?.minecraft?.condition, "service_healthy", dir);
+      assert.deepEqual(Object.keys(grader.environment ?? {}), ["RCON_PASSWORD"], dir);
+      const worldMounts = (grader.volumes ?? []).filter((volume) => volume.split(":")[0] === "world");
+      assert.ok(worldMounts.length > 0 && worldMounts.every((volume) => volume.endsWith(":ro")), `${dir}: the grader's world mount is not read-only`);
+      assert.equal(minecraft.environment?.RCON_LOOPBACK_ONLY, "true", dir);
+    }
+  });
+
+  it("lets only the body's player in", async () => {
+    for (const dir of await readdir(TASKS)) {
+      const compose = parse(await read(dir, "environment", "docker-compose.yaml")) as { services: Record<string, ComposeService> };
+      const bots = (compose.services.body!.command ?? []).filter((arg) => arg.startsWith("--bot=")).map((arg) => arg.slice("--bot=".length));
+      assert.equal(bots.length, 1, dir);
+      const bot = bots[0]!;
+      assert.deepEqual(JSON.parse(compose.services.minecraft!.environment!.WHITELIST!), [{ uuid: offlineUuid(bot), name: bot }], dir);
+      // The grader snapshots, and the verifier grades, the same player.
+      const toml = await read(dir, "task.toml");
+      for (const table of tomlTables(toml, "verifier.collect")) assert.match(table, new RegExp(`snapshot\\.ts ${bot}"`), dir);
+      const specs = (await readdir(path.join(TASKS, dir), { recursive: true })).filter((file) => file.endsWith(`${path.sep}milestones.json`));
+      assert.ok(specs.length > 0, dir);
+      for (const spec of specs) assert.equal(MilestoneSpec.parse(JSON.parse(await read(dir, spec))).player, bot, `${dir}/${spec}`);
+    }
+  });
+
+  it("collects the snapshot and the grading artifact from the grader, and the history from the body", async () => {
+    for (const dir of await readdir(TASKS)) {
+      const toml = await read(dir, "task.toml");
+      const hooks = tomlTables(toml, "verifier.collect");
+      assert.ok(hooks.length > 0, `${dir} has no collect hook`);
+      for (const hook of hooks) assert.match(hook, /^service = "grader"$/m, dir);
+      assert.match(toml, /source = "\/var\/log\/grading", destination = "grading", service = "grader"/, dir);
+      assert.match(toml, /source = "\/var\/log\/minebot", destination = "minebot", service = "body"/, dir);
+    }
   });
 });
