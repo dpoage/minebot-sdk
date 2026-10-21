@@ -132,6 +132,8 @@ export class ProgramRunner {
     let result: unknown;
     let error: string | undefined;
     let program: Promise<unknown> | undefined;
+    /** What the program had logged when it was aborted: a program that settles in its grace returns this, as one that stopped at once always did. */
+    let loggedAtAbort: string | undefined;
     const timeout = setTimeout(
       () => controller.abort(new Error("timeout")),
       Math.min(Math.max(timeoutMs, 0), MAX_TIMEOUT_MS),
@@ -154,6 +156,7 @@ export class ProgramRunner {
         if (signal.aborted) {
           status = signal.reason instanceof Error && signal.reason.message === "timeout" ? "timeout" : "stopped";
           this.#options.onAbort?.();
+          loggedAtAbort = logs.toString();
         } else {
           status = "error";
           error = formatError(err);
@@ -174,7 +177,7 @@ export class ProgramRunner {
     } finally {
       this.#running = null;
     }
-    return { status, result, error, logs: logs.toString(), durationMs: Date.now() - startedAt };
+    return { status, result, error, logs: loggedAtAbort ?? logs.toString(), durationMs: Date.now() - startedAt };
   }
 }
 

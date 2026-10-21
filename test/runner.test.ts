@@ -137,13 +137,13 @@ describe("restart: ProgramRunner after an abort", () => {
     assert.equal(runner.running, null);
   });
 
-  it("lets a program that handles its abort write what it was doing, and counts its logs", async () => {
+  it("returns what a program that settles in its grace had logged when it was aborted, as before", async () => {
     const runner = hungRunner();
-    const pending = runner.run(`try { await sleep(60_000); } catch (err) { log("cleaning up"); }`);
+    const pending = runner.run(`log("working"); try { await sleep(60_000); } catch (err) { log("cleaning up"); }`);
     runner.stop();
     const run = await pending;
     assert.equal(run.status, "stopped");
-    assert.equal(run.logs, "cleaning up");
+    assert.equal(run.logs, "working");
     assert.ok(!("hung" in run));
   });
 
