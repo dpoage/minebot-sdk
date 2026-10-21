@@ -3,8 +3,9 @@
 // body wires them. `init.script` (the test owns it) holds one trigger (`reflex`) and the runner's
 // grace. The first host stores the trigger in the state directory before its Triggers load, so the
 // failures its init carries apply to it; every replacement loads it from there, as the body's world
-// does. Like the real host, the state it reports carries the triggers' failures, and it answers
-// requests and delivers trigger runs through the reporter. Once acked, every run pushes `acked`
+// does. Like the real host, its state report carries no trigger counts: they reach the supervisor
+// through the reporter, with a delivery or as trigger_counts. It answers requests and delivers
+// trigger runs through the reporter. Once acked, every run pushes `acked`
 // with the time (ms) before its code starts. The first host, with `killAfterFinished`, SIGKILLs
 // itself right after the message that carries a trigger_finished leaves it; with `killOnEndAck`,
 // as the supervisor's answer to a run's end reaches it, before it can act on it.
@@ -65,11 +66,10 @@ process.on("message", async (message: ToHost) => {
       const init = message.init as HostInit & { script: Script };
       runner = new ProgramRunner({ globals: () => ({}), graceMs: init.script.graceMs });
       reporter = new RunReporter({ send, kits: () => [], stop: () => runner.stop() });
-      const reportState = () =>
-        send({ kind: "state", connected: true, deaths: init.deaths, reconnects: init.reconnects, active: [], triggerFailures: triggers.failures() });
+      const reportState = () => send({ kind: "state", connected: true, deaths: init.deaths, reconnects: init.reconnects, active: [] });
       events = new HostEvents((m) => {
         send(m);
-        queueMicrotask(reportState);
+        reportState();
       });
       const store = new JsonStore(path.join(init.stateDir, "triggers.json"));
       const first = store.keys().length === 0;
@@ -92,6 +92,7 @@ process.on("message", async (message: ToHost) => {
             },
           ),
         deliver: (end, finished, disabled, failures) => reporter.deliver(end, finished, disabled, failures),
+        counts: (failures) => reporter.counts(failures),
         register: async () => {},
         failures: init.triggerFailures,
         lost: init.lostFiring,

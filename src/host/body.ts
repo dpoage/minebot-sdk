@@ -66,10 +66,12 @@ export interface RunRecorder {
   /**
    * Ends a trigger's run: `end` is what `record` returned or threw for it. Its trigger_finished, the
    * trigger_disabled it caused, and the triggers' failures with the firing counted reach the
-   * history's keeper together, as that run's delivery; an end of no recorded run (its start was
-   * refused, it never ran) is pushed as plain events.
+   * history's keeper together, as that run's delivery. Returns false, sending nothing, for an end of
+   * no recorded run (its start was refused, it never ran): the caller pushes its events and its counts.
    */
-  deliver(end: unknown, finished: TriggerFinished, disabled: TriggerDisabled | undefined, triggerFailures: Record<string, number>): void;
+  deliver(end: unknown, finished: TriggerFinished, disabled: TriggerDisabled | undefined, triggerFailures: Record<string, number>): boolean;
+  /** Hands over the triggers' failures after a change no run's delivery carries. */
+  counts(triggerFailures: Record<string, number>): void;
   /** Records code the body will run later. */
   register(code: string, extra: object): Promise<void>;
 }
@@ -135,6 +137,7 @@ export class Body {
             bot: () => this.#connection.bot ?? undefined,
             run: (trigger, event, started) => this.#runTrigger(trigger, event, started),
             deliver: (end, finished, disabled, failures) => options.recorder.deliver(end, finished, disabled, failures),
+            counts: (failures) => options.recorder.counts(failures),
             register: (trigger) =>
               options.recorder.register(`${trigger.run}\n${trigger.when ?? ""}`, { trigger: trigger.name, on: trigger.on, ...(trigger.when !== undefined && { when: trigger.when }) }),
             failures: options.triggerFailures,

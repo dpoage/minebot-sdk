@@ -3,7 +3,7 @@
 //   spawnLog / initLog  files it appends its pid / its init (minus the script) to, one line per spawn
 //   failFrom            from this spawn number on, exits with code 3 before it is ready
 //   crashAfterReadyMs   exits this long after it is ready
-//   mirrorState         reports the deaths / reconnects / active / triggerFailures it was started with
+//   mirrorState         reports the deaths / reconnects / active it was started with
 //   graceMs             how long its `report` runs wait after an abort before reporting themselves hung
 //   ackLog              file it writes the time (ms) it was acked a run's start to
 //   trigger             a run with no request, started at `start`: { mode, timeoutMs }
@@ -116,7 +116,7 @@ process.on("message", (message: ToHost) => {
       const spawn = script.spawnLog ? readFileSync(script.spawnLog, "utf8").trim().split("\n").length : 1;
       if (script.failFrom !== undefined && spawn >= script.failFrom) process.exit(3);
       if (script.mirrorState) {
-        send({ kind: "state", connected: true, deaths: init.deaths, reconnects: init.reconnects, active: init.active ?? [], triggerFailures: init.triggerFailures ?? {} });
+        send({ kind: "state", connected: true, deaths: init.deaths, reconnects: init.reconnects, active: init.active ?? [] });
       }
       send({ kind: "event", type: "hello", data: { pid: process.pid } });
       send({ kind: "ready" });

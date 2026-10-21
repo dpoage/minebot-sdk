@@ -65,9 +65,11 @@ export interface TriggersDeps {
   /**
    * Ends a firing: `end` is what its `run` returned or threw. Hands over its trigger_finished data,
    * the trigger_disabled it caused, and the triggers' failures with it counted, as one delivery of
-   * that run. Absent, the events are pushed.
+   * that run; false when no run waits for that end. Absent or false, the events are pushed and the counts reported.
    */
-  deliver?: (end: unknown, finished: TriggerFinished, disabled: TriggerDisabled | undefined, failures: Record<string, number>) => void;
+  deliver?: (end: unknown, finished: TriggerFinished, disabled: TriggerDisabled | undefined, failures: Record<string, number>) => boolean;
+  /** Reports the triggers' failures after every change no firing's delivery carries: the counts this host starts with included. */
+  counts?: (failures: Record<string, number>) => void;
   /** Records the code of a trigger being saved, so the audit covers it before it ever runs. */
   register: (trigger: StoredTrigger) => Promise<void>;
   /** Each trigger's run of failures that the host this one replaces had counted. */
@@ -118,6 +120,7 @@ export class Triggers {
       const disabled = this.#record(lostDef, deps.lost);
       if (disabled) deps.events.push("trigger_disabled", disabled);
     }
+    deps.counts?.(this.failures());
     this.#unsubscribe = deps.events.subscribe((event) => this.#onEvent(event));
   }
 
@@ -159,6 +162,7 @@ export class Triggers {
     this.#lastFired.delete(def.name);
     this.#dequeue(def.name);
     this.#save(def);
+    this.#deps.counts?.(this.failures());
     return { trigger: this.#info(def), replaced };
   }
 
@@ -169,6 +173,7 @@ export class Triggers {
     this.#lastFired.delete(name);
     this.#dequeue(name);
     this.#deps.store.delete(name);
+    this.#deps.counts?.(this.failures());
     return true;
   }
 
@@ -181,6 +186,7 @@ export class Triggers {
     if (enabled) this.#statsOf(name).failures = 0;
     else this.#dequeue(name);
     this.#save(def);
+    this.#deps.counts?.(this.failures());
     return this.#info(def);
   }
 
@@ -349,16 +355,17 @@ export class Triggers {
     this.#pump();
   }
 
-  /** Reports how a firing ended and records it; the end of a run (`end`, what it returned or threw) is delivered as that run's, with what it caused. */
+  /**
+   * Reports how a firing ended and records it. The end of a run (`end`, what it returned or threw) is
+   * delivered as that run's, with what it caused; any other end is pushed, followed by the counts it leaves.
+   */
   #finish(def: Stored, outcome: FinishedEnd, end?: unknown): void {
     const finished = triggerFinished(def.name, outcome);
     const disabled = this.#record(def, outcome);
-    if (end !== undefined && this.#deps.deliver) {
-      this.#deps.deliver(end, finished, disabled, this.failures());
-      return;
-    }
+    if (this.#deps.deliver?.(end, finished, disabled, this.failures())) return;
     this.#deps.events.push("trigger_finished", finished);
     if (disabled) this.#deps.events.push("trigger_disabled", disabled);
+    this.#deps.counts?.(this.failures());
   }
 
   /**

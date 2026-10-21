@@ -76,6 +76,17 @@ function refusingEnds(history: History): History {
   return refusing as unknown as History; // the two methods HostProcess calls
 }
 
+/** A history that cannot write a run's start: the run is refused before its code runs. */
+function refusingStarts(history: History): History {
+  const refusing = {
+    begin: async () => {
+      throw new Error("start refused");
+    },
+    register: history.register.bind(history),
+  };
+  return refusing as unknown as History; // the two methods HostProcess calls
+}
+
 let scripts = 0;
 async function scripted(script: Script = {}, entry = FIXTURE, carried: Partial<HostInit> = {}, wrap: (history: History) => History = (h) => h): Promise<Scripted> {
   const dir = path.join(ROOT, `scripted-${++scripts}`);
@@ -342,7 +353,7 @@ describe("restart: what a replacement host carries over", () => {
       reconnects: 3,
       milestones: MilestoneSet.parse({ milestones: [{ id: "logs", description: "Get logs", obtained: ["*_log"], count: 3 }] }),
     };
-    const io = { events: new HostEvents(() => {}), recorder: { record: async () => assert.fail("no run"), deliver: () => assert.fail("no run"), register: async () => {} } };
+    const io = { events: new HostEvents(() => {}), recorder: { record: async () => assert.fail("no run"), deliver: () => assert.fail("no run"), counts: () => {}, register: async () => {} } };
 
     it("starts from the counters and the start time, with the carried kits less the ones the catalog does not offer, and without the milestones", async () => {
       const world = buildWorld({ ...base, stateDir: path.join(ROOT, "world-a"), active: ["deleted-agent-kit", "move"], applyMilestones: false }, io);
@@ -364,6 +375,21 @@ describe("restart: what a replacement host carries over", () => {
       } finally {
         world.close();
       }
+    });
+
+    it("answers a /run whose end the history refused as the supervisor does for that run when the host dies before answering", { timeout: 20_000 }, async () => {
+      // The host's own routes, with the reporter's failure for a refused end: what a live host answers.
+      const refusing = { ...io.recorder, record: async () => Promise.reject(new Error("disk full")) };
+      const world = buildWorld({ ...base, stateDir: path.join(ROOT, "world-c"), applyMilestones: false }, { events: io.events, recorder: refusing });
+      let live: { status: number; body: unknown };
+      try {
+        live = await world.serve({ id: 1, method: "POST", url: "/run", body: JSON.stringify({ code: "return 1;" }), tooLarge: false });
+      } finally {
+        world.close();
+      }
+      const t = await scripted({ reflex: { name: "reflex", on: ["fire"], run: "return 1;", timeoutMs: 1_000, cooldownMs: 0 }, killOnEndAck: true }, TRIGGER_FIXTURE, {}, refusingEnds);
+      const owed = await t.host.forward({ method: "POST", url: "/run", body: Buffer.from(JSON.stringify({ code: "return 1;" })), tooLarge: false });
+      assert.deepEqual(owed, live);
     });
   });
 });
@@ -480,6 +506,47 @@ describe("restart: a trigger whose firing ends with its host", () => {
     const refused = await finishedOf(false, refusingEnds);
     assert.deepEqual(await finishedOf(true, refusingEnds), refused);
     assert.deepEqual([refused.status, refused.error], ["error", "disk full"]);
+  });
+
+  describe("the streak a replacement starts from is the dead host's, with nothing sent after the end", () => {
+    /** Kills the host by the pid it had before the firing, with no request in between, and reads the replacement's trigger. */
+    async function idleDeath(t: Scripted, pid: number): Promise<TriggerInfo> {
+      const since = t.events.since(0).next;
+      process.kill(pid, "SIGKILL");
+      await waitFor(t, "disconnected", since);
+      const [info] = ((await get(t, "/triggers")).body as { triggers: TriggerInfo[] }).triggers;
+      return info!;
+    }
+
+    it("after a firing whose start the history refused", { timeout: 20_000 }, async () => {
+      const t = await scripted({ reflex: reflex("return 1;") }, TRIGGER_FIXTURE, { triggerFailures: { reflex: 1 } }, refusingStarts);
+      const pid = await pidOf(t);
+      t.events.push("fire");
+      await waitFor(t, "trigger_finished");
+      const info = await idleDeath(t, pid);
+      assert.deepEqual(eventsOf(t, "trigger_finished").map(({ data: { durationMs: _, ...rest } }) => rest), [{ name: "reflex", status: "error", error: "start refused" }]);
+      // Only the streak carries over a restart (PD5).
+      assert.equal(info.failures, 2, "the refused firing's count did not reach the supervisor");
+    });
+
+    it("after a delivered firing", { timeout: 20_000 }, async () => {
+      const t = await scripted({ reflex: { ...reflex("try { await sleep(100000); } catch {}"), timeoutMs: 100 } }, TRIGGER_FIXTURE, { triggerFailures: { reflex: 1 } });
+      const pid = await pidOf(t);
+      t.events.push("fire");
+      await waitFor(t, "trigger_finished");
+      await sleep(300);
+      const info = await idleDeath(t, pid);
+      assert.deepEqual(eventsOf(t, "trigger_finished").map((e) => e.data.status), ["timeout"]);
+      assert.equal(info.failures, 2, "the delivered firing's count did not reach the supervisor");
+    });
+
+    it("after the trigger was saved again, which starts its streak over", { timeout: 20_000 }, async () => {
+      const t = await scripted({ reflex: reflex("return 1;") }, TRIGGER_FIXTURE, { triggerFailures: { reflex: 2 } });
+      const pid = await pidOf(t);
+      await t.host.forward({ method: "POST", url: "/triggers", body: Buffer.from(JSON.stringify(reflex("return 2;"))), tooLarge: false });
+      const info = await idleDeath(t, pid);
+      assert.deepEqual({ run: info.run, failures: info.failures }, { run: "return 2;", failures: 0 });
+    });
   });
 });
 
@@ -682,7 +749,7 @@ describe("restart: the host's report of a hung run", () => {
     assert.deepEqual(sent[1], { kind: "run_finished", runId: 1, result: { status: "ok", result: 1, logs: "", durationMs: 2 } });
   });
 
-  it("delivers a run after the answer to its request, delivers a firing whose end the history refused, and pushes an end it holds no run for", async () => {
+  it("delivers a run after the answer to its request, delivers a firing whose end the history refused, and leaves an end it holds no run for to the caller", async () => {
     const sent: FromHost[] = [];
     const reporter = new RunReporter({ send: (message) => sent.push(message), kits: () => [], stop: () => false });
     const ended = async (runId: number) => {
@@ -705,17 +772,15 @@ describe("restart: the host's report of a hung run", () => {
     reporter.acknowledge(1, "disk full");
     const end = await refused.catch((err: unknown) => err);
     sent.length = 0;
-    reporter.deliver(end, finished, undefined, { t: 1 });
+    assert.equal(reporter.deliver(end, finished, undefined, { t: 1 }), true);
     assert.deepEqual(sent, [{ kind: "run_delivered", runId: 1, finished, triggerFailures: { t: 1 } }]);
 
-    // A firing whose start the history refused never became a run of the supervisor's.
+    // A firing whose start the history refused never became a run of the supervisor's: Triggers pushes its events and reports its counts.
     sent.length = 0;
-    const disabled = { name: "t", failures: 3, reason: "r" };
-    reporter.deliver(new Error("start refused"), finished, disabled, { t: 3 });
-    assert.deepEqual(sent, [
-      { kind: "event", type: "trigger_finished", data: finished },
-      { kind: "event", type: "trigger_disabled", data: disabled },
-    ]);
+    assert.equal(reporter.deliver(new Error("start refused"), finished, { name: "t", failures: 3, reason: "r" }, { t: 3 }), false);
+    assert.deepEqual(sent, []);
+    reporter.counts({ t: 3 });
+    assert.deepEqual(sent, [{ kind: "trigger_counts", triggerFailures: { t: 3 } }]);
   });
 });
 

@@ -361,9 +361,13 @@ export class HostProcess {
         if (run?.state.kind === "reported") this.#runs.delete(run.id);
         return;
       }
+      case "trigger_counts":
+        this.#carried = { ...this.#carried, triggerFailures: message.triggerFailures };
+        return;
       case "state":
         this.#connected = message.connected;
-        this.#carried = { deaths: message.deaths, reconnects: message.reconnects, active: message.active, triggerFailures: message.triggerFailures };
+        // Trigger counts come only with a delivery or trigger_counts, in order with the ends they follow.
+        this.#carried = { ...this.#carried, deaths: message.deaths, reconnects: message.reconnects, active: message.active };
         return;
       case "run_started":
         try {

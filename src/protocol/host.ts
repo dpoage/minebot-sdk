@@ -144,4 +144,10 @@ export type FromHost =
   | { kind: "run_delivered"; runId: number; finished?: TriggerFinished; disabled?: TriggerDisabled; triggerFailures?: Record<string, number> }
   /** Code the body will run later (a trigger), for the history's audit; answered by `run_ack` like a run. */
   | { kind: "register"; runId: number; code: string; extra: object; kits: string[] }
-  | { kind: "state"; connected: boolean; deaths: number; reconnects: number; active: string[]; triggerFailures: Record<string, number> };
+  /**
+   * The triggers' failures after a change no run's delivery carries: the counts a host starts with,
+   * a firing that ended with no run of the supervisor's behind it, a trigger saved, enabled or removed.
+   * With `run_delivered`, the only way counts reach the supervisor.
+   */
+  | { kind: "trigger_counts"; triggerFailures: Record<string, number> }
+  | { kind: "state"; connected: boolean; deaths: number; reconnects: number; active: string[] };

@@ -62,7 +62,7 @@ function reportState(): void {
 }
 
 function currentState({ body, kits }: World): FromHost {
-  return { kind: "state", connected: body.connected, deaths: body.deaths, reconnects: body.reconnects, active: kits.active, triggerFailures: body.triggers?.failures() ?? {} };
+  return { kind: "state", connected: body.connected, deaths: body.deaths, reconnects: body.reconnects, active: kits.active };
 }
 
 async function handle(message: ToHost): Promise<void> {
@@ -71,8 +71,7 @@ async function handle(message: ToHost): Promise<void> {
     case "init":
       events = new HostEvents((m) => {
         send(m);
-        // Once what pushed the event has changed in the same turn: a trigger counts its failure after its trigger_finished.
-        queueMicrotask(reportState);
+        reportState();
       });
       reporter = new RunReporter({ send, kits: () => world?.kits.active ?? [], stop: () => world?.body.runner.stop() ?? false });
       try {

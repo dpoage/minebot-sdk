@@ -133,17 +133,18 @@ export class RunReporter implements RunRecorder {
     this.#options.send({ kind: "run_delivered", runId });
   }
 
-  deliver(end: unknown, finished: TriggerFinished, disabled: TriggerDisabled | undefined, triggerFailures: Record<string, number>): void {
+  deliver(end: unknown, finished: TriggerFinished, disabled: TriggerDisabled | undefined, triggerFailures: Record<string, number>): boolean {
     const runId = typeof end === "object" && end !== null ? this.#delivering.get(end) : undefined;
-    if (runId === undefined) {
-      // No run of the supervisor's waits for this end: it never started, or never ran.
-      this.#options.send({ kind: "event", type: "trigger_finished", data: finished });
-      if (disabled) this.#options.send({ kind: "event", type: "trigger_disabled", data: disabled });
-      return;
-    }
+    // No run of the supervisor's waits for this end: it never started, or never ran.
+    if (runId === undefined) return false;
     this.#delivering.delete(end as object);
     // One message: the supervisor logs the events, takes the failures, and drops the run together, so no death can split them.
     this.#options.send({ kind: "run_delivered", runId, finished, ...(disabled && { disabled }), triggerFailures });
+    return true;
+  }
+
+  counts(triggerFailures: Record<string, number>): void {
+    this.#options.send({ kind: "trigger_counts", triggerFailures });
   }
 
   async register(code: string, extra: object): Promise<void> {
