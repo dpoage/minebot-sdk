@@ -65,11 +65,15 @@ export interface TriggersDeps {
   /**
    * Ends a firing: `end` is what its `run` returned or threw. Hands over its trigger_finished data,
    * the trigger_disabled it caused, and the triggers' failures with it counted, as one delivery of
-   * that run; false when no run waits for that end. Absent or false, the events are pushed and the counts reported.
+   * that run; false when no run waits for that end. Absent or false, the end goes to `counts`.
    */
   deliver?: (end: unknown, finished: TriggerFinished, disabled: TriggerDisabled | undefined, failures: Record<string, number>) => boolean;
-  /** Reports the triggers' failures after every change no firing's delivery carries: the counts this host starts with included. */
-  counts?: (failures: Record<string, number>) => void;
+  /**
+   * Reports the triggers' failures after every change no firing's delivery carries, the counts this
+   * host starts with included; a firing that ended with no run behind it comes with them, as one report.
+   * Absent, such a firing's events are pushed.
+   */
+  counts?: (failures: Record<string, number>, ended?: { finished?: TriggerFinished; disabled?: TriggerDisabled }) => void;
   /** Records the code of a trigger being saved, so the audit covers it before it ever runs. */
   register: (trigger: StoredTrigger) => Promise<void>;
   /** Each trigger's run of failures that the host this one replaces had counted. */
@@ -116,11 +120,10 @@ export class Triggers {
     }
     // Only to the definition that fired: one replaced during the firing has no say, as in #record.
     const lostDef = deps.lost && this.#defs.get(deps.lost.name);
-    if (deps.lost && lostDef?.updated === deps.lost.updated) {
-      const disabled = this.#record(lostDef, deps.lost);
-      if (disabled) deps.events.push("trigger_disabled", disabled);
-    }
-    deps.counts?.(this.failures());
+    const disabled = deps.lost && lostDef?.updated === deps.lost.updated ? this.#record(lostDef, deps.lost) : undefined;
+    // The starting counts, with the disable the lost firing caused, as one report: the supervisor stops passing the firing on once it has them.
+    if (deps.counts) deps.counts(this.failures(), disabled && { disabled });
+    else if (disabled) deps.events.push("trigger_disabled", disabled);
     this.#unsubscribe = deps.events.subscribe((event) => this.#onEvent(event));
   }
 
@@ -357,15 +360,18 @@ export class Triggers {
 
   /**
    * Reports how a firing ended and records it. The end of a run (`end`, what it returned or threw) is
-   * delivered as that run's, with what it caused; any other end is pushed, followed by the counts it leaves.
+   * delivered as that run's, with what it caused; any other end is reported with the counts it leaves, in one report.
    */
   #finish(def: Stored, outcome: FinishedEnd, end?: unknown): void {
     const finished = triggerFinished(def.name, outcome);
     const disabled = this.#record(def, outcome);
     if (this.#deps.deliver?.(end, finished, disabled, this.failures())) return;
+    if (this.#deps.counts) {
+      this.#deps.counts(this.failures(), { finished, ...(disabled && { disabled }) });
+      return;
+    }
     this.#deps.events.push("trigger_finished", finished);
     if (disabled) this.#deps.events.push("trigger_disabled", disabled);
-    this.#deps.counts?.(this.failures());
   }
 
   /**

@@ -47,11 +47,13 @@ interface Script {
   spawnLog?: string;
   initLog?: string;
   /** The one trigger of the trigger fixture (TRIGGER_FIXTURE). */
-  reflex?: { name: string; on: string[]; run: string; timeoutMs: number; cooldownMs: number };
+  reflex?: { name: string; on: string[]; run: string; when?: string; timeoutMs: number; cooldownMs: number };
   /** The trigger fixture's first host SIGKILLs itself right after the message carrying a trigger_finished leaves it. */
   killAfterFinished?: boolean;
   /** The trigger fixture's first host SIGKILLs itself as the answer to a run's end reaches it. */
   killOnEndAck?: boolean;
+  /** The trigger fixture's n-th host SIGKILLs itself once its Triggers sent their counts, before it is ready. */
+  dieBeforeReadyOnSpawn?: number;
 }
 
 interface Scripted {
@@ -547,6 +549,55 @@ describe("restart: a trigger whose firing ends with its host", () => {
       const info = await idleDeath(t, pid);
       assert.deepEqual({ run: info.run, failures: info.failures }, { run: "return 2;", failures: 0 });
     });
+
+    it("after the trigger was enabled again, which starts its streak over", { timeout: 20_000 }, async () => {
+      const t = await scripted({ reflex: reflex("return 1;") }, TRIGGER_FIXTURE, { triggerFailures: { reflex: 2 } });
+      const pid = await pidOf(t);
+      await t.host.forward({ method: "POST", url: "/triggers/enabled", body: Buffer.from(JSON.stringify({ name: "reflex", enabled: true })), tooLarge: false });
+      const info = await idleDeath(t, pid);
+      assert.deepEqual({ enabled: info.enabled, failures: info.failures }, { enabled: true, failures: 0 });
+    });
+
+    // A firing with no run behind it reaches the supervisor in one message with its counts: a death right after it cannot split them.
+    const runLess = {
+      "its start refused by the history": { run: "return 1;", when: undefined, wrap: refusingStarts, error: /^start refused$/ },
+      "its `when` throwing": { run: "return 1;", when: "event.data.nope.x", wrap: undefined, error: /^when: / },
+    };
+    for (const [name, end] of Object.entries(runLess)) {
+      it(`after a firing with no run, ${name}, with the host killed right after the message carrying its trigger_finished`, { timeout: 20_000 }, async () => {
+        const t = await scripted(
+          { reflex: { ...reflex(end.run), ...(end.when !== undefined && { when: end.when }) }, killAfterFinished: true },
+          TRIGGER_FIXTURE,
+          { triggerFailures: { reflex: 1 } },
+          end.wrap,
+        );
+        t.events.push("fire");
+        await waitFor(t, "disconnected");
+        const [info] = ((await get(t, "/triggers")).body as { triggers: TriggerInfo[] }).triggers; // the replacement host's
+        const finished = eventsOf(t, "trigger_finished");
+        assert.deepEqual(finished.map((e) => e.data.status), ["error"]);
+        assert.match(String(finished[0]!.data.error), end.error);
+        assert.equal(info!.failures, 2, "the firing's count was split from its trigger_finished");
+      });
+    }
+
+    it("after a replacement that counted the lost firing died before it was ready: the next host counts it once", { timeout: 30_000 }, async () => {
+      const t = await scripted({ reflex: reflex("await new Promise(() => {});"), dieBeforeReadyOnSpawn: 2 }, TRIGGER_FIXTURE, { triggerFailures: { reflex: 1 } });
+      t.events.push("fire");
+      await waitFor(t, "disconnected");
+      // The second host dies before ready (requests answer 503 until a host is); the third serves.
+      let listed: { status: number; body: unknown } | undefined;
+      for (const until = Date.now() + 15_000; Date.now() < until; await sleep(100)) {
+        listed = await get(t, "/triggers");
+        if (listed.status === 200) break;
+      }
+      assert.equal(listed?.status, 200, "no host became ready");
+      assert.equal(readFileSync(path.join(path.dirname(t.history), "spawns"), "utf8").trim().split("\n").length, 3);
+      const [info] = (listed!.body as { triggers: TriggerInfo[] }).triggers;
+      assert.equal(info!.failures, 2, "the killed firing was counted twice");
+      assert.equal(eventsOf(t, "trigger_disabled").length, 0);
+      assert.equal(eventsOf(t, "trigger_finished").length, 1);
+    });
   });
 });
 
@@ -775,12 +826,16 @@ describe("restart: the host's report of a hung run", () => {
     assert.equal(reporter.deliver(end, finished, undefined, { t: 1 }), true);
     assert.deepEqual(sent, [{ kind: "run_delivered", runId: 1, finished, triggerFailures: { t: 1 } }]);
 
-    // A firing whose start the history refused never became a run of the supervisor's: Triggers pushes its events and reports its counts.
+    // A firing whose start the history refused never became a run of the supervisor's: Triggers hands it to `counts`, one message with its counts.
     sent.length = 0;
-    assert.equal(reporter.deliver(new Error("start refused"), finished, { name: "t", failures: 3, reason: "r" }, { t: 3 }), false);
+    const disabled = { name: "t", failures: 3, reason: "r" };
+    assert.equal(reporter.deliver(new Error("start refused"), finished, disabled, { t: 3 }), false);
     assert.deepEqual(sent, []);
-    reporter.counts({ t: 3 });
-    assert.deepEqual(sent, [{ kind: "trigger_counts", triggerFailures: { t: 3 } }]);
+    reporter.counts({ t: 3 }, { finished, disabled });
+    assert.deepEqual(sent, [{ kind: "trigger_counts", triggerFailures: { t: 3 }, finished, disabled }]);
+    sent.length = 0;
+    reporter.counts({});
+    assert.deepEqual(sent, [{ kind: "trigger_counts", triggerFailures: {} }]);
   });
 });
 

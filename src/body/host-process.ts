@@ -142,7 +142,7 @@ export class HostProcess {
   #restartTimer: NodeJS.Timeout | undefined;
   /** What the host last reported of what a replacement carries over. */
   #carried: { deaths: number; reconnects: number; active?: string[]; triggerFailures?: Record<string, number> };
-  /** The trigger firing the last host ended in, until a replacement is ready, having counted it. */
+  /** The trigger firing the last host ended in, until a replacement has counted it: its first trigger_counts, or its ready. */
   #lostFiring: LostFiring | undefined;
   /** The host's messages are handled one at a time, in order: a history line is on disk before the response that follows it is relayed. */
   #handling = Promise.resolve();
@@ -362,7 +362,12 @@ export class HostProcess {
         return;
       }
       case "trigger_counts":
+        // A firing that ended with no run behind it is taken in with its counts in one step, as a delivery is.
+        if (message.finished) this.#events.push("trigger_finished", message.finished);
+        if (message.disabled) this.#events.push("trigger_disabled", message.disabled);
         this.#carried = { ...this.#carried, triggerFailures: message.triggerFailures };
+        // This host's counts already hold the firing it was started to count (its Triggers counts it before sending any): no later host counts it again.
+        this.#lostFiring = undefined;
         return;
       case "state":
         this.#connected = message.connected;

@@ -143,8 +143,9 @@ export class RunReporter implements RunRecorder {
     return true;
   }
 
-  counts(triggerFailures: Record<string, number>): void {
-    this.#options.send({ kind: "trigger_counts", triggerFailures });
+  counts(triggerFailures: Record<string, number>, ended?: { finished?: TriggerFinished; disabled?: TriggerDisabled }): void {
+    // One message: no death can split a firing's events from the counts it leaves.
+    this.#options.send({ kind: "trigger_counts", triggerFailures, ...(ended?.finished && { finished: ended.finished }), ...(ended?.disabled && { disabled: ended.disabled }) });
   }
 
   async register(code: string, extra: object): Promise<void> {

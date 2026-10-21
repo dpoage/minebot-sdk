@@ -8,9 +8,13 @@
 // trigger runs through the reporter. Once acked, every run pushes `acked`
 // with the time (ms) before its code starts. The first host, with `killAfterFinished`, SIGKILLs
 // itself right after the message that carries a trigger_finished leaves it; with `killOnEndAck`,
-// as the supervisor's answer to a run's end reaches it, before it can act on it.
+// as the supervisor's answer to a run's end reaches it, before it can act on it. With
+// `dieBeforeReadyOnSpawn: n`, the n-th host SIGKILLs itself once its Triggers are built (their
+// counts sent) and before it is ready.
 // Requests: GET /ping answers with this pid; GET /triggers with the trigger list; POST /triggers
-// saves the trigger in the body; POST /run runs `{code, timeoutMs}` the way the body's /run does.
+// saves the trigger in the body; POST /triggers/enabled `{name, enabled}` sets it enabled; POST
+// /run runs `{code, timeoutMs}` the way the body's /run does.
+import { appendFileSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { HostEvents, RunReporter } from "../../../src/host/channel.ts";
 import { Triggers } from "../../../src/host/triggers.ts";
@@ -21,9 +25,10 @@ import { JsonStore } from "../../../src/store.ts";
 
 interface Script {
   graceMs: number;
-  reflex: { name: string; on: string[]; run: string; timeoutMs: number; cooldownMs: number };
+  reflex: { name: string; on: string[]; run: string; when?: string; timeoutMs: number; cooldownMs: number };
   killAfterFinished?: boolean;
   killOnEndAck?: boolean;
+  dieBeforeReadyOnSpawn?: number;
 }
 
 let killAfterFinished = false;
@@ -32,7 +37,9 @@ let killOnEndAck = false;
 const startAcked = new Set<number>();
 function send(message: FromHost): void {
   process.send!(message);
-  const finished = (message.kind === "event" && message.type === "trigger_finished") || (message.kind === "run_delivered" && message.finished !== undefined);
+  const finished =
+    (message.kind === "event" && message.type === "trigger_finished") ||
+    ((message.kind === "run_delivered" || message.kind === "trigger_counts") && message.finished !== undefined);
   if (killAfterFinished && finished) process.kill(process.pid, "SIGKILL");
 }
 
@@ -49,6 +56,10 @@ function start(code: string, timeoutMs: number) {
 
 async function serve(id: number, method: string, pathname: string, body: string | null): Promise<unknown> {
   if (pathname === "/triggers" && method === "POST") return triggers.add(JSON.parse(body ?? "{}"));
+  if (pathname === "/triggers/enabled" && method === "POST") {
+    const { name, enabled } = JSON.parse(body ?? "{}") as { name: string; enabled: boolean };
+    return triggers.setEnabled(name, enabled);
+  }
   if (pathname === "/triggers") return { triggers: triggers.list() };
   if (pathname !== "/run") return { pid: process.pid };
   const { code, timeoutMs } = JSON.parse(body ?? "{}") as { code: string; timeoutMs: number };
@@ -92,11 +103,18 @@ process.on("message", async (message: ToHost) => {
             },
           ),
         deliver: (end, finished, disabled, failures) => reporter.deliver(end, finished, disabled, failures),
-        counts: (failures) => reporter.counts(failures),
+        counts: (failures, ended) => reporter.counts(failures, ended),
         register: async () => {},
         failures: init.triggerFailures,
         lost: init.lostFiring,
       });
+      const spawnLog = path.join(init.stateDir, "spawns");
+      appendFileSync(spawnLog, `${process.pid}\n`);
+      if (init.script.dieBeforeReadyOnSpawn === readFileSync(spawnLog, "utf8").trim().split("\n").length) {
+        // Once everything sent so far (its counts) is written.
+        process.send!({ kind: "state", connected: false, deaths: init.deaths, reconnects: init.reconnects, active: [] }, () => process.kill(process.pid, "SIGKILL"));
+        return;
+      }
       reportState();
       send({ kind: "ready" });
       return;
