@@ -271,6 +271,28 @@ export interface KitVersion {
   revertedFrom?: number;
 }
 
+/** A routine in the library: a module `<name>.ts`. */
+export interface RoutineInfo {
+  name: string;
+  /** The saved version whose source is the file's; absent for a file nothing saved through the library. */
+  version?: number;
+  /** ISO time of that version. */
+  savedAt?: string;
+}
+
+/** One saved version of a routine. */
+export interface RoutineVersion {
+  version: number;
+  /** ISO time of the save. */
+  savedAt: string;
+  /** The body that saved it; "unknown" for source found in the library that no save wrote. */
+  savedBy: string;
+  /** The latest version whose source is the routine's file. */
+  current: boolean;
+  /** Set when the version came from a revert: the version it restored. */
+  revertedFrom?: number;
+}
+
 /** A trigger as the body keeps it: its definition, and what it has done since the body started. */
 export interface TriggerInfo {
   name: string;

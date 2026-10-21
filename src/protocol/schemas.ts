@@ -38,6 +38,17 @@ export type PageMeta = z.output<typeof PageMeta>;
 /** A kit name: the same shape a saved kit's `defineKit({ name })` must use. */
 export const KitName = z.string().regex(/^[a-z][a-z0-9_]{0,31}$/, "use 1-32 lowercase letters, digits, and _; start with a letter");
 
+/** A routine name: the file name of a library module, `<name>.ts`, so it is also what other modules import. */
+export const RoutineName = z.string().regex(/^[a-z][a-z0-9_-]{0,47}$/, "use 1-48 lowercase letters, digits, _ and -; start with a letter");
+
+/** The largest routine source the library keeps, in UTF-8 bytes. */
+export const ROUTINE_SOURCE_LIMIT = 128 * 1024;
+
+const utf8 = new TextEncoder();
+
+/** A routine's TypeScript source, within the library's limit. The library refuses a save with this schema's message. */
+export const RoutineSource = z.string().refine((source) => utf8.encode(source).length <= ROUTINE_SOURCE_LIMIT, `routine source is limited to ${ROUTINE_SOURCE_LIMIT / 1024} KiB`);
+
 export const EndpointSchema: z.ZodType<Endpoint> = z.object({
   name: z.string(),
   url: z.string(),
