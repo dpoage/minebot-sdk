@@ -57,12 +57,12 @@ interface Scripted {
 }
 
 let scripts = 0;
-async function scripted(script: Script = {}, entry = FIXTURE): Promise<Scripted> {
+async function scripted(script: Script = {}, entry = FIXTURE, carried: Partial<HostInit> = {}): Promise<Scripted> {
   const dir = path.join(ROOT, `scripted-${++scripts}`);
   mkdirSync(dir);
   const events = new EventLog();
   const history = path.join(dir, "history.jsonl");
-  const init = { stateDir: dir, startedAt: "t0", deaths: 2, reconnects: 5, active: ["a", "b"], applyMilestones: true, script: { graceMs: GRACE_MS, ...script } } as unknown as HostInit;
+  const init = { stateDir: dir, startedAt: "t0", deaths: 2, reconnects: 5, active: ["a", "b"], applyMilestones: true, ...carried, script: { graceMs: GRACE_MS, ...script } } as unknown as HostInit;
   const host = new HostProcess({ init, events, history: new ProgramHistory({ file: history }), entry, graceMs: GRACE_MS });
   hosts.push(host);
   await host.start();
@@ -183,27 +183,6 @@ describe("restart: a program that does not stop ends with its host", () => {
     assert.deepEqual(eventsOf(t, "program_finished").map((e) => e.data.status), ["error"]);
     assert.deepEqual(eventsOf(t, "disconnected").map((e) => e.data.reason), ["bot host restarted: the bot host exited (signal SIGKILL)"]);
     assert.deepEqual(historyOf(t).map((line) => line.status), ["error"]);
-  });
-
-  it("answers a run that ends just as its deadline kills the host with the run's own result, and does not call it hung", { timeout: 20_000 }, async () => {
-    const t = await scripted();
-    const before = await pidOf(t);
-    // The host ends the run 850 ms after its ack; the supervisor's deadline is at 100 + 300 + 500 ms.
-    const request = run(t, "late", 100);
-    const acked = Number((await waitFor(t, "acked")).data.at);
-    // Holding the supervisor up across both, in the check phase, has the next loop turn fire the deadline before it reads the run's end.
-    await sleep(Math.max(0, acked + 750 - Date.now()));
-    await setImmediate();
-    while (Date.now() < acked + 1_000);
-    const answer = await request;
-    assert.equal(answer.status, 200);
-    assert.deepEqual(withoutDuration(answer.body).rest, { status: "ok", logs: "late" });
-    assert.deepEqual(historyOf(t).map((line) => line.status), ["ok"]);
-    assert.deepEqual(eventsOf(t, "program_finished").map((e) => e.data.status), ["ok"]);
-    const reasons = eventsOf(t, "disconnected").map((e) => String(e.data.reason));
-    assert.equal(reasons.length, 1, "the deadline did not kill the host: the race was not reproduced");
-    assert.doesNotMatch(reasons[0]!, /did not stop/);
-    assert.notEqual(await pidOf(t), before);
   });
 });
 
@@ -409,6 +388,79 @@ describe("restart: a trigger whose firing ends with its host", () => {
       { enabled: false, failures: 3, disabledReason: reason, lastStatus: "timeout", lastError: restartedError(CAUSE), fired: 0 },
     );
   });
+
+  it("does not charge a trigger replaced during the firing that ended its host", { timeout: 20_000 }, async () => {
+    const t = await scripted({ reflex: { ...reflex("await new Promise(() => {});"), timeoutMs: 1_000 } }, TRIGGER_FIXTURE);
+    t.events.push("fire");
+    await waitFor(t, "trigger_fired");
+    const replaced = await t.host.forward({ method: "POST", url: "/triggers", body: Buffer.from(JSON.stringify(reflex("return 2;"))), tooLarge: false });
+    assert.equal((replaced.body as { replaced: boolean }).replaced, true); // the trigger fixture answers with Triggers.add's response
+    await waitFor(t, "disconnected");
+    const [info] = ((await get(t, "/triggers")).body as { triggers: TriggerInfo[] }).triggers;
+    assert.deepEqual({ run: info!.run, failures: info!.failures, lastStatus: info!.lastStatus }, { run: "return 2;", failures: 0, lastStatus: undefined });
+  });
+
+  it("counts the firing once: a host that dies idle after it does not count it again", { timeout: 30_000 }, async () => {
+    const t = await scripted({ reflex: reflex("await new Promise(() => {});") }, TRIGGER_FIXTURE);
+    const failures = async () => {
+      const [info] = ((await get(t, "/triggers")).body as { triggers: TriggerInfo[] }).triggers;
+      return info!.failures;
+    };
+    t.events.push("fire");
+    await waitFor(t, "disconnected");
+    assert.equal(await failures(), 1);
+    await killHost(t);
+    assert.equal(await failures(), 1, "the replacement of an idle host counted the old firing again");
+  });
+});
+
+describe("restart: every run in flight at its host's death ends once, with its real result when it has one", () => {
+  const blocks = (ms: number) => `const until = Date.now() + ${ms}; while (Date.now() < until);`;
+  // With timeoutMs 100 and the grace 300, the supervisor's deadline is 900 ms after the ack.
+  const cases = {
+    killed: { code: "while (true) {}", status: "timeout", error: restartedError(CAUSE), result: undefined },
+    "late-ok": { code: `${blocks(850)} return 1;`, status: "ok", error: undefined, result: 1 },
+    "late-timeout": { code: `try { await sleep(100000); } catch {} ${blocks(700)}`, status: "timeout", error: undefined, result: undefined },
+  } as const;
+  const failuresAfter = { killed: 2, "late-ok": 0, "late-timeout": 2 };
+
+  for (const kind of ["request", "trigger"] as const) {
+    for (const [name, end] of Object.entries(cases) as [keyof typeof cases, (typeof cases)[keyof typeof cases]][]) {
+      it(`${kind} run, ${name}`, { timeout: 20_000 }, async () => {
+        // The trigger has failed once already: its end counts on, or resets, the streak.
+        const t = await scripted({ reflex: { name: "reflex", on: ["fire"], run: end.code, timeoutMs: 100, cooldownMs: 0 } }, TRIGGER_FIXTURE, { triggerFailures: { reflex: 1 } });
+        const request =
+          kind === "request" ? t.host.forward({ method: "POST", url: "/run", body: Buffer.from(JSON.stringify({ code: end.code, timeoutMs: 100 })), tooLarge: false }) : undefined;
+        if (kind === "trigger") t.events.push("fire");
+        const acked = Number((await waitFor(t, "acked")).data.at);
+        // Held up from 750 to 1000 ms, in the check phase, the supervisor's next loop turn fires the deadline before it reads an end the host sent before it.
+        await sleep(Math.max(0, acked + 750 - Date.now()));
+        await setImmediate();
+        while (Date.now() < acked + 1_000);
+        await waitFor(t, "disconnected");
+
+        const expected = { status: end.status, ...(end.error !== undefined && { error: end.error }) };
+        if (request) {
+          const answer = await request;
+          assert.equal(answer.status, 200);
+          assert.deepEqual(withoutDuration(answer.body).rest, { ...expected, ...(end.result !== undefined && { result: end.result }), logs: "" });
+        }
+        // program_finished carries the status alone, as the host pushes it.
+        const finished = eventsOf(t, kind === "request" ? "program_finished" : "trigger_finished");
+        assert.deepEqual(finished.map(({ data: { durationMs: _, ...rest } }) => rest), [kind === "request" ? { status: end.status } : { name: "reflex", ...expected }]);
+        assert.equal(eventsOf(t, kind === "request" ? "trigger_finished" : "program_finished").length, 0);
+        assert.deepEqual(historyOf(t).map((line) => line.status), [end.status]);
+        const reasons = eventsOf(t, "disconnected").map((e) => String(e.data.reason));
+        assert.equal(reasons.length, 1);
+        if (name === "killed") assert.equal(reasons[0], `bot host restarted: ${CAUSE}`);
+        else assert.doesNotMatch(reasons[0]!, /did not stop/, "the host was restarted for a hang of a run that finished");
+        if (kind === "trigger") {
+          const [info] = ((await get(t, "/triggers")).body as { triggers: TriggerInfo[] }).triggers; // the replacement host's
+          assert.deepEqual({ failures: info!.failures, lastStatus: info!.lastStatus }, { failures: failuresAfter[name], lastStatus: end.status });
+        }
+      });
+    }
+  }
 });
 
 describe("restart: backoff and failure", () => {

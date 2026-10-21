@@ -17,6 +17,7 @@ import {
   STOP_GRACE_MS,
   type FromHost,
   type HostInit,
+  type FiringOf,
   type LostFiring,
   type ToHost,
 } from "../protocol/host.ts";
@@ -54,7 +55,7 @@ const NOT_CONNECTED = { status: 503, body: { error: NOT_CONNECTED_MESSAGE } };
 /** Why a host was killed whose program's end reached the supervisor just after the deadline had killed it: not a hang. */
 const LATE_CAUSE = "the program ended just as its deadline to stop ran out";
 
-/** A program the host reported and the supervisor has not seen end. */
+/** A program the host reported and that the supervisor has not seen delivered. */
 interface RunInFlight {
   id: number;
   end: RunEnd;
@@ -67,10 +68,15 @@ interface RunInFlight {
   stopAt?: number;
   /** The API request this run answers, absent for a trigger's. */
   requestId?: number;
-  /** The trigger the run fires, absent for a program. */
-  trigger?: string;
+  /** The trigger definition the run fires, absent for a program. */
+  trigger?: FiringOf;
   /** What the host reported about a program that did not stop: its result, with the logs it held. */
   hung?: RunResult;
+  /**
+   * The end the host reported and the history recorded. The run stays until the host has delivered
+   * it (the response to its request, or its trigger_finished); a host that dies first has the supervisor deliver it.
+   */
+  reported?: RunResult;
   /** Kills the host when the program neither settles nor is reported hung in time. */
   deadline?: NodeJS.Timeout;
   /** Set when its deadline killed the host: an end that still arrives was late, not hung. */
@@ -102,8 +108,6 @@ export class HostProcess {
   /** Requests that arrived while no host was ready; the next host answers them. */
   #queued: { request: ForwardedRequest; answer: Answer }[] = [];
   readonly #runs = new Map<number, RunInFlight>();
-  /** Runs that ended, by the request each answers, until the host answers it: a host that dies first has the supervisor answer with the result. */
-  readonly #ended = new Map<number, RunResult>();
   #attempt: Attempt | undefined;
   #nextRequest = 0;
   #connected = false;
@@ -163,9 +167,10 @@ export class HostProcess {
 
   /** Aborts the running program, if there is one, and resolves once it has ended: settled, or the host killed after the grace. */
   async stop(): Promise<{ stopped: boolean }> {
-    if (this.#runs.size === 0) return { stopped: false };
+    const running = [...this.#runs.values()].filter((run) => !run.reported);
+    if (running.length === 0) return { stopped: false };
     const now = Date.now();
-    const ending = [...this.#runs.values()].map((run) => {
+    const ending = running.map((run) => {
       run.stopAt ??= now;
       this.#arm(run);
       return run.finished.promise;
@@ -186,7 +191,6 @@ export class HostProcess {
     this.#runs.clear();
     const err = new Error("the body is shutting down");
     for (const request of this.#requests.values()) request.reject(err);
-    this.#ended.clear();
     this.#requests.clear();
     for (const { answer } of this.#queued) answer.reject(err);
     this.#queued = [];
@@ -315,10 +319,15 @@ export class HostProcess {
       case "response":
         this.#requests.get(message.id)?.resolve({ status: message.status, body: message.body });
         this.#requests.delete(message.id);
-        this.#ended.delete(message.id);
+        // The run it answers is delivered.
+        for (const run of this.#runs.values()) if (run.reported && run.requestId === message.id) this.#runs.delete(run.id);
         return;
       case "event":
         this.#events.push(message.type, message.data);
+        // A trigger run's end, delivered by its host.
+        if (message.type === "trigger_finished") {
+          for (const run of this.#runs.values()) if (run.reported && run.trigger?.name === message.data.name) this.#runs.delete(run.id);
+        }
         return;
       case "state":
         this.#connected = message.connected;
@@ -335,7 +344,7 @@ export class HostProcess {
             startedAt: now,
             timeoutAt: now + Math.min(Math.max(message.timeoutMs, 0), MAX_TIMEOUT_MS),
             requestId: message.requestId,
-            trigger: triggerOf(message.extra),
+            trigger: message.trigger,
           };
           this.#runs.set(message.runId, run);
           // Armed before the host may run the code: a program that blocks its host is still ended.
@@ -358,17 +367,20 @@ export class HostProcess {
         if (run) clearTimeout(run.deadline);
         // The deadline killed the host as the program was ending: the restart is not for a hang.
         if (run?.overdue) attempt.cause = LATE_CAUSE;
+        let reported: RunResult | undefined;
         try {
           if (run && message.result) {
             await run.end(message.result);
-            if (run.requestId !== undefined) this.#ended.set(run.requestId, message.result);
+            reported = message.result;
           }
           this.#sendIfOpen(attempt, { kind: "run_ack", runId: message.runId });
         } catch (err) {
           // The run fails as it did when the history was written in-process.
           this.#sendIfOpen(attempt, { kind: "run_ack", runId: message.runId, error: errorText(err) });
         }
-        this.#runs.delete(message.runId);
+        // The host has yet to deliver the end, after the ack; until it has, its death delivers it.
+        if (run && reported && (run.requestId !== undefined || run.trigger)) run.reported = reported;
+        else this.#runs.delete(message.runId);
         run?.finished.resolve();
         return;
       }
@@ -414,20 +426,22 @@ export class HostProcess {
     const results = new Map<RunInFlight, RunResult>();
     for (const run of runs) {
       clearTimeout(run.deadline);
-      const result = run.hung ?? lostRun(run, cause);
+      const result = run.hung ?? run.reported ?? lostRun(run, cause);
       results.set(run, result);
-      try {
-        await run.end(result);
-      } catch (err) {
-        console.error("[minebot] could not write the history line of a program its host did not finish:", err);
+      // A reported end is on disk, and a program's run pushed its program_finished before reporting it.
+      if (!run.reported) {
+        try {
+          await run.end(result);
+        } catch (err) {
+          console.error("[minebot] could not write the history line of a program its host did not finish:", err);
+        }
+        if (run.trigger === undefined) this.#events.push("program_finished", { status: result.status, durationMs: result.durationMs });
       }
-      if (run.trigger === undefined) {
-        this.#events.push("program_finished", { status: result.status, durationMs: result.durationMs });
-      } else {
+      if (run.trigger !== undefined) {
         // As the host pushes it; the next host counts the firing in the trigger's failures.
-        this.#lostFiring = { name: run.trigger, status: result.status, ...(result.error !== undefined && { error: result.error }), durationMs: result.durationMs };
+        this.#lostFiring = { ...run.trigger, status: result.status, ...(result.error !== undefined && { error: result.error }), durationMs: result.durationMs };
         this.#events.push("trigger_finished", {
-          name: run.trigger,
+          name: run.trigger.name,
           status: result.status,
           durationMs: result.durationMs,
           ...(result.error !== undefined && { error: result.error }),
@@ -441,12 +455,6 @@ export class HostProcess {
       if (run.requestId !== undefined) this.#requests.delete(run.requestId);
       run.finished.resolve();
     }
-    // A run that ended but whose request its host did not answer before it died: the request gets the run's result.
-    for (const [id, result] of this.#ended) {
-      this.#requests.get(id)?.resolve({ status: 200, body: result });
-      this.#requests.delete(id);
-    }
-    this.#ended.clear();
     for (const request of this.#requests.values()) request.resolve(NOT_CONNECTED);
     this.#requests.clear();
     this.#schedule(Date.now() - attempt.readyAt);
@@ -460,10 +468,6 @@ function lostRun(run: RunInFlight, cause: string): RunResult {
   if (run.stopAt !== undefined && run.stopAt <= run.timeoutAt) status = "stopped";
   else if (now >= run.timeoutAt) status = "timeout";
   return { status, error: restartedError(cause), logs: "", durationMs: now - run.startedAt };
-}
-
-function triggerOf(extra: object): string | undefined {
-  return "trigger" in extra && typeof extra.trigger === "string" ? extra.trigger : undefined;
 }
 
 function errorText(err: unknown): string {

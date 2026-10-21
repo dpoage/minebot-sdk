@@ -40,9 +40,14 @@ export function restartedError(cause: string): string {
 /** The part of a trigger run's logs kept in its `trigger_finished` event, whether the host or the supervisor pushes it. */
 export const MAX_EVENT_LOGS = 2000;
 
-/** How a trigger's firing ended that its host could not finish: the host was killed or died during it. */
-export interface LostFiring {
+/** Which definition of a trigger a firing ran: its name and when that definition was saved. */
+export interface FiringOf {
   name: string;
+  updated: string;
+}
+
+/** How a trigger's firing ended that its host could not finish: the host was killed or died during it. */
+export interface LostFiring extends FiringOf {
   status: RunStatus;
   error?: string;
   durationMs: number;
@@ -102,9 +107,9 @@ export type FromHost =
   | { kind: "event"; type: string; data: Record<string, unknown> }
   /**
    * A program is about to run; user code starts only after the matching `run_ack`. `requestId` is
-   * the forwarded request the run answers (/run, /kits/try); a trigger's run has none.
+   * the forwarded request the run answers (/run, /kits/try); `trigger` is the definition a trigger's run fires, which has no request.
    */
-  | { kind: "run_started"; runId: number; code: string; timeoutMs: number; extra: object; kits: string[]; requestId?: number }
+  | { kind: "run_started"; runId: number; code: string; timeoutMs: number; extra: object; kits: string[]; requestId?: number; trigger?: FiringOf }
   /**
    * The run ended; the run settles once the matching `run_ack` arrives. `result: null` means it threw
    * before producing one (not connected, busy): the run is over and leaves no final history line.

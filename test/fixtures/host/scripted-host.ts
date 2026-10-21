@@ -7,13 +7,12 @@
 //   graceMs             how long its `report` runs wait after an abort before reporting themselves hung
 //   ackLog              file it writes the time (ms) it was acked a run's start to
 //   trigger             a run with no request, started at `start`: { mode, timeoutMs }
-// Once built it pushes a `hello` event with its pid. A run pushes `acked` with the time (ms) it was acked.
+// Once built it pushes a `hello` event with its pid.
 // Requests: /ping and /notes answer with this pid; /slow never answers; /run?mode=...&timeoutMs=...
 // starts a run that answers the request:
 //   block   takes the main thread once acked
 //   crash   SIGKILLs itself once acked
 //   hang    stays alive and never ends or reports
-//   late    takes the main thread for 850 ms once acked, then ends with status ok and logs "late"
 //   report  after the abort (a stop, or timeoutMs) waits graceMs, then reports itself hung with logs "partial"
 //   settle  ends at the abort, reporting its result
 import { appendFileSync, readFileSync } from "node:fs";
@@ -45,31 +44,23 @@ const aborts: (() => void)[] = [];
 let script: Script = {};
 let nextRun = 0;
 
-function startRun(mode: string, timeoutMs: number, requestId?: number, extra: object = {}): void {
+function startRun(mode: string, timeoutMs: number, requestId?: number, trigger?: string): void {
   const runId = nextRun++;
   runs.set(runId, { mode, timeoutMs, requestId, phase: "starting" });
-  send({ kind: "run_started", runId, code: "program", timeoutMs, extra, kits: [], ...(requestId !== undefined && { requestId }) });
+  const extra = trigger === undefined ? {} : { trigger, event: { seq: 1, type: "x" } };
+  send({ kind: "run_started", runId, code: "program", timeoutMs, extra, kits: [], ...(requestId !== undefined && { requestId }), ...(trigger !== undefined && { trigger: { name: trigger, updated: "t0" } }) });
 }
 
 function running(runId: number, run: Run): void {
   run.phase = "running";
   if (script.ackLog) appendFileSync(script.ackLog, `${Date.now()}\n`);
   // The host acks `acked` before it blocks: the test waits for it to know the deadline is armed.
-  send({ kind: "event", type: "acked", data: { runId, at: Date.now() } });
+  send({ kind: "event", type: "acked", data: { runId } });
   if (run.mode === "block") {
     for (;;);
   }
   if (run.mode === "crash") process.kill(process.pid, "SIGKILL");
   if (run.mode === "hang") return;
-  if (run.mode === "late") {
-    const until = Date.now() + 850;
-    while (Date.now() < until);
-    run.result = { status: "ok", logs: "late", durationMs: 850 };
-    run.phase = "finishing";
-    send({ kind: "event", type: "program_finished", data: { status: "ok", durationMs: 850 } });
-    send({ kind: "run_finished", runId, result: run.result });
-    return;
-  }
   const startedAt = Date.now();
   const abort = new Promise<"stopped" | "timeout">((resolve) => {
     aborts.push(() => resolve("stopped"));
@@ -107,7 +98,7 @@ process.on("message", (message: ToHost) => {
       return;
     }
     case "start":
-      if (script.trigger) startRun(script.trigger.mode, script.trigger.timeoutMs, undefined, { trigger: "t1", event: { seq: 1, type: "x" } });
+      if (script.trigger) startRun(script.trigger.mode, script.trigger.timeoutMs, undefined, "t1");
       return;
     case "request": {
       const url = new URL(message.url, "http://localhost");

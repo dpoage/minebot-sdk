@@ -2,7 +2,7 @@
 // the event sink that hands events to the supervisor's log and hears them back with the log's
 // seq, and the reporter that has the supervisor record each program run before its code starts.
 import { DEFAULT_TIMEOUT_MS, type BodyEvent, type RunResult } from "../protocol/index.ts";
-import type { EventSink, FromHost } from "../protocol/host.ts";
+import type { EventSink, FiringOf, FromHost } from "../protocol/host.ts";
 import type { RunOutcome } from "../program/runner.ts";
 import type { RunRecorder } from "./body.ts";
 
@@ -75,7 +75,7 @@ export class RunReporter implements RunRecorder {
     if (!this.#options.stop() && this.#starting > 0) this.#stopPending = true;
   }
 
-  async record(run: { code: string; timeoutMs?: number; extra?: object; requestId?: number }, execute: () => Promise<RunOutcome>): Promise<RunResult> {
+  async record(run: { code: string; timeoutMs?: number; extra?: object; requestId?: number; trigger?: FiringOf }, execute: () => Promise<RunOutcome>): Promise<RunResult> {
     const runId = this.#nextId++;
     this.#starting++;
     try {
@@ -87,6 +87,7 @@ export class RunReporter implements RunRecorder {
         extra: run.extra ?? {},
         kits: this.#options.kits(),
         ...(run.requestId !== undefined && { requestId: run.requestId }),
+        ...(run.trigger && { trigger: run.trigger }),
       });
     } catch (err) {
       // The run never starts; a stop meant for it must not abort the next one.

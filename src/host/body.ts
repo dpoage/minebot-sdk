@@ -8,7 +8,7 @@ import type { KitHost } from "../kit/kit.ts";
 import type { Wiki } from "../wiki/wiki.ts";
 import { WikiAccess, wikiView } from "../wiki/access.ts";
 import { Connection, type ServerAuth } from "./connection.ts";
-import type { EventSink, LostFiring } from "../protocol/host.ts";
+import type { EventSink, FiringOf, LostFiring } from "../protocol/host.ts";
 import { programGlobals, type GlobalsDeps } from "./globals.ts";
 import { briefOf, observation } from "./observation.ts";
 import { Notes } from "./notes.ts";
@@ -60,9 +60,9 @@ export interface BodyOptions {
 export interface RunRecorder {
   /**
    * Records the start of `execute`, runs it once the history has it, and records its end. A run that throws leaves no end; a start or end the history cannot write fails the run.
-   * `requestId` is the API request the run answers, so the supervisor can answer it when this host is killed mid-run.
+   * `requestId` is the API request the run answers, and `trigger` the trigger definition it fires, so the supervisor can end it when this host is killed mid-run.
    */
-  record(run: { code: string; timeoutMs?: number; extra?: object; requestId?: number }, execute: () => Promise<RunOutcome>): Promise<RunResult>;
+  record(run: { code: string; timeoutMs?: number; extra?: object; requestId?: number; trigger?: FiringOf }, execute: () => Promise<RunOutcome>): Promise<RunResult>;
   /** Records code the body will run later. */
   register(code: string, extra: object): Promise<void>;
 }
@@ -178,7 +178,10 @@ export class Body {
       started();
       return this.runner.run(trigger.run, trigger.timeoutMs, { event: structuredClone(event) });
     };
-    return this.#options.recorder.record({ code: trigger.run, timeoutMs: trigger.timeoutMs, extra: { trigger: trigger.name, event: { seq: event.seq, type: event.type } } }, run);
+    return this.#options.recorder.record(
+      { code: trigger.run, timeoutMs: trigger.timeoutMs, extra: { trigger: trigger.name, event: { seq: event.seq, type: event.type } }, trigger: { name: trigger.name, updated: trigger.updated } },
+      run,
+    );
   }
 
   get milestones(): MilestoneSet | null {

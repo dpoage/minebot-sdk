@@ -106,8 +106,9 @@ export class Triggers {
     for (const [name, failures] of Object.entries(deps.failures ?? {})) {
       if (this.#defs.has(name)) this.#statsOf(name).failures = failures;
     }
+    // Only to the definition that fired: one replaced during the firing has no say, as in #record.
     const lostDef = deps.lost && this.#defs.get(deps.lost.name);
-    if (deps.lost && lostDef) this.#record(lostDef, deps.lost);
+    if (deps.lost && lostDef?.updated === deps.lost.updated) this.#record(lostDef, deps.lost);
     this.#unsubscribe = deps.events.subscribe((event) => this.#onEvent(event));
   }
 
