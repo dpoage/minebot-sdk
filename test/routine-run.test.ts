@@ -101,6 +101,48 @@ describe("a routine's error", () => {
     });
   }
 
+  /** Calls a routine that logs, then throws `thrown`, with the library in `dir`. */
+  const throwing = (dir: string, thrown: () => unknown) =>
+    new ProgramRunner({ globals: () => ({}) }).call(
+      async (scope) => {
+        scope.log("before");
+        throw thrown();
+      },
+      { sourceDir: dir },
+    );
+
+  for (const [what, thrown, expected] of [
+    ["an error whose message holds a URL that is no file (%zz)", () => new Error("see file:///tmp/%zz:3"), "Error: see file:///tmp/%zz:3"],
+    ["an error whose message holds a URL with an encoded slash", () => new Error("see file:///tmp/a%2Fb.ts:1:2"), "Error: see file:///tmp/a%2Fb.ts:1:2"],
+  ] as const) {
+    it(`reports ${what} as an error with its message and the logs`, async () => {
+      const run = await throwing(library({}), thrown);
+      assert.deepEqual({ status: run.status, error: run.error, logs: run.logs }, { status: "error", error: expected, logs: "before" });
+    });
+  }
+
+  it("drops a frame whose URL names no file and keeps the library's frames", async () => {
+    const dir = library({});
+    const stack = ["Error: x", "    at f (file:///tmp/a%2Fb.ts:1:1)", "    at g (file:///tmp/%zz.ts:1:1)", `    at h (${pathToFileURL(path.join(dir, "a.ts")).href}?q=1:2:3)`].join("\n");
+    const run = await throwing(dir, () => ({ stack, message: "x" }));
+    assert.deepEqual({ status: run.status, error: run.error, logs: run.logs }, { status: "error", error: `Error: x\n    at h (${dir}/a.ts:2:3)`, logs: "before" });
+  });
+
+  it("reports a value with no string form, or whose stack cannot be read, as an error with the logs", async () => {
+    const dir = library({});
+    const bare = await throwing(dir, () => Object.create(null));
+    assert.deepEqual({ status: bare.status, error: bare.error, logs: bare.logs }, { status: "error", error: "[Object: null prototype] {}", logs: "before" });
+    const unreadable = await throwing(dir, () => ({
+      message: "hidden",
+      get stack(): string {
+        throw new Error("no stack");
+      },
+    }));
+    assert.equal(unreadable.status, "error");
+    assert.match(unreadable.error ?? "", /message: 'hidden'/);
+    assert.equal(unreadable.logs, "before");
+  });
+
   it("reports where a module throws while it is evaluated", async () => {
     const loader = new RoutineLoader(library({ "eval.ts": '\n\nthrow new TypeError("at load");\nexport default () => 1;\n' }));
     const run = await runRoutine(loader, "eval");

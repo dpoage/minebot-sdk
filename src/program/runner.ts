@@ -296,28 +296,44 @@ function formatError(err: unknown): string {
 /**
  * A routine's error: its message and the stack frames inside `sourceDir`, each naming `<file>:<line>:<column>`.
  * Frames name library modules by `file:` URL; what a URL adds to the file (a query, a fragment) names an
- * evaluation and not a file, so frames give the file's path.
+ * evaluation and not a file, so frames give the file's path. Never throws, whatever the routine threw.
  */
 function formatRoutineError(err: unknown, sourceDir: string): string {
-  if (typeof err !== "object" || err === null || !("stack" in err) || typeof err.stack !== "string") return String(err);
-  const name = "name" in err && typeof err.name === "string" ? err.name : "Error";
-  const message = "message" in err && typeof err.message === "string" ? err.message : "";
-  // Modules load from the directory's real path, so its frames name that (a directory gone since has none to resolve).
-  let real = path.resolve(sourceDir);
   try {
-    real = realpathSync(real);
-  } catch {}
-  const inside = path.join(real, path.sep);
-  // A frame ends with `<url>:<line>:<column>`, maybe in parentheses; a compile error's excerpt starts with `<url>:<line>`.
-  const located = (line: string): string | undefined => {
-    const match = /file:\/\/\/\S*?(?=:\d+(?::\d+)?\)?$)/.exec(line);
-    const file = match ? fileURLToPath(match[0]) : undefined;
-    return match && file?.startsWith(inside) ? line.slice(0, match.index) + file + line.slice(match.index + match[0].length) : undefined;
-  };
-  const [first = "", ...rest] = err.stack.split("\n");
-  // A module that does not compile starts with a source excerpt ("<file>:N", the line, a caret) before a blank line.
-  const excerptStart = located(first);
-  const excerpt = excerptStart === undefined ? [] : [excerptStart, ...rest.slice(0, Math.max(rest.indexOf(""), 0))];
-  const frames = rest.flatMap((line) => (line.trimStart().startsWith("at ") ? (located(line) ?? []) : []));
-  return [...excerpt, `${name}: ${message}`, ...frames].join("\n");
+    if (typeof err !== "object" || err === null || !("stack" in err) || typeof err.stack !== "string") return String(err);
+    const name = "name" in err && typeof err.name === "string" ? err.name : "Error";
+    const message = "message" in err && typeof err.message === "string" ? err.message : "";
+    // Modules load from the directory's real path, so its frames name that (a directory gone since has none to resolve).
+    let real = path.resolve(sourceDir);
+    try {
+      real = realpathSync(real);
+    } catch {}
+    const inside = path.join(real, path.sep);
+    // A frame ends with `<url>:<line>:<column>`, maybe in parentheses; a compile error's excerpt starts with `<url>:<line>`.
+    // A URL that names no file path (`%zz`, an encoded `/`) is not located: the stack text is the routine's to write.
+    const located = (line: string): string | undefined => {
+      const match = /file:\/\/\/\S*?(?=:\d+(?::\d+)?\)?$)/.exec(line);
+      if (!match) return undefined;
+      let file: string;
+      try {
+        file = fileURLToPath(match[0]);
+      } catch {
+        return undefined;
+      }
+      return file.startsWith(inside) ? line.slice(0, match.index) + file + line.slice(match.index + match[0].length) : undefined;
+    };
+    const [first = "", ...rest] = err.stack.split("\n");
+    // A module that does not compile starts with a source excerpt ("<file>:N", the line, a caret) before a blank line.
+    const excerptStart = located(first);
+    const excerpt = excerptStart === undefined ? [] : [excerptStart, ...rest.slice(0, Math.max(rest.indexOf(""), 0))];
+    const frames = rest.flatMap((line) => (line.trimStart().startsWith("at ") ? (located(line) ?? []) : []));
+    return [...excerpt, `${name}: ${message}`, ...frames].join("\n");
+  } catch {
+    // The value has no string form (a null prototype) or one of its accessors threw: show it as inspect does.
+    try {
+      return inspect(err, { depth: 2, breakLength: 120 });
+    } catch {
+      return "a thrown value that cannot be shown";
+    }
+  }
 }
