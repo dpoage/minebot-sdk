@@ -1,16 +1,23 @@
-// `minebot-sdk/testing`: run kit actions in a test without a Minecraft server. The harness gives
-// them the real framework (argument and result validation, `uses`, per-kit stores, the active
-// set) over a fake Mineflayer bot on the real registry of the version the body targets. It
-// tests decision logic, not physics; see `createKitHarness`.
+// `minebot-sdk/testing`: run kit actions and routines in a test without a Minecraft server. The
+// harness gives them the real framework (argument and result validation, `uses`, per-kit stores,
+// the active set) over a fake Mineflayer bot on the real registry of the version the body targets.
+// It tests decision logic, not physics; see `createKitHarness`.
 import type { Bot } from "mineflayer";
 import type { Block } from "prismarine-block";
 import type { Entity } from "prismarine-entity";
 import type { Vec3 } from "vec3";
+import type { z } from "zod";
 import { BUILTIN_KITS } from "../kit/index.ts";
 import { type Kit, type KitAction, KitHost } from "../kit/kit.ts";
 import type { KitRegistry } from "../kit/registry.ts";
+import type { ProgramScope } from "../program/scope.ts";
 import { JsonStore } from "../store.ts";
+import type { RoutineContext } from "../routine/context.ts";
+import { invokeRoutine } from "../routine/invoke.ts";
+import type { Routine } from "../routine/public.ts";
 import { createFakeBot, type EntitySpec, type EquipmentSlot } from "./bot.ts";
+import { memoryNotes } from "./notes.ts";
+import { UnsupportedApiError } from "./strict.ts";
 import { type At, type BlockSpec, type Ground, vec } from "./world.ts";
 
 export { UnsupportedApiError } from "./strict.ts";
@@ -51,6 +58,19 @@ export interface RecordedCall {
   args: unknown;
 }
 
+/** A function of the context and its arguments, as a module's default export. */
+type RoutineFunction = (ctx: RoutineContext, args: never) => unknown;
+/**
+ * The function's own parameter and result, when `defineRoutine` declared no schema for them (a
+ * schema-less `defineRoutine` value reads as `unknown` either way). A `never` parameter is the
+ * compiler checking `args` before it has inferred the routine from an inline function: it reads as `unknown`.
+ */
+type PlainArgs<F> = F extends (ctx: never, args: infer P) => unknown ? ([P] extends [never] ? unknown : P) : never;
+type PlainResult<F> = F extends (...args: never) => infer X ? Awaited<X> : never;
+/** A `defineRoutine` value carries its schemas in its type: callers pass the schema's input, and get its output, as `invokeRoutine` does. */
+type RunArgs<F> = F extends Routine<infer A, infer _R> ? (z.ZodType extends A ? PlainArgs<F> : z.input<A>) : PlainArgs<F>;
+type RunResult<F> = F extends Routine<infer _A, infer R> ? (z.ZodType extends R ? PlainResult<F> : z.output<R>) : PlainResult<F>;
+
 export interface KitHarness {
   /** The fake bot kits receive as `ctx.bot`. */
   readonly bot: Bot;
@@ -60,6 +80,15 @@ export interface KitHarness {
   readonly kit: Readonly<KitRegistry>;
   /** Runs `"kit.action"` through the framework and resolves with its result. */
   call<R = unknown>(path: string, args?: unknown): Promise<R>;
+  /**
+   * Runs a routine through the same `invokeRoutine` the body calls, with this harness's bot, logs,
+   * clock, abort, kits, and notes. `routine` is a `defineRoutine` value, a plain function
+   * `(ctx, args) => result`, or a module namespace whose default export is one (`await import("./mine.ts")`).
+   * Arguments and result are validated as in the body, with the same messages; the routine is
+   * named "under test" in them. `ctx.status` and `ctx.wiki` throw `UnsupportedApiError`.
+   */
+  run<F extends RoutineFunction>(routine: F, args?: NoInfer<RunArgs<F>>): Promise<RunResult<F>>;
+  run<M extends { readonly default: RoutineFunction }>(routine: M, args?: NoInfer<RunArgs<M["default"]>>): Promise<RunResult<M["default"]>>;
   /** Every action call so far, in order. */
   readonly calls: readonly RecordedCall[];
   /** What kits passed to `ctx.log`. */
@@ -160,26 +189,45 @@ export function createKitHarness(options: KitHarnessOptions = {}): KitHarness {
     },
     ...(options.active && { active: options.active }),
   });
-  const kit = host.api(
-    {
-      log: (...args) => {
-        logs.push(args.map(String).join(" "));
+  // What a kit and a routine share: one log, one clock, one abort, one subscription path.
+  const scope: ProgramScope = {
+    log: (...args) => {
+      logs.push(args.map(String).join(" "));
+    },
+    // Passes the clock, then yields a macrotask: polling loops (`while (!ready) await ctx.sleep(ms)`)
+    // must let timers fire, or `within`, node:test timeouts, and a timed `abort()` could never run.
+    sleep: async (ms) => {
+      controller.signal.throwIfAborted();
+      handle.advance(Math.ceil(ms / 50));
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      controller.signal.throwIfAborted();
+    },
+    signal: controller.signal,
+    on: (event, handler) => {
+      bot.on(event as never, handler as never);
+    },
+  };
+  const kit = host.api(scope, bot);
+  const routineContext: RoutineContext = {
+    ...scope,
+    bot,
+    notes: memoryNotes(),
+    kit: kit as unknown as Readonly<KitRegistry>,
+    status: () => {
+      throw new UnsupportedApiError("ctx.status");
+    },
+    wiki: {
+      search: () => {
+        throw new UnsupportedApiError("ctx.wiki.search");
       },
-      // Passes the clock, then yields a macrotask: polling loops (`while (!ready) await ctx.sleep(ms)`)
-      // must let timers fire, or `within`, node:test timeouts, and a timed `abort()` could never run.
-      sleep: async (ms) => {
-        controller.signal.throwIfAborted();
-        handle.advance(Math.ceil(ms / 50));
-        await new Promise<void>((resolve) => setImmediate(resolve));
-        controller.signal.throwIfAborted();
+      read: () => {
+        throw new UnsupportedApiError("ctx.wiki.read");
       },
-      signal: controller.signal,
-      on: (event, handler) => {
-        bot.on(event as never, handler as never);
+      list: () => {
+        throw new UnsupportedApiError("ctx.wiki.list");
       },
     },
-    bot,
-  );
+  };
 
   return {
     bot,
@@ -194,6 +242,7 @@ export function createKitHarness(options: KitHarnessOptions = {}): KitHarness {
       if (!run) throw new Error(`kit "${kitName}" has no action "${actionName}"; it has: ${Object.keys(namespace).join(", ") || "none"}`);
       return (await run(args)) as never;
     },
+    run: ((routine: unknown, args?: unknown) => invokeRoutine(typeof routine === "function" ? { default: routine } : routine, "under test", routineContext, args)) as KitHarness["run"],
     calls,
     logs,
     chat: handle.chat,

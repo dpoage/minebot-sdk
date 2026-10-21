@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { action, defineKit, goals, Vec3, z } from "minebot-sdk/kit";
+import { defineRoutine, z as routineZ } from "minebot-sdk/routine";
 import { createKitHarness, UnsupportedApiError } from "minebot-sdk/testing";
+import { invokeRoutine } from "../src/routine/invoke.ts";
 
 /** A kit whose actions reach for Mineflayer APIs the harness does not implement. */
 const brawler = defineKit(
@@ -341,5 +343,168 @@ describe("minebot-sdk/testing matches Mineflayer where kits can tell", () => {
     assert.equal(Reflect.get(window, "totalFuel"), 1600);
     assert.ok(window.fuel > 0.98 && window.fuel < 1, `fuel ${window.fuel}`);
     assert.equal(window.fuelItem(), null, "the coal is burning, not in the slot, and fuel still reads above zero");
+  });
+});
+
+/** The outcome of a promise, as data: what a caller of `invokeRoutine` or `h.run` can tell apart. */
+async function outcome(promise: Promise<unknown>): Promise<{ value: unknown } | { error: string }> {
+  try {
+    return { value: await promise };
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+describe("minebot-sdk/testing routines", () => {
+  const labelled = defineRoutine({ args: routineZ.object({ n: routineZ.number().default(3), label: routineZ.string() }), returns: routineZ.string() }, (_ctx, args) => `${args.label}:${args.n}`);
+  const strict = defineRoutine({ returns: routineZ.object({ ok: routineZ.boolean() }) }, (() => ({ ok: "yes" })) as never);
+  const parsed = defineRoutine({ returns: routineZ.object({ n: routineZ.string().transform(Number) }) }, () => ({ n: "42" }));
+  const echo = (_ctx: unknown, args: unknown) => args;
+
+  // The reference the harness has to match: the body's own `invokeRoutine`, over the same module and arguments.
+  const cases: [string, unknown, unknown, RegExp | unknown][] = [
+    ["defaults applied", labelled, { label: "x" }, "x:3"],
+    ["an argument that does not match", labelled, { label: "x", n: "one" }, /^routine "under test" arguments: .*\nargs schema: .*"type":"number"/s],
+    ["no arguments for an object schema", labelled, undefined, /^routine "under test" arguments: /],
+    ["a result that does not match", strict, undefined, /^routine "under test" returned a value that does not match its returns schema: .*"type":"boolean"/s],
+    ["a parsed result", parsed, undefined, { n: 42 }],
+    ["a plain function", echo, { a: [1] }, { a: [1] }],
+    ["a module namespace", { default: labelled }, { label: "y", n: 1 }, "y:1"],
+    ["a module namespace of a plain function", { default: echo, other: 1 }, "as given", "as given"],
+    ["a routine that throws", () => Promise.reject(new Error("no luck")), undefined, /^no luck$/],
+    ["a default export that is not a function", { default: 5 }, undefined, /^routine "under test" must default-export a function \(ctx, args\) => result; its default export is of type number$/],
+    ["a module without a default export", { helper: 1 }, undefined, /^routine "under test" must default-export a function .*it has no default export \(it exports: helper\)$/],
+    ["no module", null, undefined, /^routine "under test" must default-export a function .*the module is null$/],
+  ];
+
+  for (const [name, routine, args, expected] of cases) {
+    it(`resolves and rejects as invokeRoutine does: ${name}`, async () => {
+      const h = createKitHarness();
+      const ran = await outcome(h.run(routine as never, args as never));
+      const reference = await outcome(invokeRoutine(typeof routine === "function" ? { default: routine } : routine, "under test", { bot: h.bot } as never, args));
+      assert.deepEqual(ran, reference);
+      if (expected instanceof RegExp) {
+        assert.ok("error" in ran, `expected a rejection, got ${JSON.stringify(ran)}`);
+        assert.match(ran.error, expected);
+      } else {
+        assert.deepEqual(ran, { value: expected });
+      }
+    });
+  }
+
+  it("gives a routine exactly the context members, and the kit API of the harness", async () => {
+    const h = createKitHarness({ inventory: { oak_log: 1 } });
+    const seen = await h.run(async (ctx) => ({ keys: Object.keys(ctx).sort(), bot: ctx.bot === h.bot, kit: ctx.kit === h.kit, signal: ctx.signal.aborted }));
+    assert.deepEqual(seen, { keys: ["bot", "kit", "log", "notes", "on", "signal", "sleep", "status", "wiki"], bot: true, kit: true, signal: false });
+    assert.equal(await h.run((ctx) => ctx.kit!.crafter.make({ item: "oak_planks" })), 4);
+    assert.deepEqual(h.calls[0], { kit: "crafter", action: "make", args: { item: "oak_planks" } });
+    assert.equal(h.count("oak_planks"), 4);
+  });
+
+  it("lands a routine's log lines in h.logs, with the kits' own", async () => {
+    const announcer = defineKit({ name: "announcer", description: "Logs." }, { shout: action({ doc: "Logs a line.", args: z.object({}), run: (ctx) => ctx.log("kit says") }) });
+    const h = createKitHarness({ kits: [announcer] });
+    await h.run(async (ctx) => {
+      ctx.log("routine says", 1, { a: 2 });
+      await (ctx.kit as unknown as Record<string, Record<string, (args: unknown) => Promise<void>>>).announcer!.shout!({});
+    });
+    assert.deepEqual(h.logs, ["routine says 1 [object Object]", "kit says"]);
+  });
+
+  it("passes the clock when a routine sleeps, and rejects its sleep once the harness aborts", async () => {
+    const h = createKitHarness({ time: 1000 });
+    await h.run((ctx) => ctx.sleep(1000));
+    assert.equal(h.bot.time.timeOfDay, 1020);
+    const stopping = new Error("stop now");
+    let sleeps = 0;
+    await assert.rejects(
+      h.run(async (ctx) => {
+        assert.equal(ctx.signal.aborted, false);
+        for (;;) {
+          if (++sleeps === 3) h.abort(stopping);
+          await ctx.sleep(50);
+        }
+      }),
+      /stop now/,
+    );
+    assert.equal(sleeps, 3);
+    assert.equal(await h.run((ctx) => ctx.signal.reason), stopping);
+  });
+
+  it("keeps notes in memory, newest change first, per harness, under the body's key and text rules", async () => {
+    const h = createKitHarness();
+    const listed = await h.run((ctx) => {
+      assert.equal(ctx.notes.get("plan"), undefined);
+      const a = ctx.notes.set("plan", "mine");
+      ctx.notes.set("base", "at 0 0");
+      ctx.notes.set("plan", "mine, then smelt");
+      assert.deepEqual(Object.keys(a).sort(), ["key", "text", "updated"]);
+      assert.equal(Number.isNaN(Date.parse(a.updated)), false);
+      assert.throws(() => ctx.notes.set("Bad Key", "x"));
+      assert.throws(() => ctx.notes.set("empty", ""));
+      return ctx.notes.list().map((note) => [note.key, note.text]);
+    });
+    assert.deepEqual(listed, [["plan", "mine, then smelt"], ["base", "at 0 0"]]);
+    // Notes belong to the harness, not to one run; deleting reports whether the note existed.
+    assert.deepEqual(await h.run((ctx) => [ctx.notes.get("base"), ctx.notes.delete("base"), ctx.notes.delete("base"), ctx.notes.list().length]), ["at 0 0", true, false, 1]);
+    assert.equal(await createKitHarness().run((ctx) => ctx.notes.get("plan")), undefined);
+    await assert.rejects(
+      h.run((ctx) => {
+        for (let i = 0; i < 201; i++) ctx.notes.set(`n${i}`, "x");
+      }),
+      /a body keeps at most 200 notes/,
+    );
+  });
+
+  it("subscribes through ctx.on to the harness bot's events", async () => {
+    const h = createKitHarness();
+    const heard: unknown[][] = [];
+    await h.run((ctx) => ctx.on("chat", (...args) => heard.push(args)));
+    h.bot.emit("chat" as never, "someone" as never, "hello" as never);
+    assert.deepEqual(heard, [["someone", "hello"]]);
+  });
+
+  it("makes status and wiki unsupported, naming the member", async () => {
+    const h = createKitHarness();
+    const reasons = await h.run((ctx) => {
+      const reached: unknown[] = [];
+      for (const use of [() => ctx.status(), () => ctx.wiki!.search("iron"), () => ctx.wiki!.read("x"), () => ctx.wiki!.list()]) {
+        try {
+          use();
+        } catch (error) {
+          reached.push(error instanceof UnsupportedApiError ? error.api : error);
+        }
+      }
+      return reached;
+    });
+    assert.deepEqual(reasons, ["ctx.status", "ctx.wiki.search", "ctx.wiki.read", "ctx.wiki.list"]);
+    await assert.rejects(h.run((ctx) => ctx.status()), /not supported by minebot-sdk\/testing: ctx\.status/);
+  });
+
+  it("types a defineRoutine value's arguments and result through h.run", async () => {
+    const h = createKitHarness();
+    const text: string = await h.run(labelled, { label: "a" });
+    assert.equal(text, "a:3");
+    const n: number = (await h.run(parsed)).n;
+    assert.equal(n, 42);
+    const five: number = await h.run(async () => 5);
+    assert.equal(five, 5);
+    const plain: number = await h.run(async (_ctx, args: { n: number }) => args.n + 1, { n: 1 });
+    assert.equal(plain, 2);
+    const fromModule: number = await h.run({ default: async (_ctx: unknown, args: { n: number }) => args.n * 2 }, { n: 4 });
+    assert.equal(fromModule, 8);
+    // Never executed: the compiler is the test.
+    const compileOnly = async () => {
+      // @ts-expect-error `label` is required
+      await h.run(labelled, { n: 1 });
+      // @ts-expect-error `n` is a number
+      await h.run(labelled, { label: "a", n: "one" });
+      // @ts-expect-error the parsed result's `n` is a number
+      const wrong: string = (await h.run(parsed)).n;
+      // @ts-expect-error the argument is a number
+      await h.run(async (_ctx, args: { n: number }) => args.n, { n: "1" });
+      return wrong;
+    };
+    assert.equal(typeof compileOnly, "function");
   });
 });
