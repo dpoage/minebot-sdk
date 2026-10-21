@@ -473,10 +473,13 @@ describe("restart: a trigger whose firing ends with its host", () => {
       assert.equal(typeof durationMs, "number");
       return rest;
     };
-    // The run's own result, and the error of an end the history refused.
-    assert.deepEqual(await finishedOf(true), await finishedOf(false));
-    assert.deepEqual(await finishedOf(true, refusingEnds), await finishedOf(false, refusingEnds));
-    assert.deepEqual(await finishedOf(false, refusingEnds), { name: "reflex", status: "error", error: "disk full" });
+    // The run's own result, and the error of an end the history refused; whatever the builder puts in, both sides carry it.
+    const ok = await finishedOf(false);
+    assert.deepEqual(await finishedOf(true), ok);
+    assert.equal(ok.logs, "same end");
+    const refused = await finishedOf(false, refusingEnds);
+    assert.deepEqual(await finishedOf(true, refusingEnds), refused);
+    assert.deepEqual([refused.status, refused.error], ["error", "disk full"]);
   });
 });
 
