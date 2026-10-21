@@ -78,7 +78,12 @@ async function handle(message: ToHost): Promise<void> {
         send(m);
         reportState();
       });
-      reporter = new RunReporter({ send, kits: () => world?.kits.active ?? [], stop: () => world?.body.runner.stop() ?? false });
+      reporter = new RunReporter({
+        send,
+        kits: () => world?.kits.active ?? [],
+        stop: () => world?.body.runner.stop() ?? false,
+        running: () => Boolean(world?.body.runner.running),
+      });
       try {
         world = buildWorld(message.init, { events, recorder: reporter });
       } catch (err) {

@@ -1,6 +1,7 @@
 // The host's side of the supervisor channel, over a `send` function so it runs without a fork:
 // the event sink that hands events to the supervisor's log and hears them back with the log's
-// seq, and the reporter that has the supervisor record each program run before its code starts.
+// seq, the reporter that has the supervisor record each program run before its code starts, and
+// the runner view through which the trigger scheduler's preemptions go to that reporter.
 import { DEFAULT_TIMEOUT_MS, type BodyEvent, type RunResult } from "../protocol/index.ts";
 import type { EventSink, FiringOf, FromHost, TriggerDisabled, TriggerFinished } from "../protocol/host.ts";
 import type { RunOutcome } from "../program/runner.ts";
@@ -46,6 +47,21 @@ export interface RunReporterOptions {
   kits: () => string[];
   /** Aborts the running program; false when none runs. */
   stop: () => boolean;
+  /** Whether the runner runs a program now (one whose code has started and not settled, its grace included). */
+  running: () => boolean;
+}
+
+/**
+ * The runner as the trigger scheduler sees it: a preemption is the recorder's to carry out, so the
+ * supervisor's deadline covers the abort. The body and the trigger fixture both wire their Triggers with this.
+ */
+export function preemptingRunner(runner: { readonly running: unknown }, recorder: Pick<RunRecorder, "preempt">): { readonly running: unknown; stop(): boolean } {
+  return {
+    get running() {
+      return runner.running;
+    },
+    stop: () => recorder.preempt(),
+  };
 }
 
 /** Reports program runs and registrations to the supervisor, which writes the history. */
@@ -63,11 +79,12 @@ export class RunReporter implements RunRecorder {
   /** A stop that arrived after the supervisor acked a run but before its code started. */
   #stopPending = false;
   /**
-   * The recorded run whose code executes: its `execute` has started it and its outcome has not
-   * settled. Set in the turn `execute` returns (the program starts synchronously inside it), cleared
-   * when the outcome settles; a run acked but not started yet is not it, and neither is one that has settled.
+   * The latest recorded run whose code started: the runner was idle before its `execute` and runs a
+   * program after it (the program starts synchronously inside `execute`, and the runner runs one at a
+   * time). A run refused as busy, or one that never started, does not touch it. It is the run whose
+   * code executes exactly while the runner runs a program, since every program the runner runs is recorded.
    */
-  #executing: number | undefined;
+  #started: number | undefined;
 
   constructor(options: RunReporterOptions) {
     this.#options = options;
@@ -94,10 +111,11 @@ export class RunReporter implements RunRecorder {
    * a run that settled meanwhile is not followed by an abort of its successor.
    */
   preempt(): boolean {
-    const runId = this.#executing;
+    // The recorded run whose code has started and not settled, if one has.
+    const runId = this.#options.running() ? this.#started : undefined;
     if (runId === undefined) return false;
     this.#options.send({ kind: "preempt", runId }, () => {
-      if (this.#executing === runId) this.#options.stop();
+      if (this.#options.running() && this.#started === runId) this.#options.stop();
     });
     return true;
   }
@@ -123,16 +141,13 @@ export class RunReporter implements RunRecorder {
     }
     // The program starts synchronously inside `execute`, in this same turn.
     let running: Promise<RunOutcome>;
+    const idle = !this.#options.running();
     try {
       running = execute();
     } catch (err) {
       running = Promise.reject(err);
     }
-    this.#executing = runId;
-    const settled = () => {
-      if (this.#executing === runId) this.#executing = undefined;
-    };
-    running.then(settled, settled);
+    if (idle && this.#options.running()) this.#started = runId;
     this.#starting--;
     if (this.#stopPending) {
       this.#stopPending = false;

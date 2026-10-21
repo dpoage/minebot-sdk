@@ -17,7 +17,7 @@
 // /run runs `{code, timeoutMs}` the way the body's /run does.
 import { appendFileSync, readFileSync } from "node:fs";
 import path from "node:path";
-import { HostEvents, RunReporter } from "../../../src/host/channel.ts";
+import { HostEvents, preemptingRunner, RunReporter } from "../../../src/host/channel.ts";
 import { Triggers } from "../../../src/host/triggers.ts";
 import { BusyError, ProgramRunner } from "../../../src/program/runner.ts";
 import { programFinished, type FromHost, type HostInit, type ToHost } from "../../../src/protocol/host.ts";
@@ -80,7 +80,7 @@ process.on("message", async (message: ToHost) => {
     case "init": {
       const init = message.init as HostInit & { script: Script };
       runner = new ProgramRunner({ globals: () => ({}), graceMs: init.script.graceMs });
-      reporter = new RunReporter({ send, kits: () => [], stop: () => runner.stop() });
+      reporter = new RunReporter({ send, kits: () => [], stop: () => runner.stop(), running: () => runner.running !== null });
       const reportState = () => send({ kind: "state", connected: true, deaths: init.deaths, reconnects: init.reconnects, active: [] });
       events = new HostEvents((m) => {
         send(m);
@@ -101,12 +101,7 @@ process.on("message", async (message: ToHost) => {
         store,
         events,
         // As the body wires it: a preemption goes through the reporter.
-        runner: {
-          get running() {
-            return runner.running;
-          },
-          stop: () => reporter.preempt(),
-        },
+        runner: preemptingRunner(runner, reporter),
         connected: () => true,
         bot: () => undefined,
         run: (trigger, event, started) =>

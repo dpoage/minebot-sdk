@@ -16,6 +16,7 @@ import { StallTracker } from "./progress.ts";
 import { requestStats } from "./stats.ts";
 import { BodyState } from "./state.ts";
 import { Triggers, type StoredTrigger } from "./triggers.ts";
+import { preemptingRunner } from "./channel.ts";
 
 export interface BodyOptions {
   username: string;
@@ -136,20 +137,13 @@ export class Body {
       events: () => this.#connection.bot ?? undefined,
       onAbort: () => this.#connection.halt(),
     });
-    const { runner } = this;
     this.triggers =
       options.triggersEnabled === false
         ? null
         : new Triggers({
             store: options.state.triggers,
             events: this.events,
-            // A preemption is the recorder's to carry out, so the supervisor's deadline covers the abort.
-            runner: {
-              get running() {
-                return runner.running;
-              },
-              stop: () => options.recorder.preempt(),
-            },
+            runner: preemptingRunner(this.runner, options.recorder),
             connected: () => this.#connection.spawned,
             bot: () => this.#connection.bot ?? undefined,
             run: (trigger, event, started) => this.#runTrigger(trigger, event, started),
