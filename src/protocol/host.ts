@@ -40,6 +40,24 @@ export function restartedError(cause: string): string {
 /** The part of a trigger run's logs kept in its `trigger_finished` event, whether the host or the supervisor pushes it. */
 export const MAX_EVENT_LOGS = 2000;
 
+/** How a program's run or a trigger's firing ended, as far as its finished event tells. */
+export type FinishedEnd = { status: RunStatus; error?: string; logs?: string; durationMs: number };
+
+export type ProgramFinished = { status: RunStatus; durationMs: number };
+export type TriggerFinished = { name: string; status: RunStatus; durationMs: number; error?: string; logs?: string };
+export type TriggerDisabled = { name: string; failures: number; reason: string };
+
+/** The data of a `program_finished` event: the one builder, for the host that ran the program and the supervisor that ends it for a dead host. */
+export function programFinished(end: FinishedEnd): ProgramFinished {
+  return { status: end.status, durationMs: end.durationMs };
+}
+
+/** The data of a `trigger_finished` event: the one builder, for the host that ran the firing and the supervisor that ends it for a dead host. */
+export function triggerFinished(name: string, end: FinishedEnd): TriggerFinished {
+  const logs = end.logs ? end.logs.slice(0, MAX_EVENT_LOGS) : undefined;
+  return { name, status: end.status, durationMs: end.durationMs, ...(end.error !== undefined && { error: end.error }), ...(logs && { logs }) };
+}
+
 /** Which definition of a trigger a firing ran: its name and when that definition was saved. */
 export interface FiringOf {
   name: string;
@@ -118,11 +136,12 @@ export type FromHost =
    */
   | { kind: "run_finished"; runId: number; result: RunResult | null; hung?: true }
   /**
-   * The end of a run, reported and acked, reached where it goes: its request was answered (sent
-   * after the `response`), or, for a trigger's run, `event` is the trigger_finished that ends it and
-   * `triggerFailures` the triggers' failures with the firing counted, both taken in as part of this message.
+   * The end of a run, reported and acked (with or without an error), reached where it goes: its
+   * request was answered (sent after the `response`), or, for a trigger's run, `finished` is the
+   * trigger_finished that ends it, `disabled` the trigger_disabled the firing caused, and
+   * `triggerFailures` the triggers' failures with the firing counted, all taken in as part of this message.
    */
-  | { kind: "run_delivered"; runId: number; event?: { type: string; data: Record<string, unknown> }; triggerFailures?: Record<string, number> }
+  | { kind: "run_delivered"; runId: number; finished?: TriggerFinished; disabled?: TriggerDisabled; triggerFailures?: Record<string, number> }
   /** Code the body will run later (a trigger), for the history's audit; answered by `run_ack` like a run. */
   | { kind: "register"; runId: number; code: string; extra: object; kits: string[] }
   | { kind: "state"; connected: boolean; deaths: number; reconnects: number; active: string[]; triggerFailures: Record<string, number> };

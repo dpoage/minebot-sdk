@@ -11,10 +11,12 @@ import {
   hostArguments,
   hungCause,
   KILL_MARGIN_MS,
-  MAX_EVENT_LOGS,
   NOT_CONNECTED_MESSAGE,
+  programFinished,
   restartedError,
   STOP_GRACE_MS,
+  triggerFinished,
+  type FinishedEnd,
   type FromHost,
   type HostInit,
   type FiringOf,
@@ -90,12 +92,16 @@ interface InFlight {
 }
 
 /**
- * Its end is on disk and acked, and the host has yet to deliver it (answer its request, log its
- * trigger_finished). A death owes it only that delivery, with this result.
+ * Its end was reported and answered (the history wrote it, or refused it), and the host has yet to
+ * deliver it: answer its request, log its trigger_finished. A death owes it only that delivery: the
+ * end the host would have delivered.
  */
 interface Reported {
   kind: "reported";
-  result: RunResult;
+  /** The answer its request gets: the run's result, or the 500 of a write the history refused. */
+  answer: { status: number; body: unknown };
+  /** How its firing ended, for a trigger's run: the run's result, or the error of that write. */
+  end: FinishedEnd;
 }
 
 /** One forked host. */
@@ -348,7 +354,8 @@ export class HostProcess {
         return;
       case "run_delivered": {
         // Taken in with the delivery in one step: a host that dies after this owes nothing for the run, and it was counted once.
-        if (message.event) this.#events.push(message.event.type, message.event.data);
+        if (message.finished) this.#events.push("trigger_finished", message.finished);
+        if (message.disabled) this.#events.push("trigger_disabled", message.disabled);
         if (message.triggerFailures) this.#carried = { ...this.#carried, triggerFailures: message.triggerFailures };
         const run = this.#runs.get(message.runId);
         if (run?.state.kind === "reported") this.#runs.delete(run.id);
@@ -398,21 +405,24 @@ export class HostProcess {
           // The deadline killed the host as the program was ending: the restart is not for a hang.
           if (flight.overdue) attempt.cause = LATE_CAUSE;
         }
-        let recorded: RunResult | undefined;
+        let owed: Reported | undefined;
         try {
           if (run && flight && message.result) {
-            await run.end(message.result);
-            recorded = message.result;
+            const result = message.result;
+            owed = { kind: "reported", answer: { status: 200, body: result }, end: result };
+            await run.end(result);
           }
           this.#sendIfOpen(attempt, { kind: "run_ack", runId: message.runId });
         } catch (err) {
-          // The run fails as it did when the history was written in-process.
-          this.#sendIfOpen(attempt, { kind: "run_ack", runId: message.runId, error: errorText(err) });
+          // The run fails as it did when the history was written in-process: its request answers 500, its firing ends in error.
+          const error = errorText(err);
+          if (owed && run) owed = { kind: "reported", answer: { status: 500, body: { error } }, end: { status: "error", error, durationMs: Date.now() - run.startedAt } };
+          this.#sendIfOpen(attempt, { kind: "run_ack", runId: message.runId, error });
         }
         if (!run || !flight) return;
-        // The host delivers the recorded end after the ack (its request's answer, its trigger_finished); until it has, its death delivers it.
-        // A run with nothing recorded, or nowhere to deliver it, is over.
-        if (recorded && (run.requestId !== undefined || run.trigger !== undefined)) run.state = { kind: "reported", result: recorded };
+        // The host delivers the end after the ack (its request's answer, its trigger_finished); until it has, its death delivers it.
+        // A run that produced no result, or has nowhere to deliver one, is over.
+        if (owed && (run.requestId !== undefined || run.trigger !== undefined)) run.state = owed;
         else this.#runs.delete(run.id);
         run.finished.resolve();
         return;
@@ -457,40 +467,37 @@ export class HostProcess {
     // A run in flight is owed all of its end; a reported one only its delivery; a delivered one is no longer here.
     const runs = [...this.#runs.values()];
     this.#runs.clear();
-    const answers = new Map<number, RunResult>();
+    const answers = new Map<number, { status: number; body: unknown }>();
     for (const run of runs) {
       const { state } = run;
-      let result: RunResult;
+      let end: FinishedEnd;
+      let answer: { status: number; body: unknown };
       if (state.kind === "in-flight") {
         clearTimeout(state.deadline);
-        result = state.hung ?? lostRun(run, state, cause);
+        const result = state.hung ?? lostRun(run, state, cause);
         try {
           await run.end(result);
         } catch (err) {
           console.error("[minebot] could not write the history line of a program its host did not finish:", err);
         }
-        if (run.trigger === undefined) this.#events.push("program_finished", { status: result.status, durationMs: result.durationMs });
+        if (run.trigger === undefined) this.#events.push("program_finished", programFinished(result));
+        end = result;
+        answer = { status: 200, body: result };
       } else {
-        // Its line is on disk, and a program's run pushed its program_finished before reporting its end.
-        result = state.result;
+        // Its end went to the history, and a program's run pushed its program_finished before reporting it.
+        ({ end, answer } = state);
       }
       if (run.trigger !== undefined) {
         // As the host pushes it; the next host counts the firing in the trigger's failures.
-        this.#lostFiring = { ...run.trigger, status: result.status, ...(result.error !== undefined && { error: result.error }), durationMs: result.durationMs };
-        this.#events.push("trigger_finished", {
-          name: run.trigger.name,
-          status: result.status,
-          durationMs: result.durationMs,
-          ...(result.error !== undefined && { error: result.error }),
-          ...(result.logs && { logs: result.logs.slice(0, MAX_EVENT_LOGS) }),
-        });
+        this.#lostFiring = { ...run.trigger, status: end.status, ...(end.error !== undefined && { error: end.error }), durationMs: end.durationMs };
+        this.#events.push("trigger_finished", triggerFinished(run.trigger.name, end));
       }
-      if (run.requestId !== undefined) answers.set(run.requestId, result);
+      if (run.requestId !== undefined) answers.set(run.requestId, answer);
     }
     this.#events.push("disconnected", { reason: `bot host restarted: ${cause}` });
     // A request the host already answered is not waiting any more.
-    for (const [id, result] of answers) {
-      this.#requests.get(id)?.resolve({ status: 200, body: result });
+    for (const [id, answer] of answers) {
+      this.#requests.get(id)?.resolve(answer);
       this.#requests.delete(id);
     }
     for (const run of runs) run.finished.resolve();

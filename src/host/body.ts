@@ -8,7 +8,7 @@ import type { KitHost } from "../kit/kit.ts";
 import type { Wiki } from "../wiki/wiki.ts";
 import { WikiAccess, wikiView } from "../wiki/access.ts";
 import { Connection, type ServerAuth } from "./connection.ts";
-import type { EventSink, FiringOf, LostFiring } from "../protocol/host.ts";
+import { programFinished, type EventSink, type FiringOf, type LostFiring, type TriggerDisabled, type TriggerFinished } from "../protocol/host.ts";
 import { programGlobals, type GlobalsDeps } from "./globals.ts";
 import { briefOf, observation } from "./observation.ts";
 import { Notes } from "./notes.ts";
@@ -64,10 +64,12 @@ export interface RunRecorder {
    */
   record(run: { code: string; timeoutMs?: number; extra?: object; requestId?: number; trigger?: FiringOf }, execute: () => Promise<RunOutcome>): Promise<RunResult>;
   /**
-   * Ends a trigger's run that `record` returned `result` for: its trigger_finished `event`, and the
-   * triggers' failures with the firing counted, reach the history's keeper together, as that run's delivery.
+   * Ends a trigger's run: `end` is what `record` returned or threw for it. Its trigger_finished, the
+   * trigger_disabled it caused, and the triggers' failures with the firing counted reach the
+   * history's keeper together, as that run's delivery; an end of no recorded run (its start was
+   * refused, it never ran) is pushed as plain events.
    */
-  deliver(result: RunResult, event: { type: string; data: Record<string, unknown> }, triggerFailures: Record<string, number>): void;
+  deliver(end: unknown, finished: TriggerFinished, disabled: TriggerDisabled | undefined, triggerFailures: Record<string, number>): void;
   /** Records code the body will run later. */
   register(code: string, extra: object): Promise<void>;
 }
@@ -132,7 +134,7 @@ export class Body {
             connected: () => this.#connection.spawned,
             bot: () => this.#connection.bot ?? undefined,
             run: (trigger, event, started) => this.#runTrigger(trigger, event, started),
-            deliver: (result, finished, failures) => options.recorder.deliver(result, { type: "trigger_finished", data: finished }, failures),
+            deliver: (end, finished, disabled, failures) => options.recorder.deliver(end, finished, disabled, failures),
             register: (trigger) =>
               options.recorder.register(`${trigger.run}\n${trigger.when ?? ""}`, { trigger: trigger.name, on: trigger.on, ...(trigger.when !== undefined && { when: trigger.when }) }),
             failures: options.triggerFailures,
@@ -163,7 +165,7 @@ export class Body {
     const result = await this.runner.run(code, timeoutMs);
     // A hung run ends with its host: the supervisor, which kills it, logs the end of the program.
     if (result.hung) return result;
-    this.events.push("program_finished", { status: result.status, durationMs: result.durationMs });
+    this.events.push("program_finished", programFinished(result));
     this.triggers?.idle();
     const bot = this.#connection.bot;
     if (!bot || !this.#connection.spawned) return result;

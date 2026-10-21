@@ -50,6 +50,8 @@ interface Script {
   reflex?: { name: string; on: string[]; run: string; timeoutMs: number; cooldownMs: number };
   /** The trigger fixture's first host SIGKILLs itself right after the message carrying a trigger_finished leaves it. */
   killAfterFinished?: boolean;
+  /** The trigger fixture's first host SIGKILLs itself as the answer to a run's end reaches it. */
+  killOnEndAck?: boolean;
 }
 
 interface Scripted {
@@ -58,14 +60,30 @@ interface Scripted {
   history: string;
 }
 
+type History = InstanceType<typeof ProgramHistory>;
+
+/** A history whose final line of a run cannot be written: the end writer throws. */
+function refusingEnds(history: History): History {
+  const refusing = {
+    begin: async (...args: Parameters<History["begin"]>) => {
+      await history.begin(...args);
+      return async () => {
+        throw new Error("disk full");
+      };
+    },
+    register: history.register.bind(history),
+  };
+  return refusing as unknown as History; // the two methods HostProcess calls
+}
+
 let scripts = 0;
-async function scripted(script: Script = {}, entry = FIXTURE, carried: Partial<HostInit> = {}): Promise<Scripted> {
+async function scripted(script: Script = {}, entry = FIXTURE, carried: Partial<HostInit> = {}, wrap: (history: History) => History = (h) => h): Promise<Scripted> {
   const dir = path.join(ROOT, `scripted-${++scripts}`);
   mkdirSync(dir);
   const events = new EventLog();
   const history = path.join(dir, "history.jsonl");
   const init = { stateDir: dir, startedAt: "t0", deaths: 2, reconnects: 5, active: ["a", "b"], applyMilestones: true, ...carried, script: { graceMs: GRACE_MS, ...script } } as unknown as HostInit;
-  const host = new HostProcess({ init, events, history: new ProgramHistory({ file: history }), entry, graceMs: GRACE_MS });
+  const host = new HostProcess({ init, events, history: wrap(new ProgramHistory({ file: history })), entry, graceMs: GRACE_MS });
   hosts.push(host);
   await host.start();
   host.join();
@@ -433,6 +451,33 @@ describe("restart: a trigger whose firing ends with its host", () => {
     assert.deepEqual(eventsOf(t, "trigger_finished").map((e) => e.data.status), ["timeout"]);
     assert.equal(info!.failures, 2, "the firing was not counted exactly once");
   });
+
+  it("logs the disable once, with one trigger_finished, when the host dies right after delivering the firing that disabled the trigger", { timeout: 20_000 }, async () => {
+    const t = await scripted({ reflex: { ...reflex("try { await sleep(100000); } catch {}"), timeoutMs: 100 }, killAfterFinished: true }, TRIGGER_FIXTURE, { triggerFailures: { reflex: 2 } });
+    t.events.push("fire");
+    await waitFor(t, "disconnected");
+    const [info] = ((await get(t, "/triggers")).body as { triggers: TriggerInfo[] }).triggers; // the replacement host's
+    assert.deepEqual(eventsOf(t, "trigger_finished").map((e) => e.data.status), ["timeout"]);
+    assert.deepEqual(eventsOf(t, "trigger_disabled").map((e) => e.data.failures), [3], "the disable the firing caused was lost or logged twice");
+    assert.deepEqual({ enabled: info!.enabled, failures: info!.failures }, { enabled: false, failures: 3 });
+  });
+
+  it("has the supervisor build, for a host that died before delivering a firing, the trigger_finished a live host builds for the same end", { timeout: 30_000 }, async () => {
+    const finishedOf = async (killOnEndAck: boolean, wrap?: (history: History) => History) => {
+      const t = await scripted({ reflex: reflex(`log("same end"); return 1;`), killOnEndAck }, TRIGGER_FIXTURE, {}, wrap);
+      t.events.push("fire");
+      const { data } = await waitFor(t, "trigger_finished");
+      if (killOnEndAck) await waitFor(t, "disconnected");
+      else assert.equal(eventsOf(t, "disconnected").length, 0);
+      const { durationMs, ...rest } = data;
+      assert.equal(typeof durationMs, "number");
+      return rest;
+    };
+    // The run's own result, and the error of an end the history refused.
+    assert.deepEqual(await finishedOf(true), await finishedOf(false));
+    assert.deepEqual(await finishedOf(true, refusingEnds), await finishedOf(false, refusingEnds));
+    assert.deepEqual(await finishedOf(false, refusingEnds), { name: "reflex", status: "error", error: "disk full" });
+  });
 });
 
 describe("restart: what a run is owed follows its state", () => {
@@ -474,6 +519,57 @@ describe("restart: what a run is owed follows its state", () => {
     await killHost(t);
     assert.equal(eventsOf(t, "program_finished").length, 0, "the idle host's death synthesized a run's end");
     assert.deepEqual(historyOf(t).map((line) => line.status), ["timeout", "timeout", "timeout"]);
+  });
+
+  it("does not count a run whose end was reported as running: a stop before its delivery stops nothing and leaves the host", { timeout: 20_000 }, async () => {
+    const t = await scripted();
+    const before = await pidOf(t);
+    // It ends at 20 ms; the host delivers it 1.5 s after its end was recorded, past its deadline (820 ms).
+    const request = t.host.forward({ method: "POST", url: "/run?mode=settle&timeoutMs=20&deliverAfterMs=1500", body: null, tooLarge: false });
+    await waitFor(t, "acked");
+    await sleep(300);
+    const t0 = performance.now();
+    assert.deepEqual(await t.host.stop(), { stopped: false });
+    assert.ok(performance.now() - t0 < 200, "the stop waited on a run that had ended");
+    assert.deepEqual(withoutDuration((await request).body).rest, { status: "timeout", logs: "settled" });
+    assert.equal(await pidOf(t), before, "the host of a run that had ended was replaced");
+    assert.equal(eventsOf(t, "disconnected").length, 0);
+  });
+
+  describe("a run whose end the history refused is owed the end the host would have delivered", () => {
+    const blocks = (ms: number) => `const until = Date.now() + ${ms}; while (Date.now() < until);`;
+    for (const kind of ["request", "trigger"] as const) {
+      for (const death of ["late at its deadline", "at the end's ack"] as const) {
+        it(`${kind} run, host dead ${death}`, { timeout: 20_000 }, async () => {
+          const late = death === "late at its deadline";
+          // Late: it blocks past its 100 ms timeout and ends just as the deadline (900 ms) fires, the supervisor held up from 750 to 1000 ms.
+          const code = late ? `${blocks(850)} return 1;` : "return 1;";
+          const t = await scripted({ reflex: { name: "reflex", on: ["fire"], run: code, timeoutMs: 100, cooldownMs: 0 }, killOnEndAck: !late }, TRIGGER_FIXTURE, { triggerFailures: { reflex: 1 } }, refusingEnds);
+          const request = kind === "request" ? t.host.forward({ method: "POST", url: "/run", body: Buffer.from(JSON.stringify({ code, timeoutMs: 100 })), tooLarge: false }) : undefined;
+          if (kind === "trigger") t.events.push("fire");
+          const acked = Number((await waitFor(t, "acked")).data.at);
+          if (late) {
+            await sleep(Math.max(0, acked + 750 - Date.now()));
+            await setImmediate();
+            while (Date.now() < acked + 1_000);
+          }
+          await waitFor(t, "disconnected");
+          assert.equal(eventsOf(t, "disconnected").length, 1);
+          if (request) {
+            assert.deepEqual(await request, { status: 500, body: { error: "disk full" } });
+            // The host pushed it before it reported the end.
+            assert.deepEqual(eventsOf(t, "program_finished").map((e) => e.data.status), ["ok"]);
+            assert.equal(eventsOf(t, "trigger_finished").length, 0);
+            return;
+          }
+          const finished = eventsOf(t, "trigger_finished").map(({ data: { durationMs: _, ...rest } }) => rest);
+          assert.deepEqual(finished, [{ name: "reflex", status: "error", error: "disk full" }]);
+          assert.equal(eventsOf(t, "program_finished").length, 0);
+          const [info] = ((await get(t, "/triggers")).body as { triggers: TriggerInfo[] }).triggers; // the replacement host's
+          assert.deepEqual({ failures: info!.failures, lastStatus: info!.lastStatus, lastError: info!.lastError }, { failures: 2, lastStatus: "error", lastError: "disk full" });
+        });
+      }
+    }
   });
 });
 
@@ -581,6 +677,42 @@ describe("restart: the host's report of a hung run", () => {
     assert.deepEqual(await settled, { status: "ok", result: 1, logs: "", durationMs: 2 });
     assert.ok(!("requestId" in sent[0]!));
     assert.deepEqual(sent[1], { kind: "run_finished", runId: 1, result: { status: "ok", result: 1, logs: "", durationMs: 2 } });
+  });
+
+  it("delivers a run after the answer to its request, delivers a firing whose end the history refused, and pushes an end it holds no run for", async () => {
+    const sent: FromHost[] = [];
+    const reporter = new RunReporter({ send: (message) => sent.push(message), kits: () => [], stop: () => false });
+    const ended = async (runId: number) => {
+      reporter.acknowledge(runId);
+      while (!sent.some((message) => message.kind === "run_finished" && message.runId === runId)) await sleep(1);
+    };
+    const ok = { status: "ok", logs: "", durationMs: 1 } as const;
+
+    const answered = reporter.record({ code: "x", requestId: 9 }, async () => ok);
+    await ended(0);
+    reporter.acknowledge(0);
+    const result = await answered;
+    sent.length = 0;
+    reporter.answer({ id: 9, status: 200, body: result });
+    assert.deepEqual(sent, [{ kind: "response", id: 9, status: 200, body: ok }, { kind: "run_delivered", runId: 0 }]);
+
+    const finished = { name: "t", status: "error", durationMs: 1, error: "disk full" } as const;
+    const refused = reporter.record({ code: "y", trigger: { name: "t", updated: "u" } }, async () => ok);
+    await ended(1);
+    reporter.acknowledge(1, "disk full");
+    const end = await refused.catch((err: unknown) => err);
+    sent.length = 0;
+    reporter.deliver(end, finished, undefined, { t: 1 });
+    assert.deepEqual(sent, [{ kind: "run_delivered", runId: 1, finished, triggerFailures: { t: 1 } }]);
+
+    // A firing whose start the history refused never became a run of the supervisor's.
+    sent.length = 0;
+    const disabled = { name: "t", failures: 3, reason: "r" };
+    reporter.deliver(new Error("start refused"), finished, disabled, { t: 3 });
+    assert.deepEqual(sent, [
+      { kind: "event", type: "trigger_finished", data: finished },
+      { kind: "event", type: "trigger_disabled", data: disabled },
+    ]);
   });
 });
 

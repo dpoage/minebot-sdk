@@ -16,10 +16,11 @@
 //   hang    stays alive and never ends or reports
 //   report  after the abort (a stop, or timeoutMs) waits graceMs, then reports itself hung with logs "partial"
 //   settle  ends at the abort, reporting its result; with settleMs, that long after the abort; with
-//           registerAtMs, sends a `register` (as a POST /triggers during a program does) that long after its ack
+//           registerAtMs, sends a `register` (as a POST /triggers during a program does) that long after its ack;
+//           with deliverAfterMs, answers and delivers that long after its end was acked
 import { appendFileSync, readFileSync } from "node:fs";
 import { setTimeout as sleep } from "node:timers/promises";
-import { hungCause, restartedError, type FromHost, type HostInit, type ToHost } from "../../../src/protocol/host.ts";
+import { hungCause, restartedError, triggerFinished, type FromHost, type HostInit, type ToHost } from "../../../src/protocol/host.ts";
 import type { RunResult } from "../../../src/protocol/index.ts";
 
 interface Script {
@@ -37,6 +38,7 @@ interface Run {
   mode: string;
   timeoutMs: number;
   settleMs: number;
+  deliverAfterMs: number;
   registerAtMs?: number;
   requestId?: number;
   trigger?: string;
@@ -90,16 +92,16 @@ function running(runId: number, run: Run): void {
   });
 }
 
-/** The supervisor recorded the run's end: answer its request, or push its trigger_finished, then deliver it. */
-function deliver(runId: number, run: Run): void {
+/** The supervisor recorded the run's end: answer its request, or push its trigger_finished, then deliver it (deliverAfterMs later). */
+async function deliver(runId: number, run: Run): Promise<void> {
   runs.delete(runId);
   const result = run.result!;
+  if (run.deliverAfterMs > 0) await sleep(run.deliverAfterMs);
   if (run.requestId !== undefined) {
     send({ kind: "response", id: run.requestId, status: 200, body: result });
     send({ kind: "run_delivered", runId });
   } else if (run.trigger !== undefined) {
-    const data = { name: run.trigger, status: result.status, durationMs: result.durationMs, logs: result.logs };
-    send({ kind: "run_delivered", runId, event: { type: "trigger_finished", data }, triggerFailures: {} });
+    send({ kind: "run_delivered", runId, finished: triggerFinished(run.trigger, result), triggerFailures: {} });
   }
 }
 
@@ -122,7 +124,7 @@ process.on("message", (message: ToHost) => {
       return;
     }
     case "start":
-      if (script.trigger) startRun({ mode: script.trigger.mode, timeoutMs: script.trigger.timeoutMs, settleMs: 0, trigger: "t1" });
+      if (script.trigger) startRun({ mode: script.trigger.mode, timeoutMs: script.trigger.timeoutMs, settleMs: 0, deliverAfterMs: 0, trigger: "t1" });
       return;
     case "request": {
       const url = new URL(message.url, "http://localhost");
@@ -133,6 +135,7 @@ process.on("message", (message: ToHost) => {
           mode: q.get("mode") ?? "settle",
           timeoutMs: Number(q.get("timeoutMs") ?? 60_000),
           settleMs: Number(q.get("settleMs") ?? 0),
+          deliverAfterMs: Number(q.get("deliverAfterMs") ?? 0),
           ...(q.has("registerAtMs") && { registerAtMs: Number(q.get("registerAtMs")) }),
           requestId: message.id,
         });
@@ -147,7 +150,7 @@ process.on("message", (message: ToHost) => {
       const run = runs.get(message.runId);
       if (!run) return;
       if (run.phase === "starting") running(message.runId, run);
-      else deliver(message.runId, run);
+      else void deliver(message.runId, run);
       return;
     }
     case "shutdown":

@@ -17,7 +17,7 @@ import {
 } from "../protocol/index.ts";
 import type { JsonStore } from "../store.ts";
 import { eventMatches } from "../protocol/event-filter.ts";
-import { MAX_EVENT_LOGS, type EventSink, type LostFiring } from "../protocol/host.ts";
+import { triggerFinished, type EventSink, type FinishedEnd, type LostFiring, type TriggerDisabled, type TriggerFinished } from "../protocol/host.ts";
 
 /** A trigger's `when` is an expression over two names, so it is cut off quickly. */
 const WHEN_TIMEOUT_MS = 100;
@@ -63,10 +63,11 @@ export interface TriggersDeps {
    */
   run: (trigger: StoredTrigger, event: BodyEvent, started: () => void) => Promise<RunResult>;
   /**
-   * Ends a firing whose `run` returned `result`: hands over its trigger_finished data and the
-   * triggers' failures with it counted, as one delivery of that run. Absent, the event is pushed.
+   * Ends a firing: `end` is what its `run` returned or threw. Hands over its trigger_finished data,
+   * the trigger_disabled it caused, and the triggers' failures with it counted, as one delivery of
+   * that run. Absent, the events are pushed.
    */
-  deliver?: (result: RunResult, finished: Record<string, unknown>, failures: Record<string, number>) => void;
+  deliver?: (end: unknown, finished: TriggerFinished, disabled: TriggerDisabled | undefined, failures: Record<string, number>) => void;
   /** Records the code of a trigger being saved, so the audit covers it before it ever runs. */
   register: (trigger: StoredTrigger) => Promise<void>;
   /** Each trigger's run of failures that the host this one replaces had counted. */
@@ -322,10 +323,12 @@ export class Triggers {
         ...(entry.preempts && { preempted: true }),
       });
     };
-    let outcome: Outcome;
-    let ran: RunResult | undefined;
+    let outcome: FinishedEnd;
+    // What the run returned or threw: the end the run's delivery is about.
+    let end: unknown;
     try {
-      ran = await this.#deps.run(def, entry.event, announce);
+      const ran = await this.#deps.run(def, entry.event, announce);
+      end = ran;
       outcome = { status: ran.status, durationMs: ran.durationMs, ...(ran.error !== undefined && { error: ran.error }), logs: ran.logs };
     } catch (err) {
       if (err instanceof BusyError) {
@@ -336,28 +339,25 @@ export class Triggers {
         this.#pump();
         return;
       }
+      end = err;
       outcome = { status: "error", error: err instanceof Error ? err.message : String(err), durationMs: Date.now() - startedAt };
     }
     if (this.#active === active) this.#active = null;
     // Whatever was stopped for a preempting firing has ended; a program that started since is a new one to stop.
     this.#preempting = false;
-    this.#finish(def, outcome, ran);
+    this.#finish(def, outcome, end);
     this.#pump();
   }
 
-  /** Reports how a firing ended and records it; the end of a run (`ran`) is delivered as that run's, with the failures it leaves. */
-  #finish(def: Stored, outcome: Outcome, ran?: RunResult): void {
-    const logs = outcome.logs ? outcome.logs.slice(0, MAX_EVENT_LOGS) : undefined;
-    const finished = {
-      name: def.name,
-      status: outcome.status,
-      durationMs: outcome.durationMs,
-      ...(outcome.error !== undefined && { error: outcome.error }),
-      ...(logs && { logs }),
-    };
+  /** Reports how a firing ended and records it; the end of a run (`end`, what it returned or threw) is delivered as that run's, with what it caused. */
+  #finish(def: Stored, outcome: FinishedEnd, end?: unknown): void {
+    const finished = triggerFinished(def.name, outcome);
     const disabled = this.#record(def, outcome);
-    if (ran && this.#deps.deliver) this.#deps.deliver(ran, finished, this.failures());
-    else this.#deps.events.push("trigger_finished", finished);
+    if (end !== undefined && this.#deps.deliver) {
+      this.#deps.deliver(end, finished, disabled, this.failures());
+      return;
+    }
+    this.#deps.events.push("trigger_finished", finished);
     if (disabled) this.#deps.events.push("trigger_disabled", disabled);
   }
 
@@ -365,7 +365,7 @@ export class Triggers {
    * Records how a firing ended in the trigger's numbers; a trigger that fails MAX_TRIGGER_FAILURES times in a row disables itself.
    * Returns the trigger_disabled event's data when it did, for the caller to push after the firing's end.
    */
-  #record(def: Stored, outcome: { status: RunStatus; error?: string }): Record<string, unknown> | undefined {
+  #record(def: Stored, outcome: { status: RunStatus; error?: string }): TriggerDisabled | undefined {
     // A removed or replaced trigger has no say in what the new one shows or stores.
     if (this.#defs.get(def.name) !== def) return undefined;
     const stats = this.#statsOf(def.name);
@@ -381,13 +381,6 @@ export class Triggers {
     this.#save(def);
     return { name: def.name, failures: stats.failures, reason: def.disabledReason };
   }
-}
-
-interface Outcome {
-  status: RunStatus;
-  error?: string;
-  durationMs: number;
-  logs?: string;
 }
 
 /** Compiles a `when` expression; throws with the syntax error when it does not parse. */

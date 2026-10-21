@@ -2,7 +2,7 @@
 // the event sink that hands events to the supervisor's log and hears them back with the log's
 // seq, and the reporter that has the supervisor record each program run before its code starts.
 import { DEFAULT_TIMEOUT_MS, type BodyEvent, type RunResult } from "../protocol/index.ts";
-import type { EventSink, FiringOf, FromHost } from "../protocol/host.ts";
+import type { EventSink, FiringOf, FromHost, TriggerDisabled, TriggerFinished } from "../protocol/host.ts";
 import type { RunOutcome } from "../program/runner.ts";
 import type { RunRecorder } from "./body.ts";
 
@@ -52,10 +52,10 @@ export class RunReporter implements RunRecorder {
   readonly #options: RunReporterOptions;
   readonly #acks = new Map<number, PromiseWithResolvers<void>>();
   readonly #open = new Set<Promise<unknown>>();
-  /** Requests answered by a run whose end the supervisor recorded: the request id → that run, until the answer is sent. */
+  /** Requests answered by a run whose end the supervisor holds (recorded, or refused by the history): the request id → that run, until the answer is sent. */
   readonly #answering = new Map<number, number>();
-  /** The results of trigger runs whose end the supervisor recorded → their run, until `deliver`. */
-  readonly #delivering = new WeakMap<RunResult, number>();
+  /** What trigger runs whose end the supervisor holds returned or threw → their run, until `deliver`. */
+  readonly #delivering = new WeakMap<object, number>();
   #nextId = 0;
   /** Runs reported whose code has not started yet. */
   #starting = 0;
@@ -110,14 +110,15 @@ export class RunReporter implements RunRecorder {
       this.#stopPending = false;
       this.#options.stop();
     }
-    const finished = this.#finish(runId, running);
+    // The supervisor holds a reported end, recorded or refused, until this host delivers it: the answer to its request, or `deliver`.
+    const owes = (end: object) => {
+      if (run.requestId !== undefined) this.#answering.set(run.requestId, runId);
+      else if (run.trigger) this.#delivering.set(end, runId);
+    };
+    const finished = this.#finish(runId, running, owes);
     this.#open.add(finished);
     try {
-      const result = await finished;
-      // The supervisor holds the recorded end until this host delivers it: the answer to its request, or `deliver`.
-      if (run.requestId !== undefined) this.#answering.set(run.requestId, runId);
-      else if (run.trigger) this.#delivering.set(result, runId);
-      return result;
+      return await finished;
     } finally {
       this.#open.delete(finished);
     }
@@ -132,12 +133,17 @@ export class RunReporter implements RunRecorder {
     this.#options.send({ kind: "run_delivered", runId });
   }
 
-  deliver(result: RunResult, event: { type: string; data: Record<string, unknown> }, triggerFailures: Record<string, number>): void {
-    const runId = this.#delivering.get(result);
-    if (runId === undefined) throw new Error("deliver() takes the result `record` returned for a trigger's run");
-    this.#delivering.delete(result);
-    // One message: the supervisor logs the event, takes the failures, and drops the run together, so no death can split them.
-    this.#options.send({ kind: "run_delivered", runId, event, triggerFailures });
+  deliver(end: unknown, finished: TriggerFinished, disabled: TriggerDisabled | undefined, triggerFailures: Record<string, number>): void {
+    const runId = typeof end === "object" && end !== null ? this.#delivering.get(end) : undefined;
+    if (runId === undefined) {
+      // No run of the supervisor's waits for this end: it never started, or never ran.
+      this.#options.send({ kind: "event", type: "trigger_finished", data: finished });
+      if (disabled) this.#options.send({ kind: "event", type: "trigger_disabled", data: disabled });
+      return;
+    }
+    this.#delivering.delete(end as object);
+    // One message: the supervisor logs the events, takes the failures, and drops the run together, so no death can split them.
+    this.#options.send({ kind: "run_delivered", runId, finished, ...(disabled && { disabled }), triggerFailures });
   }
 
   async register(code: string, extra: object): Promise<void> {
@@ -151,10 +157,11 @@ export class RunReporter implements RunRecorder {
   }
 
   /**
-   * Reports the run's end and settles once the supervisor has recorded it; a failure to record fails the run.
+   * Reports the run's end and settles once the supervisor has answered; a failure to record fails the run.
+   * Either way the supervisor now holds the end, and `owes` is told what the run returned or threw.
    * A hung run is reported as such and never settles: the supervisor kills this host instead of acking.
    */
-  async #finish(runId: number, running: Promise<RunOutcome>): Promise<RunResult> {
+  async #finish(runId: number, running: Promise<RunOutcome>, owes: (end: object) => void): Promise<RunResult> {
     let outcome: RunOutcome;
     try {
       outcome = await running;
@@ -164,7 +171,13 @@ export class RunReporter implements RunRecorder {
       throw err;
     }
     const { hung, ...result } = outcome;
-    await this.#acked(runId, { kind: "run_finished", runId, result, ...(hung && { hung }) });
+    try {
+      await this.#acked(runId, { kind: "run_finished", runId, result, ...(hung && { hung }) });
+    } catch (err) {
+      owes(err as object);
+      throw err;
+    }
+    owes(result);
     return result;
   }
 

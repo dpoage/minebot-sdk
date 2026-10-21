@@ -5,15 +5,16 @@
 // failures its init carries apply to it; every replacement loads it from there, as the body's world
 // does. Like the real host, the state it reports carries the triggers' failures, and it answers
 // requests and delivers trigger runs through the reporter. Once acked, every run pushes `acked`
-// with the time (ms) before its code starts. With `killAfterFinished`, the first host SIGKILLs
-// itself right after the message that carries a trigger_finished leaves it.
+// with the time (ms) before its code starts. The first host, with `killAfterFinished`, SIGKILLs
+// itself right after the message that carries a trigger_finished leaves it; with `killOnEndAck`,
+// as the supervisor's answer to a run's end reaches it, before it can act on it.
 // Requests: GET /ping answers with this pid; GET /triggers with the trigger list; POST /triggers
 // saves the trigger in the body; POST /run runs `{code, timeoutMs}` the way the body's /run does.
 import path from "node:path";
 import { HostEvents, RunReporter } from "../../../src/host/channel.ts";
 import { Triggers } from "../../../src/host/triggers.ts";
 import { BusyError, ProgramRunner } from "../../../src/program/runner.ts";
-import type { FromHost, HostInit, ToHost } from "../../../src/protocol/host.ts";
+import { programFinished, type FromHost, type HostInit, type ToHost } from "../../../src/protocol/host.ts";
 import { TriggerInput } from "../../../src/protocol/index.ts";
 import { JsonStore } from "../../../src/store.ts";
 
@@ -21,12 +22,16 @@ interface Script {
   graceMs: number;
   reflex: { name: string; on: string[]; run: string; timeoutMs: number; cooldownMs: number };
   killAfterFinished?: boolean;
+  killOnEndAck?: boolean;
 }
 
 let killAfterFinished = false;
+let killOnEndAck = false;
+/** Runs whose start was acked: the next ack for one answers its end. */
+const startAcked = new Set<number>();
 function send(message: FromHost): void {
   process.send!(message);
-  const finished = (message.kind === "event" && message.type === "trigger_finished") || (message.kind === "run_delivered" && message.event?.type === "trigger_finished");
+  const finished = (message.kind === "event" && message.type === "trigger_finished") || (message.kind === "run_delivered" && message.finished !== undefined);
   if (killAfterFinished && finished) process.kill(process.pid, "SIGKILL");
 }
 
@@ -48,7 +53,7 @@ async function serve(id: number, method: string, pathname: string, body: string 
   const { code, timeoutMs } = JSON.parse(body ?? "{}") as { code: string; timeoutMs: number };
   return reporter.record({ code, timeoutMs, requestId: id }, async () => {
     const result = await start(code, timeoutMs);
-    if (!result.hung) events.push("program_finished", { status: result.status, durationMs: result.durationMs });
+    if (!result.hung) events.push("program_finished", programFinished(result));
     triggers.idle();
     return result;
   });
@@ -70,6 +75,7 @@ process.on("message", async (message: ToHost) => {
       const first = store.keys().length === 0;
       if (first) store.set(init.script.reflex.name, { ...TriggerInput.parse(init.script.reflex), updated: new Date().toISOString() });
       killAfterFinished = first && init.script.killAfterFinished === true;
+      killOnEndAck = first && init.script.killOnEndAck === true;
       triggers = new Triggers({
         store,
         events,
@@ -85,7 +91,7 @@ process.on("message", async (message: ToHost) => {
               return start(trigger.run, trigger.timeoutMs);
             },
           ),
-        deliver: (result, finished, failures) => reporter.deliver(result, { type: "trigger_finished", data: finished }, failures),
+        deliver: (end, finished, disabled, failures) => reporter.deliver(end, finished, disabled, failures),
         register: async () => {},
         failures: init.triggerFailures,
         lost: init.lostFiring,
@@ -108,6 +114,8 @@ process.on("message", async (message: ToHost) => {
       reporter.stop();
       return;
     case "run_ack":
+      if (startAcked.has(message.runId) && killOnEndAck) process.kill(process.pid, "SIGKILL");
+      startAcked.add(message.runId);
       reporter.acknowledge(message.runId, message.error);
       return;
     case "event":
