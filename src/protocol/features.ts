@@ -64,7 +64,7 @@ export function programApiDoc(features: BodyFeatures): string {
     "- signal: AbortSignal that fires on timeout or stop. Check signal.aborted in long loops.",
     "- on(event, handler): subscribe to a bot event for the lifetime of this program only.",
     "- setTimeout / setInterval and their clear functions: cleared when the program ends.",
-    "- globalThis: persists between programs until the body restarts. Store helpers and state on it.",
+    "- globalThis: persists between programs until the body restarts. A restart of the bot host, the process that runs programs, also clears it: that happens after a crash, and when a program does not stop within 5 s of a stop or timeout. Store helpers and state on it.",
     '- notes: your notepad on this body; it survives body restarts and resets of your context. notes.set(key, text), notes.get(key) -> text, notes.list() -> [{ key, text, updated }], notes.delete(key). Keys are lowercase, e.g. "plan" or "places/base".',
     caps.milestones
       ? "- status(): resolves to { deaths, reconnects, milestones }; milestones is progress toward this body's milestones, graded from the server's statistics, or null."
@@ -100,5 +100,5 @@ export function programApiDoc(features: BodyFeatures): string {
 Globals:
 ${globals.join("\n")}
 
-The value you return is sent back as the result. On timeout or stop, the body halts pathfinding, digging and movement; code still running after that cannot be cancelled, so check signal.aborted.`;
+The value you return is sent back as the result. On timeout or stop, the body halts pathfinding, digging and movement; a program that has not ended 5 s later is killed with the bot host, which restarts and reconnects as the same player. Check signal.aborted in long loops so the program ends in time.`;
 }

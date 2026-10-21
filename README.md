@@ -120,7 +120,7 @@ A program is the body of an async function. These globals are available:
 - `signal`: an `AbortSignal` that fires on timeout or stop.
 - `on(event, handler)`: subscribes to a bot event until the program ends.
 - `setTimeout` and `setInterval`: cleared when the program ends.
-- `globalThis`: keeps its values between programs, until the body restarts.
+- `globalThis`: keeps its values between programs, until the body restarts. A restart of the bot host, the process that runs programs, also clears them: that happens after a crash, and when a program does not stop within 5 seconds of a stop or timeout.
 - `notes`: the agent's persistent notes. See [Long-running bodies](#long-running-bodies).
 - `status()`: resolves to deaths and reconnects, and to progress toward the body's milestones when the body has them.
 - `triggers`: register, list, and remove triggers. Only when the body has triggers. See [Triggers](#triggers).
@@ -141,7 +141,7 @@ await bot.dig(bot.blockAt(block.position));
 return block.name;
 ```
 
-The body runs one program at a time. A second request gets HTTP 409. The default timeout is 60 seconds; the maximum is 30 minutes. If a program times out or stops, the body halts pathfinding, digging, item use, and movement keys. JavaScript that is still running after the abort continues, so long loops must check `signal.aborted`.
+The body runs one program at a time. A second request gets HTTP 409. The default timeout is 60 seconds; the maximum is 30 minutes. If a program times out or stops, the body halts pathfinding, digging, item use, and movement keys. A program that has not ended 5 seconds after the abort is killed with the bot host, which restarts and reconnects as the same player. The run then answers with its `status` (`stopped` or `timeout`) and an `error` that says the program did not stop. Long loops must check `signal.aborted` so the program ends in time.
 
 The body does not add notices to run results. Facts stay in the observation: it keeps the open-sky view and `programsWithoutChange`, and `minebot observe --brief` adds `no change for N programs` when 3 or more programs in a row changed neither position nor inventory.
 
@@ -309,7 +309,7 @@ In a program: `triggers.add({ name, on, run, ... })`, `triggers.list()`, `trigge
 | `preempt`, `priority` | Whether the firing may stop the running program, and the order of waiting firings. |
 | `enabled` | Default true. |
 
-The body runs one program at a time, and a trigger run is a program. A firing that arrives while a program runs waits until the program ends. A trigger waits at most once, so repeated events while it waits do not queue repeats. Waiting triggers run highest `priority` first. With `preempt: true`, the firing stops the running program (it ends as `stopped`, like `minebot stop`) and runs at once; it does not stop a running trigger of equal or higher priority. A `run` request that arrives while a trigger runs gets HTTP 409.
+The body runs one program at a time, and a trigger run is a program. A firing that arrives while a program runs waits until the program ends. A trigger waits at most once, so repeated events while it waits do not queue repeats. Waiting triggers run highest `priority` first. With `preempt: true`, the firing stops the running program (it ends as `stopped`, like `minebot stop`) and runs when that program has ended; it does not stop a running trigger of equal or higher priority. If the stopped program takes more than 5 seconds to end, the bot host restarts and the firing does not run. A `run` request that arrives while a trigger runs gets HTTP 409.
 
 Each firing adds a `trigger_fired { name, event }` event and, when the run ends, `trigger_finished { name, status, durationMs, error?, logs? }`. A trigger run ends with `trigger_finished` and not with `program_finished`. A trigger that fails three times in a row (an error or a timeout) disables itself and adds `trigger_disabled { name, failures, reason }`. A failure never affects the body. An event that arrives while the body is not connected fires nothing.
 
