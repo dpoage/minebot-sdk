@@ -17,12 +17,10 @@ import {
 } from "../protocol/index.ts";
 import type { JsonStore } from "../store.ts";
 import { eventMatches } from "../protocol/event-filter.ts";
-import type { EventSink } from "../protocol/host.ts";
+import { MAX_EVENT_LOGS, type EventSink, type LostFiring } from "../protocol/host.ts";
 
 /** A trigger's `when` is an expression over two names, so it is cut off quickly. */
 const WHEN_TIMEOUT_MS = 100;
-/** The part of a trigger run's logs kept in its `trigger_finished` event. */
-const MAX_EVENT_LOGS = 2000;
 
 export class TriggerInvalidError extends Error {}
 export class TriggerLimitError extends Error {}
@@ -66,6 +64,10 @@ export interface TriggersDeps {
   run: (trigger: StoredTrigger, event: BodyEvent, started: () => void) => Promise<RunResult>;
   /** Records the code of a trigger being saved, so the audit covers it before it ever runs. */
   register: (trigger: StoredTrigger) => Promise<void>;
+  /** Each trigger's run of failures that the host this one replaces had counted. */
+  failures?: Record<string, number>;
+  /** The firing the replaced host ended in, recorded here as if it had finished here. */
+  lost?: LostFiring;
 }
 
 /** The agent's triggers: stored definitions, the matching of events to them, and the queue of firings. */
@@ -100,11 +102,22 @@ export class Triggers {
         deps.events.push("trigger_error", { name, error: err instanceof Error ? err.message : String(err) });
       }
     }
+    // A replacement host goes on counting where the one it replaces stopped, and counts the firing that ended it.
+    for (const [name, failures] of Object.entries(deps.failures ?? {})) {
+      if (this.#defs.has(name)) this.#statsOf(name).failures = failures;
+    }
+    const lostDef = deps.lost && this.#defs.get(deps.lost.name);
+    if (deps.lost && lostDef) this.#record(lostDef, deps.lost);
     this.#unsubscribe = deps.events.subscribe((event) => this.#onEvent(event));
   }
 
   list(): TriggerInfo[] {
     return [...this.#defs.values()].sort((a, b) => a.name.localeCompare(b.name)).map((def) => this.#info(def));
+  }
+
+  /** Each trigger's current run of failures, for the triggers that have one. */
+  failures(): Record<string, number> {
+    return Object.fromEntries([...this.#stats].filter(([name, stats]) => stats.failures > 0 && this.#defs.has(name)).map(([name, stats]) => [name, stats.failures]));
   }
 
   /** Validates and saves a trigger; one of the same name is replaced. Nothing is stored when validation fails. */
@@ -322,7 +335,7 @@ export class Triggers {
     this.#pump();
   }
 
-  /** Records how a firing ended; a trigger that fails MAX_TRIGGER_FAILURES times in a row disables itself. */
+  /** Reports how a firing ended and records it. */
   #finish(def: Stored, outcome: Outcome): void {
     const logs = outcome.logs ? outcome.logs.slice(0, MAX_EVENT_LOGS) : undefined;
     this.#deps.events.push("trigger_finished", {
@@ -332,6 +345,11 @@ export class Triggers {
       ...(outcome.error !== undefined && { error: outcome.error }),
       ...(logs && { logs }),
     });
+    this.#record(def, outcome);
+  }
+
+  /** Records how a firing ended in the trigger's numbers; a trigger that fails MAX_TRIGGER_FAILURES times in a row disables itself. */
+  #record(def: Stored, outcome: { status: RunStatus; error?: string }): void {
     // A removed or replaced trigger has no say in what the new one shows or stores.
     if (this.#defs.get(def.name) !== def) return;
     const stats = this.#statsOf(def.name);

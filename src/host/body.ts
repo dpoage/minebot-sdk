@@ -8,7 +8,7 @@ import type { KitHost } from "../kit/kit.ts";
 import type { Wiki } from "../wiki/wiki.ts";
 import { WikiAccess, wikiView } from "../wiki/access.ts";
 import { Connection, type ServerAuth } from "./connection.ts";
-import type { EventSink } from "../protocol/host.ts";
+import type { EventSink, LostFiring } from "../protocol/host.ts";
 import { programGlobals, type GlobalsDeps } from "./globals.ts";
 import { briefOf, observation } from "./observation.ts";
 import { Notes } from "./notes.ts";
@@ -51,6 +51,9 @@ export interface BodyOptions {
   /** Deaths and reconnects the previous host counted, when this host replaces one. */
   deaths?: number;
   reconnects?: number;
+  /** Each trigger's run of failures, and the firing the replaced host ended in, when this host replaces one. */
+  triggerFailures?: Record<string, number>;
+  lostFiring?: LostFiring;
 }
 
 /** Reports program runs and registrations to whoever keeps the history; user code starts only once `record` has been answered. */
@@ -126,6 +129,8 @@ export class Body {
             run: (trigger, event, started) => this.#runTrigger(trigger, event, started),
             register: (trigger) =>
               options.recorder.register(`${trigger.run}\n${trigger.when ?? ""}`, { trigger: trigger.name, on: trigger.on, ...(trigger.when !== undefined && { when: trigger.when }) }),
+            failures: options.triggerFailures,
+            lost: options.lostFiring,
           });
   }
 
@@ -145,8 +150,9 @@ export class Body {
   /**
    * Runs a program and records its end in the event log. The result is exactly what the program
    * produced: facts such as an unchanged world stay in the observation, read on request.
+   * A hung run comes back flagged: its host is about to be killed, and the supervisor logs its end.
    */
-  async run(code: string, timeoutMs?: number): Promise<RunResult> {
+  async run(code: string, timeoutMs?: number): Promise<RunOutcome> {
     this.#options.syncKits?.();
     const result = await this.runner.run(code, timeoutMs);
     // A hung run ends with its host: the supervisor, which kills it, logs the end of the program.

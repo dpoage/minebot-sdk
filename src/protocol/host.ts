@@ -2,7 +2,7 @@
 // arguments the host is forked with and the messages each side sends over the child-process
 // channel. Not re-exported from the protocol index: clients of the body API never see it.
 import type { DaemonOptions } from "../body/daemon.ts";
-import type { BodyEvent, RunResult } from "./types.ts";
+import type { BodyEvent, RunResult, RunStatus } from "./types.ts";
 
 /** The arguments the supervisor forks the host with: its own pid, which the host watches to end with it. */
 export function hostArguments(supervisorPid: number): string[] {
@@ -37,6 +37,17 @@ export function restartedError(cause: string): string {
   return `${cause}; the bot host was restarted`;
 }
 
+/** The part of a trigger run's logs kept in its `trigger_finished` event, whether the host or the supervisor pushes it. */
+export const MAX_EVENT_LOGS = 2000;
+
+/** How a trigger's firing ended that its host could not finish: the host was killed or died during it. */
+export interface LostFiring {
+  name: string;
+  status: RunStatus;
+  error?: string;
+  durationMs: number;
+}
+
 /** Where events are pushed and heard: the supervisor's EventLog, and the bot host's stand-in that sends them there. */
 export interface EventSink {
   push(type: string, data?: Record<string, unknown>): void;
@@ -55,6 +66,10 @@ export type HostInit = Omit<DaemonOptions, "apiHost" | "apiPort" | "token" | "hi
   reconnects: number;
   /** The kit set to activate, when it is not the catalog's default. */
   active?: string[];
+  /** Each trigger's run of failures, as the host this one replaces last reported it. */
+  triggerFailures?: Record<string, number>;
+  /** The trigger firing the replaced host ended in: this host records its end as if the firing had finished here. */
+  lostFiring?: LostFiring;
   /** Whether the host sets `milestones` from the options; false once an agent may have replaced them. */
   applyMilestones: boolean;
 };
@@ -99,4 +114,4 @@ export type FromHost =
   | { kind: "run_finished"; runId: number; result: RunResult | null; hung?: true }
   /** Code the body will run later (a trigger), for the history's audit; answered by `run_ack` like a run. */
   | { kind: "register"; runId: number; code: string; extra: object; kits: string[] }
-  | { kind: "state"; connected: boolean; deaths: number; reconnects: number; active: string[] };
+  | { kind: "state"; connected: boolean; deaths: number; reconnects: number; active: string[]; triggerFailures: Record<string, number> };

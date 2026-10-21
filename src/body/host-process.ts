@@ -11,11 +11,13 @@ import {
   hostArguments,
   hungCause,
   KILL_MARGIN_MS,
+  MAX_EVENT_LOGS,
   NOT_CONNECTED_MESSAGE,
   restartedError,
   STOP_GRACE_MS,
   type FromHost,
   type HostInit,
+  type LostFiring,
   type ToHost,
 } from "../protocol/host.ts";
 import type { EventLog } from "./events.ts";
@@ -27,7 +29,7 @@ const SHUTDOWN_GRACE_MS = 5_000;
 /** How long after a host's exit the supervisor waits for its channel to drain, so the host's last messages are handled before its death is. */
 const CHANNEL_DRAIN_MS = 500;
 
-export const RESTART_BASE_MS = 1_000;
+const RESTART_BASE_MS = 1_000;
 export const RESTART_MAX_MS = 60_000;
 /** A host that stays up this long was not crashing: the next restart starts the schedule over. */
 export const STABLE_UP_MS = 60_000;
@@ -49,6 +51,9 @@ type Answer = PromiseWithResolvers<{ status: number; body: unknown }>;
 
 const NOT_CONNECTED = { status: 503, body: { error: NOT_CONNECTED_MESSAGE } };
 
+/** Why a host was killed whose program's end reached the supervisor just after the deadline had killed it: not a hang. */
+const LATE_CAUSE = "the program ended just as its deadline to stop ran out";
+
 /** A program the host reported and the supervisor has not seen end. */
 interface RunInFlight {
   id: number;
@@ -68,6 +73,8 @@ interface RunInFlight {
   hung?: RunResult;
   /** Kills the host when the program neither settles nor is reported hung in time. */
   deadline?: NodeJS.Timeout;
+  /** Set when its deadline killed the host: an end that still arrives was late, not hung. */
+  overdue?: boolean;
 }
 
 /** One forked host. */
@@ -95,6 +102,8 @@ export class HostProcess {
   /** Requests that arrived while no host was ready; the next host answers them. */
   #queued: { request: ForwardedRequest; answer: Answer }[] = [];
   readonly #runs = new Map<number, RunInFlight>();
+  /** Runs that ended, by the request each answers, until the host answers it: a host that dies first has the supervisor answer with the result. */
+  readonly #ended = new Map<number, RunResult>();
   #attempt: Attempt | undefined;
   #nextRequest = 0;
   #connected = false;
@@ -107,7 +116,9 @@ export class HostProcess {
   #consecutive = 0;
   #restartTimer: NodeJS.Timeout | undefined;
   /** What the host last reported of what a replacement carries over. */
-  #carried: { deaths: number; reconnects: number; active?: string[] };
+  #carried: { deaths: number; reconnects: number; active?: string[]; triggerFailures?: Record<string, number> };
+  /** The trigger firing the last host ended in, until a replacement is ready, having counted it. */
+  #lostFiring: LostFiring | undefined;
   /** The host's messages are handled one at a time, in order: a history line is on disk before the response that follows it is relayed. */
   #handling = Promise.resolve();
 
@@ -117,7 +128,7 @@ export class HostProcess {
     this.#history = o.history;
     this.#entry = o.entry ?? DEFAULT_ENTRY;
     this.#graceMs = o.graceMs ?? STOP_GRACE_MS;
-    this.#carried = { deaths: o.init.deaths, reconnects: o.init.reconnects, active: o.init.active };
+    this.#carried = { deaths: o.init.deaths, reconnects: o.init.reconnects, active: o.init.active, triggerFailures: o.init.triggerFailures };
     // The host's own copy of the log: its triggers hear events with the seq the log gave them.
     this.#unsubscribe = o.events.subscribe((event) => {
       if (this.#attempt?.child.connected) this.#send(this.#attempt, { kind: "event", event });
@@ -175,6 +186,7 @@ export class HostProcess {
     this.#runs.clear();
     const err = new Error("the body is shutting down");
     for (const request of this.#requests.values()) request.reject(err);
+    this.#ended.clear();
     this.#requests.clear();
     for (const { answer } of this.#queued) answer.reject(err);
     this.#queued = [];
@@ -185,7 +197,8 @@ export class HostProcess {
   }
 
   #send(attempt: Attempt, message: ToHost): void {
-    attempt.child.send(message);
+    // A send to a host that is dying fails: what its exit does (end its runs, answer its requests, restart) covers the message lost.
+    attempt.child.send(message, () => {});
   }
 
   #fork(init: HostInit): Attempt {
@@ -208,9 +221,18 @@ export class HostProcess {
   /** Forks the replacement host, carrying over what the old one last reported. */
   async #restart(): Promise<void> {
     if (this.#ending) return;
-    const { deaths, reconnects, active } = this.#carried;
+    const { deaths, reconnects, active, triggerFailures } = this.#carried;
     // A restart is a reconnect of the same player; milestones the agent may have changed since the first start are kept.
-    const init: HostInit = { ...this.#init, deaths, reconnects: reconnects + 1, ...(active && { active }), applyMilestones: false };
+    // Its triggers go on counting failures, the firing the old host ended in included.
+    const init: HostInit = {
+      ...this.#init,
+      deaths,
+      reconnects: reconnects + 1,
+      ...(active && { active }),
+      ...(triggerFailures && { triggerFailures }),
+      ...(this.#lostFiring && { lostFiring: this.#lostFiring }),
+      applyMilestones: false,
+    };
     try {
       await this.#fork(init).ready.promise;
     } catch (err) {
@@ -236,23 +258,12 @@ export class HostProcess {
   #dispatch(r: ForwardedRequest, answer: Answer): void {
     const id = ++this.#nextRequest;
     this.#requests.set(id, answer);
-    try {
-      this.#send(this.#attempt!, { kind: "request", id, method: r.method, url: r.url, body: r.body?.toString("utf8") ?? null, tooLarge: r.tooLarge });
-    } catch {
-      this.#requests.delete(id);
-      answer.resolve(NOT_CONNECTED);
-    }
+    this.#send(this.#attempt!, { kind: "request", id, method: r.method, url: r.url, body: r.body?.toString("utf8") ?? null, tooLarge: r.tooLarge });
   }
 
   async #terminate(attempt: Attempt | undefined): Promise<void> {
     if (!attempt) return;
-    if (attempt.child.connected) {
-      try {
-        this.#send(attempt, { kind: "shutdown" });
-      } catch {
-        // The channel closed under us; the host is on its way out.
-      }
-    }
+    if (attempt.child.connected) this.#send(attempt, { kind: "shutdown" });
     const killer = setTimeout(() => attempt.child.kill("SIGKILL"), SHUTDOWN_GRACE_MS);
     await attempt.exited;
     clearTimeout(killer);
@@ -276,7 +287,9 @@ export class HostProcess {
     const at = Math.min(run.timeoutAt, run.stopAt ?? Infinity) + this.#graceMs + KILL_MARGIN_MS;
     run.deadline = setTimeout(() => {
       this.#handling = this.#handling.then(() => {
-        if (this.#runs.get(run.id) === run) this.#kill(attempt, hungCause(this.#graceMs));
+        if (this.#runs.get(run.id) !== run) return;
+        run.overdue = true;
+        this.#kill(attempt, hungCause(this.#graceMs));
       });
     }, Math.max(0, at - Date.now()));
   }
@@ -290,6 +303,7 @@ export class HostProcess {
         attempt.readyAt = Date.now();
         this.#attemptFailed = false;
         attempt.ready.resolve();
+        this.#lostFiring = undefined;
         if (this.#joined) this.#send(attempt, { kind: "start" });
         for (const { request, answer } of this.#queued.splice(0)) this.#dispatch(request, answer);
         return;
@@ -301,13 +315,14 @@ export class HostProcess {
       case "response":
         this.#requests.get(message.id)?.resolve({ status: message.status, body: message.body });
         this.#requests.delete(message.id);
+        this.#ended.delete(message.id);
         return;
       case "event":
         this.#events.push(message.type, message.data);
         return;
       case "state":
         this.#connected = message.connected;
-        this.#carried = { deaths: message.deaths, reconnects: message.reconnects, active: message.active };
+        this.#carried = { deaths: message.deaths, reconnects: message.reconnects, active: message.active, triggerFailures: message.triggerFailures };
         return;
       case "run_started":
         try {
@@ -341,8 +356,13 @@ export class HostProcess {
           return;
         }
         if (run) clearTimeout(run.deadline);
+        // The deadline killed the host as the program was ending: the restart is not for a hang.
+        if (run?.overdue) attempt.cause = LATE_CAUSE;
         try {
-          if (run && message.result) await run.end(message.result);
+          if (run && message.result) {
+            await run.end(message.result);
+            if (run.requestId !== undefined) this.#ended.set(run.requestId, message.result);
+          }
           this.#sendIfOpen(attempt, { kind: "run_ack", runId: message.runId });
         } catch (err) {
           // The run fails as it did when the history was written in-process.
@@ -401,12 +421,19 @@ export class HostProcess {
       } catch (err) {
         console.error("[minebot] could not write the history line of a program its host did not finish:", err);
       }
-      this.#events.push(
-        run.trigger === undefined ? "program_finished" : "trigger_finished",
-        run.trigger === undefined
-          ? { status: result.status, durationMs: result.durationMs }
-          : { name: run.trigger, status: result.status, durationMs: result.durationMs, ...(result.error !== undefined && { error: result.error }) },
-      );
+      if (run.trigger === undefined) {
+        this.#events.push("program_finished", { status: result.status, durationMs: result.durationMs });
+      } else {
+        // As the host pushes it; the next host counts the firing in the trigger's failures.
+        this.#lostFiring = { name: run.trigger, status: result.status, ...(result.error !== undefined && { error: result.error }), durationMs: result.durationMs };
+        this.#events.push("trigger_finished", {
+          name: run.trigger,
+          status: result.status,
+          durationMs: result.durationMs,
+          ...(result.error !== undefined && { error: result.error }),
+          ...(result.logs && { logs: result.logs.slice(0, MAX_EVENT_LOGS) }),
+        });
+      }
     }
     this.#events.push("disconnected", { reason: `bot host restarted: ${cause}` });
     for (const run of runs) {
@@ -414,6 +441,12 @@ export class HostProcess {
       if (run.requestId !== undefined) this.#requests.delete(run.requestId);
       run.finished.resolve();
     }
+    // A run that ended but whose request its host did not answer before it died: the request gets the run's result.
+    for (const [id, result] of this.#ended) {
+      this.#requests.get(id)?.resolve({ status: 200, body: result });
+      this.#requests.delete(id);
+    }
+    this.#ended.clear();
     for (const request of this.#requests.values()) request.resolve(NOT_CONNECTED);
     this.#requests.clear();
     this.#schedule(Date.now() - attempt.readyAt);

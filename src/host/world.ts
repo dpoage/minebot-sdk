@@ -181,6 +181,8 @@ export function buildWorld(options: HostInit, io: { events: EventSink; recorder:
     startedAt: options.startedAt,
     deaths: options.deaths,
     reconnects: options.reconnects,
+    triggerFailures: options.triggerFailures,
+    lostFiring: options.lostFiring,
     syncKits,
     kitAuthoring: {
       save: saveKit,
