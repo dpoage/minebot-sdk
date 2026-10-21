@@ -118,8 +118,8 @@ A program is the body of an async function. These globals are available:
 - `log(...)` and `console.log(...)`: append to the program output.
 - `sleep(ms)`: waits, and rejects when the program is aborted.
 - `signal`: an `AbortSignal` that fires on timeout or stop.
-- `on(event, handler)`: subscribes to a bot event. When the program ends or is aborted, the body removes the handlers that exist at that moment. A handler that the program registers afterward stays.
-- `setTimeout` and `setInterval`: when the program ends or is aborted, the body clears the timers that exist at that moment. A timer that the program creates afterward keeps running.
+- `on(event, handler)`: subscribes to a bot event. When the program ends or is aborted, the body removes the handlers that exist at that moment.
+- `setTimeout` and `setInterval`: when the program ends or is aborted, the body clears the timers that exist at that moment.
 - `globalThis`: keeps its values between programs. A restart of the body clears them, and so does a restart of the bot host, the process that runs programs. The bot host restarts after a crash, and when the body kills it for a program that does not stop.
 - `notes`: the agent's persistent notes. See [Long-running bodies](#long-running-bodies).
 - `status()`: resolves to deaths and reconnects, and to progress toward the body's milestones when the body has them.

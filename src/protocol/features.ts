@@ -62,8 +62,8 @@ export function programApiDoc(features: BodyFeatures): string {
     "- log(...args) / console.log(...args): append to the program output.",
     "- sleep(ms): resolves after ms; rejects when the program is aborted.",
     "- signal: AbortSignal that fires on timeout or stop. Check signal.aborted in long loops.",
-    "- on(event, handler): subscribe to a bot event. When the program ends or is aborted, the body removes the handlers that exist at that moment; a handler registered afterward stays.",
-    "- setTimeout / setInterval and their clear functions: when the program ends or is aborted, the body clears the timers that exist at that moment; a timer created afterward keeps running.",
+    "- on(event, handler): subscribe to a bot event. When the program ends or is aborted, the body removes the handlers that exist at that moment.",
+    "- setTimeout / setInterval and their clear functions: when the program ends or is aborted, the body clears the timers that exist at that moment.",
     "- globalThis: persists between programs. A restart of the body clears it, and so does a restart of the bot host, the process that runs programs. The bot host restarts after a crash, and when the body kills it for a program that does not stop. Store helpers and state on it.",
     '- notes: your notepad on this body; it survives body restarts and resets of your context. notes.set(key, text), notes.get(key) -> text, notes.list() -> [{ key, text, updated }], notes.delete(key). Keys are lowercase, e.g. "plan" or "places/base".',
     caps.milestones
