@@ -167,7 +167,7 @@ export const TriggerInput = z.object({
   cooldownMs: z.number().int().nonnegative().max(60 * 60_000).default(DEFAULT_TRIGGER_COOLDOWN_MS),
   timeoutMs: z.number().int().positive().max(MAX_TIMEOUT_MS).default(DEFAULT_TRIGGER_TIMEOUT_MS),
   enabled: z.boolean().default(true),
-  /** Abort the running program instead of waiting for it to finish. */
+  /** Abort the running program when the trigger fires; the firing runs once that program has ended. */
   preempt: z.boolean().default(false),
   /** Order of waiting triggers, highest first; a preempting trigger never aborts a running trigger of equal or higher priority. */
   priority: z.number().int().min(-100).max(100).default(0),

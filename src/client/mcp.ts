@@ -105,7 +105,7 @@ export function toolPlan(features: BodyFeatures, toolSet: ToolSet): Record<strin
     trigger_add: {
       enabled: caps.triggers,
       description:
-        "Install a reflex: a program the body runs on its own whenever an event of the given types arrives (hurt, chat, night, ...), for example eating when food is low. The program has the same globals as run_program plus `event`. Waits for the running program to finish unless preempt is true. Saved on the body, so it survives restarts; a trigger with the same name is replaced. A trigger that fails 3 times in a row disables itself.",
+        "Install a reflex: a program the body runs on its own whenever an event of the given types arrives (hurt, chat, night, ...), for example eating when food is low. The program has the same globals as run_program plus `event`. The firing waits until the running program has ended; with preempt it first stops that program. Saved on the body, so it survives restarts; a trigger with the same name is replaced. A trigger that fails 3 times in a row disables itself.",
     },
     trigger_list: {
       enabled: caps.triggers,
@@ -383,7 +383,7 @@ export async function serveMcp(bodyName: string, toolSet: ToolSet): Promise<void
         match: TriggerInput.shape.match.describe("Case-insensitive regular expression over chat, whisper, and system messages."),
         cooldown_ms: TriggerInput.shape.cooldownMs.describe("Minimum time between two firings. Default 1000."),
         timeout_ms: TriggerInput.shape.timeoutMs.describe("Abort the run after this many milliseconds. Default 30000."),
-        preempt: TriggerInput.shape.preempt.describe("Stop the running program instead of waiting for it. Default false."),
+        preempt: TriggerInput.shape.preempt.describe("Stop the running program when this trigger fires, then run once it has ended. Default false."),
         priority: TriggerInput.shape.priority.describe("Waiting triggers run highest first; a preempting trigger never stops a running trigger of equal or higher priority. Default 0."),
         enabled: TriggerInput.shape.enabled,
       },

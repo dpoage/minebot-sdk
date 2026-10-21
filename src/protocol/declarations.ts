@@ -188,7 +188,7 @@ function globalsBlock(features: BodyFeatures, active: readonly string[]): string
     "  function sleep(ms: number): Promise<void>;",
     "  /** Fires on timeout or stop; check signal.aborted in long loops. */",
     "  const signal: AbortSignal;",
-    "  /** Subscribes to a bot event until this program ends or is aborted. */",
+    "  /** Subscribes to a bot event. When the program ends or is aborted, the body removes the handlers that exist at that moment. */",
     "  function on(event: string, handler: (...args: any[]) => void): void;",
     NOTES,
     `  /** Deaths and reconnects${caps.milestones ? ", and progress toward the body's milestones" : ""}. */`,

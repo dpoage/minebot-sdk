@@ -62,8 +62,8 @@ export function programApiDoc(features: BodyFeatures): string {
     "- log(...args) / console.log(...args): append to the program output.",
     "- sleep(ms): resolves after ms; rejects when the program is aborted.",
     "- signal: AbortSignal that fires on timeout or stop. Check signal.aborted in long loops.",
-    "- on(event, handler): subscribe to a bot event until this program ends or is aborted.",
-    "- setTimeout / setInterval and their clear functions: the timers pending when the program ends or is aborted are cleared.",
+    "- on(event, handler): subscribe to a bot event. When the program ends or is aborted, the body removes the handlers that exist at that moment; a handler registered afterward stays.",
+    "- setTimeout / setInterval and their clear functions: when the program ends or is aborted, the body clears the timers that exist at that moment; a timer created afterward keeps running.",
     "- globalThis: persists between programs. A restart of the body clears it, and so does a restart of the bot host, the process that runs programs. The bot host restarts after a crash, and when the body kills it for a program that does not stop. Store helpers and state on it.",
     '- notes: your notepad on this body; it survives body restarts and resets of your context. notes.set(key, text), notes.get(key) -> text, notes.list() -> [{ key, text, updated }], notes.delete(key). Keys are lowercase, e.g. "plan" or "places/base".',
     caps.milestones
@@ -100,5 +100,5 @@ export function programApiDoc(features: BodyFeatures): string {
 Globals:
 ${globals.join("\n")}
 
-The value you return is sent back as the result. On timeout or stop, the body halts pathfinding, digging and movement, clears your timers, and removes your on() handlers. If the program does not end, the body can kill the bot host and restart it; the restart reconnects as the same player. A program that blocks the host with synchronous code after it catches the abort can run on without being killed. Check signal.aborted in long loops so the program ends in time.`;
+The value you return is sent back as the result. On timeout or stop, the body halts pathfinding, digging and movement, clears the timers that exist at that moment, and removes the on() handlers that exist at that moment. If the program does not end, the body can kill the bot host and restart it; the restart reconnects as the same player. A program that blocks the host with synchronous code after it catches the abort can run on without being killed. Check signal.aborted in long loops so the program ends in time.`;
 }

@@ -118,8 +118,8 @@ A program is the body of an async function. These globals are available:
 - `log(...)` and `console.log(...)`: append to the program output.
 - `sleep(ms)`: waits, and rejects when the program is aborted.
 - `signal`: an `AbortSignal` that fires on timeout or stop.
-- `on(event, handler)`: subscribes to a bot event until the program ends or is aborted.
-- `setTimeout` and `setInterval`: the timers that are pending when the program ends or is aborted are cleared.
+- `on(event, handler)`: subscribes to a bot event. When the program ends or is aborted, the body removes the handlers that exist at that moment. A handler that the program registers afterward stays.
+- `setTimeout` and `setInterval`: when the program ends or is aborted, the body clears the timers that exist at that moment. A timer that the program creates afterward keeps running.
 - `globalThis`: keeps its values between programs. A restart of the body clears them, and so does a restart of the bot host, the process that runs programs. The bot host restarts after a crash, and when the body kills it for a program that does not stop.
 - `notes`: the agent's persistent notes. See [Long-running bodies](#long-running-bodies).
 - `status()`: resolves to deaths and reconnects, and to progress toward the body's milestones when the body has them.
@@ -141,7 +141,7 @@ await bot.dig(bot.blockAt(block.position));
 return block.name;
 ```
 
-The body runs one program at a time. A second request gets HTTP 409. The default timeout is 60 seconds; the maximum is 30 minutes. If a program times out or stops, the body halts pathfinding, digging, item use, and movement keys, clears the program's timers, and removes its `on` handlers. The program then gets a grace period to end. If it does not end, the body can kill the bot host and restart it: the restart reconnects as the same player, and the run answers with its `status` (`stopped` or `timeout`) and an `error` that says the program did not stop. The kill time is not fixed: a program that blocks the host with synchronous code after it catches the abort can run on without being killed. The restart can start late: it waits 1 second, and the wait doubles after each restart in quick succession, up to 60 seconds. See [How it works](#how-it-works). Long loops must check `signal.aborted` so the program ends in time.
+The body runs one program at a time. A second request gets HTTP 409. The default timeout is 60 seconds; the maximum is 30 minutes. If a program times out or stops, the body halts pathfinding, digging, item use, and movement keys, clears the timers that exist at that moment, and removes the `on` handlers that exist at that moment. The program then gets a grace period to end. If it does not end, the body can kill the bot host and restart it: the restart reconnects as the same player, and the run answers with its `status` (`stopped` or `timeout`) and an `error` that says the program did not stop. The kill time is not fixed: a program that blocks the host with synchronous code after it catches the abort can run on without being killed. The restart can start late: it waits 1 second, and the wait doubles after each restart in quick succession, up to 60 seconds. See [How it works](#how-it-works). Long loops must check `signal.aborted` so the program ends in time.
 
 The body does not add notices to run results. Facts stay in the observation: it keeps the open-sky view and `programsWithoutChange`, and `minebot observe --brief` adds `no change for N programs` when 3 or more programs in a row changed neither position nor inventory.
 
@@ -429,7 +429,7 @@ A body is two processes. The supervisor (`src/body/`) serves the API, keeps the 
 
 If the bot host crashes, or the supervisor kills it, the supervisor forks a replacement that reconnects as the same player. The first restart waits 1 second. Each restart in quick succession doubles the wait, up to 60 seconds, and a host that stays up for 60 seconds starts the schedule over. A request that arrives during a restart waits for the new host; if the new host fails to start, the supervisor retries on the same schedule and requests get HTTP 503 until a host is ready.
 
-A restart loses what the old host held in memory: `globalThis` and the program that ran. The supervisor ends that program's run with an `error` that says the bot host was restarted, and adds a `disconnected` event. Notes, milestones, kit stores, agent kits, and triggers are on disk and stay. The replacement counts the restart as a reconnect and continues the death count, the active kits, and each trigger's count of failures.
+A restart loses what the old host held in memory, such as `globalThis`, the program that ran, the trigger statistics (fired counts and last status), and the count of programs without change. The supervisor ends that program's run with an `error` that says the bot host was restarted, and adds a `disconnected` event. Notes, milestones, kit stores, agent kits, and triggers are on disk and stay. The replacement counts the restart as a reconnect and continues the death count, the active kits, and each trigger's count of failures.
 
 If the server disconnects or kicks the body, the body records the event and reconnects, with the waits described in [Long-running bodies](#long-running-bodies). Mineflayer respawns the player after a death.
 
