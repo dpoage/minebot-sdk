@@ -1,3 +1,6 @@
+import { realpathSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { inspect } from "node:util";
 import vm from "node:vm";
 import { DEFAULT_TIMEOUT_MS, MAX_TIMEOUT_MS, type RunResult, type RunStatus } from "../protocol/index.ts";
@@ -6,6 +9,13 @@ import type { ProgramEventSource, ProgramScope } from "./scope.ts";
 
 /** A run's result; `hung` marks a program that was aborted and had not settled when the grace ran out, so the host must be restarted. */
 export type RunOutcome = RunResult & { hung?: true };
+
+/** What one entry hands the lifecycle: how to start the program, how to undo what starting it added, how to report its error. */
+interface Program {
+  start(): Promise<unknown>;
+  cleanup(): void;
+  formatError(err: unknown): string;
+}
 
 const PROGRAM_FILENAME = "program.js";
 const DEFAULT_MAX_LOG_BYTES = 64 * 1024;
@@ -59,6 +69,72 @@ export class ProgramRunner {
    * An aborted program gets `graceMs` to settle (resolve or reject); one that does not ends the run with `hung`.
    */
   async run(code: string, timeoutMs = DEFAULT_TIMEOUT_MS, extraGlobals: Record<string, unknown> = {}): Promise<RunOutcome> {
+    return this.#execute(timeoutMs, (scope, timers) => {
+      // Resolve globals before the runner is marked busy: if the body is unavailable this throws cleanly.
+      const globals = this.#options.globals(scope);
+      return {
+        start: () => {
+          Object.assign(this.#context, globals, extraGlobals, {
+            log: scope.log,
+            console: { log: scope.log, info: scope.log, warn: scope.log, error: scope.log, debug: scope.log },
+            sleep: scope.sleep,
+            signal: scope.signal,
+            on: scope.on,
+            setTimeout: (fn: () => void, ms?: number) => {
+              const timer = setTimeout(() => {
+                timers.delete(timer);
+                fn();
+              }, ms);
+              timers.add(timer);
+              return timer;
+            },
+            setInterval: (fn: () => void, ms?: number) => {
+              const timer = setInterval(fn, ms);
+              timers.add(timer);
+              return timer;
+            },
+            clearTimeout: (timer: NodeJS.Timeout) => {
+              clearTimeout(timer);
+              timers.delete(timer);
+            },
+            clearInterval: (timer: NodeJS.Timeout) => {
+              clearInterval(timer);
+              timers.delete(timer);
+            },
+          });
+          // lineOffset keeps reported line numbers aligned with the agent's source.
+          const fn = vm.runInContext(`(async () => {\n${code}\n})`, this.#context, {
+            filename: PROGRAM_FILENAME,
+            lineOffset: -1,
+          }) as () => Promise<unknown>;
+          return fn();
+        },
+        cleanup: () => {
+          for (const name of Object.keys(extraGlobals)) delete this.#context[name];
+        },
+        formatError,
+      };
+    });
+  }
+
+  /**
+   * Runs `fn` with this run's scope, with the lifecycle of `run`: busy while another run is active, the
+   * timeout and stop, the grace and `hung`, the log, the duration, the result as JSON. `sourceDir` is the
+   * directory the routine's modules load from; an error reports the stack frames inside it, as file paths.
+   * Timers and bot listeners a routine creates itself are not cleared; only the scope's `sleep` and `on` are run-scoped.
+   */
+  async call(
+    fn: (scope: ProgramScope) => Promise<unknown>,
+    options: { timeoutMs?: number; sourceDir: string },
+  ): Promise<RunOutcome> {
+    return this.#execute(options.timeoutMs ?? DEFAULT_TIMEOUT_MS, (scope) => ({
+      start: async () => fn(scope),
+      cleanup: () => {},
+      formatError: (err) => formatRoutineError(err, options.sourceDir),
+    }));
+  }
+
+  async #execute(timeoutMs: number, prepare: (scope: ProgramScope, timers: Set<NodeJS.Timeout>) => Program): Promise<RunOutcome> {
     if (this.#running) throw new BusyError();
     const startedAt = Date.now();
     const controller = new AbortController();
@@ -96,42 +172,13 @@ export class ProgramRunner {
       emitter.on(event, handler);
       listeners.push([emitter, event, handler]);
     };
-    // Resolve globals before marking the runner busy: if the body is unavailable this throws cleanly.
-    const globals = this.#options.globals({ log, sleep, signal, on });
+    const program = prepare({ log, sleep, signal, on }, timers);
     this.#running = { controller, startedAt };
-    Object.assign(this.#context, globals, extraGlobals, {
-      log,
-      console: { log, info: log, warn: log, error: log, debug: log },
-      sleep,
-      signal,
-      on,
-      setTimeout: (fn: () => void, ms?: number) => {
-        const timer = setTimeout(() => {
-          timers.delete(timer);
-          fn();
-        }, ms);
-        timers.add(timer);
-        return timer;
-      },
-      setInterval: (fn: () => void, ms?: number) => {
-        const timer = setInterval(fn, ms);
-        timers.add(timer);
-        return timer;
-      },
-      clearTimeout: (timer: NodeJS.Timeout) => {
-        clearTimeout(timer);
-        timers.delete(timer);
-      },
-      clearInterval: (timer: NodeJS.Timeout) => {
-        clearInterval(timer);
-        timers.delete(timer);
-      },
-    });
 
     let status: RunStatus;
     let result: unknown;
     let error: string | undefined;
-    let program: Promise<unknown> | undefined;
+    let started: Promise<unknown> | undefined;
     /** The log as of the abort: a program that settles within its grace returns this, as one that stopped at once does. */
     let loggedAtAbort: string | undefined;
     const timeout = setTimeout(
@@ -140,17 +187,12 @@ export class ProgramRunner {
     );
     try {
       try {
-        // lineOffset keeps reported line numbers aligned with the agent's source.
-        const fn = vm.runInContext(`(async () => {\n${code}\n})`, this.#context, {
-          filename: PROGRAM_FILENAME,
-          lineOffset: -1,
-        }) as () => Promise<unknown>;
-        program = fn();
-        program.catch(() => {}); // late rejections after an abort are expected
+        started = program.start();
+        started.catch(() => {}); // late rejections after an abort are expected
         const aborted = Promise.withResolvers<never>();
         if (signal.aborted) aborted.reject(signal.reason);
         signal.addEventListener("abort", () => aborted.reject(signal.reason), { once: true });
-        result = toWire(await Promise.race([program, aborted.promise]));
+        result = toWire(await Promise.race([started, aborted.promise]));
         status = "ok";
       } catch (err) {
         if (signal.aborted) {
@@ -159,19 +201,19 @@ export class ProgramRunner {
           loggedAtAbort = logs.toString();
         } else {
           status = "error";
-          error = formatError(err);
+          error = program.formatError(err);
         }
       } finally {
         clearTimeout(timeout);
         if (!signal.aborted) controller.abort(new Error("finished"));
         for (const timer of timers) clearTimeout(timer);
         for (const [emitter, event, handler] of listeners) emitter.off(event, handler);
-        for (const name of Object.keys(extraGlobals)) delete this.#context[name];
+        program.cleanup();
       }
       // With its timers and listeners gone, a program waiting on one never settles: it is hung.
       // The runner stays busy meanwhile, so no other program joins one that is still running.
       const graceMs = this.#options.graceMs ?? STOP_GRACE_MS;
-      if (program && (status === "stopped" || status === "timeout") && !(await settledWithin(program, graceMs))) {
+      if (started && (status === "stopped" || status === "timeout") && !(await settledWithin(started, graceMs))) {
         return { status, result: undefined, error: restartedError(hungCause(graceMs)), logs: logs.toString(), durationMs: Date.now() - startedAt, hung: true };
       }
     } finally {
@@ -249,4 +291,49 @@ function formatError(err: unknown): string {
   const excerpt = lines.slice(0, Math.max(excerptEnd, 0));
   const frames = lines.filter((line) => line.trimStart().startsWith("at ") && line.includes(PROGRAM_FILENAME));
   return [...excerpt, `${name}: ${message}`, ...frames].join("\n");
+}
+
+/**
+ * A routine's error: its message and the stack frames inside `sourceDir`, each naming `<file>:<line>:<column>`.
+ * Frames name library modules by `file:` URL; what a URL adds to the file (a query, a fragment) names an
+ * evaluation and not a file, so frames give the file's path. Never throws, whatever the routine threw.
+ */
+function formatRoutineError(err: unknown, sourceDir: string): string {
+  try {
+    if (typeof err !== "object" || err === null || !("stack" in err) || typeof err.stack !== "string") return String(err);
+    const name = "name" in err && typeof err.name === "string" ? err.name : "Error";
+    const message = "message" in err && typeof err.message === "string" ? err.message : "";
+    // Modules load from the directory's real path, so its frames name that (a directory gone since has none to resolve).
+    let real = path.resolve(sourceDir);
+    try {
+      real = realpathSync(real);
+    } catch {}
+    const inside = path.join(real, path.sep);
+    // A frame ends with `<url>:<line>:<column>`, maybe in parentheses; a compile error's excerpt starts with `<url>:<line>`.
+    // A URL that names no file path (`%zz`, an encoded `/`) is not located: the stack text is the routine's to write.
+    const located = (line: string): string | undefined => {
+      const match = /file:\/\/\/\S*?(?=:\d+(?::\d+)?\)?$)/.exec(line);
+      if (!match) return undefined;
+      let file: string;
+      try {
+        file = fileURLToPath(match[0]);
+      } catch {
+        return undefined;
+      }
+      return file.startsWith(inside) ? line.slice(0, match.index) + file + line.slice(match.index + match[0].length) : undefined;
+    };
+    const [first = "", ...rest] = err.stack.split("\n");
+    // A module that does not compile starts with a source excerpt ("<file>:N", the line, a caret) before a blank line.
+    const excerptStart = located(first);
+    const excerpt = excerptStart === undefined ? [] : [excerptStart, ...rest.slice(0, Math.max(rest.indexOf(""), 0))];
+    const frames = rest.flatMap((line) => (line.trimStart().startsWith("at ") ? (located(line) ?? []) : []));
+    return [...excerpt, `${name}: ${message}`, ...frames].join("\n");
+  } catch {
+    // The value has no string form (a null prototype) or one of its accessors threw: show it as inspect does.
+    try {
+      return inspect(err, { depth: 2, breakLength: 120 });
+    } catch {
+      return "a thrown value that cannot be shown";
+    }
+  }
 }
