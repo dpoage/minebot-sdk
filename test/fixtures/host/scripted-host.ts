@@ -5,6 +5,7 @@
 //   crashAfterReadyMs   exits this long after it is ready
 //   mirrorState         reports the deaths / reconnects / active it was started with
 //   graceMs             how long its `report` runs wait after an abort before reporting themselves hung
+//   ackLog              file it writes the time (ms) it was acked a run's start to
 //   trigger             a run with no request, started at `start`: { mode, timeoutMs }
 // Once built it pushes a `hello` event with its pid.
 // Requests: /ping and /notes answer with this pid; /slow never answers; /run?mode=...&timeoutMs=...
@@ -21,6 +22,7 @@ import type { RunResult } from "../../../src/protocol/index.ts";
 interface Script {
   spawnLog?: string;
   initLog?: string;
+  ackLog?: string;
   failFrom?: number;
   crashAfterReadyMs?: number;
   mirrorState?: boolean;
@@ -50,6 +52,7 @@ function startRun(mode: string, timeoutMs: number, requestId?: number, extra: ob
 
 function running(runId: number, run: Run): void {
   run.phase = "running";
+  if (script.ackLog) appendFileSync(script.ackLog, `${Date.now()}\n`);
   // The host acks `acked` before it blocks: the test waits for it to know the deadline is armed.
   send({ kind: "event", type: "acked", data: { runId } });
   if (run.mode === "block") {
