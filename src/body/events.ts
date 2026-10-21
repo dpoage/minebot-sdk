@@ -1,22 +1,6 @@
 import { DEFAULT_TIMEOUT_MS, type BodyEvent, type EventsResponse, type WaitResponse } from "../protocol/index.ts";
+import { eventMatches, type EventFilter } from "../protocol/event-filter.ts";
 import type { EventSink } from "../protocol/host.ts";
-
-/** The filters of one wait: every given filter must match the same event. */
-export interface EventFilter {
-  types?: string[];
-  from?: string;
-  match?: RegExp;
-}
-
-/** Whether an event passes every given filter of a wait. */
-export function eventMatches(event: BodyEvent, filter: EventFilter): boolean {
-  if (filter.types !== undefined && !filter.types.includes(event.type)) return false;
-  // `from` and `match` filter the content events carry; an event without that content cannot match.
-  const sender = event.data.from;
-  if (filter.from !== undefined && (typeof sender !== "string" || sender.toLowerCase() !== filter.from.toLowerCase())) return false;
-  const message = event.data.message;
-  return filter.match === undefined || (typeof message === "string" && filter.match.test(message));
-}
 
 interface Waiter {
   /** Events up to this seq were already scanned when the waiter subscribed; only newer ones can match. */

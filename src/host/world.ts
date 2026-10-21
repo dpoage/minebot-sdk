@@ -205,8 +205,11 @@ export function buildWorld(options: HostInit, io: { events: EventSink; recorder:
     serve: (request) => serve(routes, body, request),
     start: () => body.start(),
     close: () => {
-      body.close();
-      stats.flush();
+      try {
+        body.close();
+      } finally {
+        stats.flush();
+      }
     },
   };
 }

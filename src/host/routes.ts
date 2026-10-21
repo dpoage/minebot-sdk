@@ -37,19 +37,12 @@ import {
   type SaveKitResponse,
   type TriggersResponse,
 } from "../protocol/index.ts";
+import { HttpError, parse, parseBody } from "../protocol/request.ts";
 import { WikiDisabledError, WikiPageNotFoundError } from "../wiki/wiki.ts";
 import type { Body, RunRecorder } from "./body.ts";
 import { NotConnectedError } from "./connection.ts";
 import { NoteLimitError } from "./notes.ts";
 import { TriggerInvalidError, TriggerLimitError, TriggerNotFoundError } from "./triggers.ts";
-
-export class HttpError extends Error {
-  readonly status: number;
-  constructor(status: number, message: string) {
-    super(message);
-    this.status = status;
-  }
-}
 
 export interface RequestContext {
   url: URL;
@@ -89,12 +82,6 @@ export function statusFor(err: unknown): number {
   return 500;
 }
 
-function parse<T>(schema: z.ZodType<T>, input: unknown): T {
-  const parsed = schema.safeParse(input);
-  if (!parsed.success) throw new HttpError(400, z.prettifyError(parsed.error));
-  return parsed.data;
-}
-
 /** Answers one request: finds its route among those the body offers, runs it, and maps what it throws to a status. */
 export async function serve(routes: Route[], body: Body, request: ApiRequest): Promise<{ status: number; body: unknown }> {
   try {
@@ -107,14 +94,7 @@ export async function serve(routes: Route[], body: Body, request: ApiRequest): P
     });
     if (!route) throw new HttpError(404, `no route for ${request.method} ${url.pathname}`);
     // The body is read only when the route asks, so an unknown route answers 404 whatever the body holds.
-    const read = async (): Promise<unknown> => {
-      if (request.tooLarge) throw new HttpError(413, "request body too large");
-      try {
-        return JSON.parse(request.body || "{}");
-      } catch {
-        throw new HttpError(400, "request body is not valid JSON");
-      }
-    };
+    const read = async (): Promise<unknown> => parseBody(request);
     return { status: 200, body: await route.handler({ url, read }) };
   } catch (err) {
     return { status: statusFor(err), body: { error: err instanceof Error ? err.message : String(err) } };

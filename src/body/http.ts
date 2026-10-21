@@ -4,17 +4,7 @@
 // a status. Routes here are data; the daemon supplies them.
 import { timingSafeEqual } from "node:crypto";
 import http from "node:http";
-import { z } from "zod";
-
-export const MAX_BODY_BYTES = 1024 * 1024;
-
-export class HttpError extends Error {
-  readonly status: number;
-  constructor(status: number, message: string) {
-    super(message);
-    this.status = status;
-  }
-}
+import { HttpError, MAX_BODY_BYTES, parseBody } from "../protocol/request.ts";
 
 export interface RequestContext {
   req: http.IncomingMessage;
@@ -75,38 +65,27 @@ export function serveBodyApi(options: ServerOptions): http.Server {
   }
 }
 
-/** The request body's bytes, up to MAX_BODY_BYTES; a longer body is cut off and flagged. */
+/**
+ * The request body's bytes, up to MAX_BODY_BYTES; a longer body is flagged. The body is read to
+ * its end either way, the rest dropped, so a client that sends its whole body before it reads
+ * gets the answer instead of a reset connection.
+ */
 async function readRaw(req: http.IncomingMessage): Promise<{ body: Buffer; tooLarge: boolean }> {
   const chunks: Buffer[] = [];
   let size = 0;
   // http.IncomingMessage yields Buffers when no encoding is set.
   for await (const chunk of req as AsyncIterable<Buffer>) {
     size += chunk.length;
-    if (size > MAX_BODY_BYTES) return { body: Buffer.alloc(0), tooLarge: true };
-    chunks.push(chunk);
+    if (size <= MAX_BODY_BYTES) chunks.push(chunk);
+    else chunks.length = 0;
   }
+  if (size > MAX_BODY_BYTES) return { body: Buffer.alloc(0), tooLarge: true };
   return { body: Buffer.concat(chunks), tooLarge: false };
 }
 
 export async function readJson(req: http.IncomingMessage): Promise<unknown> {
   const { body, tooLarge } = await readRaw(req);
-  if (tooLarge) throw new HttpError(413, "request body too large");
-  return parseJson(body.toString("utf8"));
-}
-
-/** Parses a request body's text; an empty body is `{}`. */
-export function parseJson(text: string): unknown {
-  try {
-    return JSON.parse(text || "{}");
-  } catch {
-    throw new HttpError(400, "request body is not valid JSON");
-  }
-}
-
-export function parse<T>(schema: z.ZodType<T>, input: unknown): T {
-  const parsed = schema.safeParse(input);
-  if (!parsed.success) throw new HttpError(400, z.prettifyError(parsed.error));
-  return parsed.data;
+  return parseBody({ body: body.toString("utf8"), tooLarge });
 }
 
 export function send(res: http.ServerResponse, status: number, payload: unknown): void {

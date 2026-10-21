@@ -136,9 +136,27 @@ describe("package boundaries", () => {
     assert.deepEqual(hostSide, [], "the supervisor would load code that belongs to the bot host");
     const libraries = files.flatMap((file) =>
       bareImports(path.join(ROOT, file))
-        .filter((specifier) => /^(mineflayer|prismarine|minecraft-data$|vec3$)/.test(specifier))
+        .filter((specifier) => /^(mineflayer|prismarine|minecraft-data(\/|$)|vec3(\/|$))/.test(specifier))
         .map((specifier) => `${file} imports ${specifier}`),
     );
     assert.deepEqual(libraries, [], "the supervisor would load a Minecraft library");
+  });
+
+  it("keeps the bot host free of the supervisor", () => {
+    // The host loads its world late, so this closure follows dynamic imports as well as static ones.
+    const seen = new Set<string>();
+    const queue = [path.join(ROOT, "src/host/main.ts")];
+    while (queue.length > 0) {
+      const file = queue.pop()!;
+      if (seen.has(file)) continue;
+      seen.add(file);
+      const source = stripTypeScriptTypes(readFileSync(file, "utf8")).replace(/`(?:\\[\s\S]|[^`\\])*`/g, "``");
+      const lazy = [...source.matchAll(/\bimport\(\s*["'](\.[^"']+)["']\s*\)/g)].map((match) => match[1]!);
+      for (const specifier of [...staticImports(file), ...lazy]) queue.push(resolveLocal(file, specifier));
+    }
+    const files = [...seen].map((file) => path.relative(ROOT, file));
+    assert.ok(files.includes("src/host/world.ts") && files.includes("src/host/triggers.ts"), `closure too small: ${files.join(", ")}`);
+    const supervisor = files.filter((file) => file.startsWith("src/body/")).sort();
+    assert.deepEqual(supervisor, [], "the bot host would load the supervisor's modules");
   });
 });

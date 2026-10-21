@@ -1,7 +1,7 @@
 // The bot host's entry: forked by the supervisor (src/body/host-process.ts) with its pid as the
 // only argument. It builds the world the supervisor's init describes, answers the API requests the
 // supervisor forwards, and exits on `shutdown`, when the channel closes, or when its supervisor is gone.
-import type { FromHost, ToHost } from "../protocol/host.ts";
+import { supervisorPidOf, type FromHost, type ToHost } from "../protocol/host.ts";
 import type { HostEvents, RunReporter } from "./channel.ts";
 import { watchSupervisor } from "./supervisor-watch.ts";
 import type { World } from "./world.ts";
@@ -12,8 +12,8 @@ import type { World } from "./world.ts";
 process.on("SIGINT", () => {});
 process.on("SIGTERM", () => {});
 
-const supervisorPid = Number(process.argv[2]);
-if (!Number.isInteger(supervisorPid) || !process.send) {
+const supervisorPid = supervisorPidOf(process.argv);
+if (supervisorPid === undefined || !process.send) {
   console.error("[minebot] the bot host is started by the body supervisor, not directly");
   process.exit(1);
 }
@@ -102,10 +102,20 @@ async function handle(message: ToHost): Promise<void> {
       events.hear(message.event);
       return;
     case "shutdown":
-      world?.close();
-      // Runs the abort ended report their end, and everything sent so far is written, before the host goes.
-      await reporter.drained();
-      if (world) await sendWritten(currentState(world));
-      process.exit(0);
+      // Off the message chain: the runs it ends settle only on the supervisor's `run_ack`, which arrives behind it.
+      void shutdown();
   }
+}
+
+async function shutdown(): Promise<void> {
+  try {
+    world?.close();
+  } catch (err) {
+    // Closing right after start can throw (mb-1mk); the stats are flushed and the host still goes.
+    console.error("[minebot] closing the body failed:", err);
+  }
+  // Runs the abort ended report their end, and everything sent so far is written, before the host goes.
+  await reporter.drained();
+  if (world) await sendWritten(currentState(world));
+  process.exit(0);
 }

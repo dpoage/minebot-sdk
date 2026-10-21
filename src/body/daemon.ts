@@ -9,10 +9,11 @@ import type { ServerAuth } from "../host/connection.ts";
 import type { MilestoneSet } from "../milestones/milestones.ts";
 import { MC_VERSION } from "../mc/version.ts";
 import { endpointFile, EventsQuery, RUNTIME_DIR, WaitInput, type Endpoint, type WikiMode } from "../protocol/index.ts";
+import { parse } from "../protocol/request.ts";
 import { EventLog } from "./events.ts";
 import { HostProcess } from "./host-process.ts";
 import { ProgramHistory } from "./history.ts";
-import { parse, type Route, serveBodyApi } from "./http.ts";
+import { type Route, serveBodyApi } from "./http.ts";
 
 export interface DaemonOptions {
   name: string;

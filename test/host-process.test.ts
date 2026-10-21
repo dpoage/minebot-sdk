@@ -1,14 +1,18 @@
-// The supervisor / bot-host split: one event log whose seq the host's triggers report, and a host
-// that never outlives its supervisor and ends with it on a signal to the whole process group.
+// The supervisor / bot-host split: one event log whose seq the host's triggers report, a run
+// history whose failures fail the run, request bodies the supervisor reads by the API's rules, and
+// a host that never outlives its supervisor and ends with it on a signal to the whole process group.
 import assert from "node:assert/strict";
 import { execFileSync, spawn, type ChildProcess } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import net, { type AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { after, describe, it } from "node:test";
+import { after, before, describe, it } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
-import type { HostInit } from "../src/protocol/host.ts";
+import { RunReporter } from "../src/host/channel.ts";
+import type { FromHost, HostInit } from "../src/protocol/host.ts";
+import type { Endpoint, RunResult } from "../src/protocol/index.ts";
+import { MAX_BODY_BYTES } from "../src/protocol/request.ts";
 
 const ROOT = mkdtempSync(path.join(tmpdir(), "minebot-host-process-"));
 process.env.MINEBOT_RUNTIME_DIR = path.join(ROOT, "runtime");
@@ -66,7 +70,7 @@ describe("one event log", () => {
     // The log already holds events the host never saw, so its seq cannot be the host's own count.
     for (const type of ["a", "b", "c"]) events.push(type);
     const host = new HostProcess({
-      init: {} as HostInit,
+      init: { stateDir: path.join(ROOT, "seq-host") } as HostInit,
       events,
       history: new ProgramHistory({}),
       entry: path.join(FIXTURES, "seq-host.ts"),
@@ -95,6 +99,137 @@ describe("a host that cannot start", () => {
     const host = new HostProcess({ init: {} as HostInit, events: new EventLog(), history: new ProgramHistory({}), entry: path.join(FIXTURES, "exit-host.ts") });
     await assert.rejects(host.start(), { message: "the bot host exited before it was ready (code 3)" });
     await host.close();
+  });
+});
+
+describe("a run whose end the history cannot write", () => {
+  /** What the run host's two runs (one with a result, one that throws first) ended with, over a history at `file`. */
+  async function recordedRuns(file: string): Promise<Record<string, unknown>[]> {
+    const events = new EventLog();
+    const host = new HostProcess({ init: {} as HostInit, events, history: new ProgramHistory({ file }), entry: path.join(FIXTURES, "run-host.ts") });
+    try {
+      await host.start();
+      host.join();
+      const first = await events.wait({ types: ["recorded"], since: 0, timeoutMs: 10_000 });
+      const second = await events.wait({ types: ["recorded"], since: first.next, timeoutMs: 10_000 });
+      return [first.event!.data, second.event!.data];
+    } finally {
+      await host.close();
+    }
+  }
+
+  it("fails the run with the write's error, as when the history was written in the same process", async () => {
+    // A directory where the file should be: the run's final line cannot be appended.
+    const file = path.join(ROOT, "history-is-a-directory");
+    mkdirSync(file);
+    const [result, thrown] = await recordedRuns(file);
+    assert.equal(result!.name, "result");
+    assert.match(String(result!.error), /^EISDIR: /, "the run settled before its end was recorded");
+    assert.deepEqual(thrown, { name: "thrown", error: "the body is not connected" }, "a run that threw before its result keeps its own error");
+  });
+
+  it("settles a run once its final line is on disk", async () => {
+    const file = path.join(ROOT, "history-written.jsonl");
+    const [result, thrown] = await recordedRuns(file);
+    assert.deepEqual(result, { name: "result", status: "ok" });
+    assert.deepEqual(thrown, { name: "thrown", error: "the body is not connected" });
+    assert.deepEqual(
+      readFileSync(file, "utf8").trim().split("\n").map((line) => JSON.parse(line).status),
+      ["ok"],
+    );
+  });
+});
+
+describe("the run reporter", () => {
+  it("drops a stop meant for a run the history refused, so the next run is not aborted", async () => {
+    const sent: FromHost[] = [];
+    let stops = 0;
+    const reporter = new RunReporter({
+      send: (message) => sent.push(message),
+      kits: () => [],
+      stop: () => {
+        stops++;
+        return false;
+      },
+    });
+    const result: RunResult = { status: "ok", result: 1, logs: "", durationMs: 0 };
+    const refused = reporter.record({ code: "return 1;" }, async () => result);
+    // The stop arrives while the run waits for the history to record its start, which then fails.
+    reporter.stop();
+    reporter.acknowledge(0, "EACCES: permission denied");
+    await assert.rejects(refused, { message: "EACCES: permission denied" });
+
+    stops = 0;
+    const next = reporter.record({ code: "return 2;" }, async () => result);
+    reporter.acknowledge(1);
+    while (!sent.some((message) => message.kind === "run_finished" && message.runId === 1)) await sleep(1);
+    reporter.acknowledge(1);
+    assert.deepEqual(await next, result);
+    assert.equal(stops, 0, "the next run was aborted by a stale stop");
+  });
+});
+
+describe("the supervisor's reading of request bodies", () => {
+  let daemon: { endpoint: Endpoint; close: () => Promise<void> };
+  before(async () => {
+    daemon = await startDaemon({
+      name: "reading",
+      username: "reading",
+      auth: "offline",
+      host: "127.0.0.1",
+      port: await refusedPort(),
+      apiHost: "127.0.0.1",
+      apiPort: 0,
+      lockKits: false,
+      wikiMode: "off",
+      stateDir: path.join(ROOT, "state-reading"),
+      milestonesEnabled: false,
+      agentKits: false,
+      triggers: false,
+    });
+  });
+  after(() => daemon.close());
+
+  /**
+   * POSTs `body` as a client that writes its whole request before it reads anything (as Python's
+   * http.client does), then reads the answer. Node's own client reads while it writes, and would
+   * see an answer the server sent before resetting the connection.
+   */
+  async function post(pathname: string, body: Buffer): Promise<{ status: number; body: unknown }> {
+    const { port } = new URL(daemon.endpoint.url);
+    const socket = net.connect(Number(port), "127.0.0.1");
+    const received: Buffer[] = [];
+    // Settles with the connection: resolves when the server closes it, rejects when it resets it.
+    const closed = Promise.withResolvers<void>();
+    socket.on("data", (chunk: Buffer) => received.push(chunk));
+    socket.on("end", () => closed.resolve());
+    socket.on("error", closed.reject);
+    const connected = Promise.withResolvers<void>();
+    socket.once("connect", () => connected.resolve());
+    await Promise.race([connected.promise, closed.promise]);
+    socket.pause();
+    const head = `POST ${pathname} HTTP/1.1\r\nhost: 127.0.0.1\r\nauthorization: Bearer ${daemon.endpoint.token}\r\ncontent-length: ${body.length}\r\nconnection: close\r\n\r\n`;
+    // A failed write also fails `closed`, through the socket's error.
+    const written = Promise.withResolvers<void>();
+    socket.write(Buffer.concat([Buffer.from(head), body]), () => written.resolve());
+    await Promise.race([written.promise, closed.promise]);
+    socket.resume();
+    await closed.promise;
+    const response = Buffer.concat(received).toString("utf8");
+    const status = Number(/^HTTP\/1\.1 (\d{3}) /.exec(response)?.[1]);
+    return { status, body: JSON.parse(response.slice(response.indexOf("\r\n\r\n") + 4)) };
+  }
+
+  it("answers a body far past the cap with the 404 of a route the body does not serve", async () => {
+    const large = Buffer.alloc(5 * 1024 * 1024, "x");
+    assert.deepEqual(await post("/unknown", large), { status: 404, body: { error: "no route for POST /unknown" } });
+    // Triggers are off in this body, so their route is not served.
+    assert.deepEqual(await post("/triggers", large), { status: 404, body: { error: "no route for POST /triggers" } });
+  });
+
+  it("reads a wait's body by the API's rules: JSON, and no larger than the cap", async () => {
+    assert.deepEqual(await post("/wait", Buffer.from("nope")), { status: 400, body: { error: "request body is not valid JSON" } });
+    assert.deepEqual(await post("/wait", Buffer.alloc(MAX_BODY_BYTES + 1, "x")), { status: 413, body: { error: "request body too large" } });
   });
 });
 

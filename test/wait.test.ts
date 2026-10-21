@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it, mock } from "node:test";
-import { EventLog, eventMatches } from "../src/body/events.ts";
+import { EventLog } from "../src/body/events.ts";
+import { eventMatches } from "../src/protocol/event-filter.ts";
 import { WaitInput } from "../src/protocol/index.ts";
 
 const chat = (from: string, message: string) => ({ from, message });

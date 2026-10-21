@@ -16,7 +16,7 @@ import {
   type TriggerInfo,
 } from "../protocol/index.ts";
 import type { JsonStore } from "../store.ts";
-import { eventMatches } from "../body/events.ts";
+import { eventMatches } from "../protocol/event-filter.ts";
 import type { EventSink } from "../protocol/host.ts";
 
 /** A trigger's `when` is an expression over two names, so it is cut off quickly. */

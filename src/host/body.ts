@@ -52,7 +52,7 @@ export interface BodyOptions {
 
 /** Reports program runs and registrations to whoever keeps the history; user code starts only once `record` has been answered. */
 export interface RunRecorder {
-  /** Records the start of `execute`, runs it once the history has it, and records its end. A run that throws leaves no end. */
+  /** Records the start of `execute`, runs it once the history has it, and records its end. A run that throws leaves no end; a start or end the history cannot write fails the run. */
   record(run: { code: string; timeoutMs?: number; extra?: object }, execute: () => Promise<RunResult>): Promise<RunResult>;
   /** Records code the body will run later. */
   register(code: string, extra: object): Promise<void>;

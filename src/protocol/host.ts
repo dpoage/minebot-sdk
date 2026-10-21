@@ -1,8 +1,19 @@
 // The IPC contract between the supervisor (src/body/) and the bot host it forks (src/host/): the
-// messages each side sends over the child-process channel. Types only, and not re-exported from
-// the protocol index: clients of the body API never see it.
+// arguments the host is forked with and the messages each side sends over the child-process
+// channel. Not re-exported from the protocol index: clients of the body API never see it.
 import type { DaemonOptions } from "../body/daemon.ts";
 import type { BodyEvent, RunResult } from "./types.ts";
+
+/** The arguments the supervisor forks the host with: its own pid, which the host watches to end with it. */
+export function hostArguments(supervisorPid: number): string[] {
+  return [String(supervisorPid)];
+}
+
+/** The supervisor's pid from the host's `process.argv`; undefined when the host was not forked by a supervisor. */
+export function supervisorPidOf(argv: readonly string[]): number | undefined {
+  const pid = Number(argv[2]);
+  return Number.isInteger(pid) && pid > 0 ? pid : undefined;
+}
 
 /** Where events are pushed and heard: the supervisor's EventLog, and the bot host's stand-in that sends them there. */
 export interface EventSink {
@@ -34,7 +45,11 @@ export type ToHost =
   | { kind: "request"; id: number; method: string; url: string; body: string | null; tooLarge: boolean }
   /** Aborts the running program. */
   | { kind: "stop" }
-  /** Answers `run_started` or `register` once the history line is written; `error` means it could not be, and the program must not run. */
+  /**
+   * Answers `run_started`, `run_finished`, or `register` once the history line is written; `error`
+   * means it could not be. After `run_started` the program must not run; after `run_finished` the
+   * run fails with `error`. A `run_finished` without a result is answered with no error.
+   */
   | { kind: "run_ack"; runId: number; error?: string }
   /** Echo of every event the supervisor's log recorded, with the log's own seq and time. */
   | { kind: "event"; event: BodyEvent }
@@ -50,7 +65,7 @@ export type FromHost =
   | { kind: "event"; type: string; data: Record<string, unknown> }
   /** A program is about to run; user code starts only after the matching `run_ack`. */
   | { kind: "run_started"; runId: number; code: string; timeoutMs: number; extra: object; kits: string[] }
-  /** The run ended. `result: null` means it threw before producing one (not connected, busy): the run is over and leaves no final history line. */
+  /** The run ended; the run settles once the matching `run_ack` arrives. `result: null` means it threw before producing one (not connected, busy): the run is over and leaves no final history line. */
   | { kind: "run_finished"; runId: number; result: RunResult | null }
   /** Code the body will run later (a trigger), for the history's audit; answered by `run_ack` like a run. */
   | { kind: "register"; runId: number; code: string; extra: object; kits: string[] }

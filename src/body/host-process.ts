@@ -3,7 +3,7 @@
 // log and the program history. Callers do not know the body lives in another process.
 import { fork, type ChildProcess } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import type { FromHost, HostInit, ToHost } from "../protocol/host.ts";
+import { hostArguments, type FromHost, type HostInit, type ToHost } from "../protocol/host.ts";
 import type { EventLog } from "./events.ts";
 import type { ForwardedRequest } from "./http.ts";
 import type { ProgramHistory, RunEnd } from "./history.ts";
@@ -57,7 +57,7 @@ export class HostProcess {
   /** Forks the host and resolves once it has built its world; rejects with the reason it could not. */
   start(): Promise<void> {
     // The host watches this pid: it exits when its supervisor is gone, even with its main thread blocked.
-    const child = fork(this.#entry, [String(process.pid)]);
+    const child = fork(this.#entry, hostArguments(process.pid));
     this.#child = child;
     this.#exited = new Promise((resolve) => child.once("exit", () => resolve()));
     child.on("message", (message: FromHost) => {
@@ -152,14 +152,15 @@ export class HostProcess {
         return;
       case "run_finished": {
         const run = this.#runs.get(message.runId);
-        if (!run) return;
         try {
-          if (message.result) await run.end(message.result);
+          if (run && message.result) await run.end(message.result);
+          this.#sendIfOpen({ kind: "run_ack", runId: message.runId });
         } catch (err) {
-          console.error(`[minebot] could not write the history line of run ${message.runId}: ${errorText(err)}`);
+          // The run fails as it did when the history was written in-process.
+          this.#sendIfOpen({ kind: "run_ack", runId: message.runId, error: errorText(err) });
         }
         this.#runs.delete(message.runId);
-        run.finished.resolve();
+        run?.finished.resolve();
         return;
       }
       case "register":

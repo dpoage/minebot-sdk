@@ -80,7 +80,8 @@ export class RunReporter implements RunRecorder {
     try {
       await this.#acked(runId, { kind: "run_started", runId, code: run.code, timeoutMs: run.timeoutMs ?? DEFAULT_TIMEOUT_MS, extra: run.extra ?? {}, kits: this.#options.kits() });
     } catch (err) {
-      this.#starting--;
+      // The run never starts; a stop meant for it must not abort the next one.
+      if (--this.#starting === 0) this.#stopPending = false;
       throw err;
     }
     // The program starts synchronously inside `execute`, in this same turn.
@@ -114,16 +115,18 @@ export class RunReporter implements RunRecorder {
     await Promise.allSettled([...this.#open]);
   }
 
+  /** Reports the run's end and settles once the supervisor has recorded it; a failure to record fails the run. */
   async #finish(runId: number, running: Promise<RunResult>): Promise<RunResult> {
+    let result: RunResult;
     try {
-      const result = await running;
-      this.#options.send({ kind: "run_finished", runId, result });
-      return result;
+      result = await running;
     } catch (err) {
       // It threw before producing a result (not connected, busy): the run is over, with nothing to record.
-      this.#options.send({ kind: "run_finished", runId, result: null });
+      await this.#acked(runId, { kind: "run_finished", runId, result: null });
       throw err;
     }
+    await this.#acked(runId, { kind: "run_finished", runId, result });
+    return result;
   }
 
   #acked(runId: number, message: FromHost): Promise<void> {
