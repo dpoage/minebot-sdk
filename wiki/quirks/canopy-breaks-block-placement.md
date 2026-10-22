@@ -19,17 +19,23 @@ Leaf litter, which covers the forest floor, has no collision box (`boundingBox` 
 
 Place only into air, on natural ground. Check the target before placing:
 
-```js
-const air = (b) => ["air", "cave_air", "void_air"].includes(b?.name);
-const ground = bot.findBlocks({
-  matching: (b) => b.boundingBox === "block" && !/_leaves$|_log$/.test(b.name),
-  maxDistance: 8,
-  count: 100,
-}).find((p) => air(bot.blockAt(p.offset(0, 1, 0))) && air(bot.blockAt(p.offset(0, 2, 0))));
+```ts
+import type { Block } from "minebot-sdk/routine";
+import type { RoutineContext } from "minebot-sdk/routine";
+
+export default ({ bot }: RoutineContext) => {
+  const air = (b: Block | null) => ["air", "cave_air", "void_air"].includes(b?.name ?? "");
+  const ground = bot.findBlocks({
+    matching: (b) => b.boundingBox === "block" && !/_leaves$|_log$/.test(b.name),
+    maxDistance: 8,
+    count: 100,
+  }).find((p) => air(bot.blockAt(p.offset(0, 1, 0))) && air(bot.blockAt(p.offset(0, 2, 0))));
+  return ground ?? null;
+};
 ```
 
 To place where leaf litter or grass is, dig it first.
 
 <!-- builtins -->
-`kit.crafter.make` and `kit.builder.build` do this search for you (the crafter places a table, the builder places blocks).
+`minebot call crafter.make --args '{"item":"wooden_pickaxe"}'` does this search for you when it places a crafting table or a furnace.
 <!-- /builtins -->

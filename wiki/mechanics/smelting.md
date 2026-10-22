@@ -44,14 +44,19 @@ Common inputs: `raw_iron` to `iron_ingot`, `raw_copper` to `copper_ingot`, `raw_
 
 Stand within reach of the furnace, open it, put in fuel and input, and wait. Observed with 2 raw iron and 1 coal:
 
-```js
-const block = bot.findBlock({ matching: bot.registry.blocksByName.furnace.id, maxDistance: 6 });
-const furnace = await bot.openFurnace(block);
-await furnace.putFuel(bot.registry.itemsByName.coal.id, null, 1);
-await furnace.putInput(bot.registry.itemsByName.raw_iron.id, null, 2);
-await sleep(21000);                      // 2 items x 10 s, plus a margin
-const ingots = await furnace.takeOutput(); // the whole output stack, or null
-furnace.close();
+```ts
+import type { RoutineContext } from "minebot-sdk/routine";
+
+export default async ({ bot, sleep }: RoutineContext) => {
+  const block = bot.findBlock({ matching: bot.registry.blocksByName.furnace!.id, maxDistance: 6 })!;
+  const furnace = await bot.openFurnace(block);
+  await furnace.putFuel(bot.registry.itemsByName.coal!.id, null, 1);
+  await furnace.putInput(bot.registry.itemsByName.raw_iron!.id, null, 2);
+  await sleep(21000);                      // 2 items x 10 s, plus a margin
+  const ingots = await furnace.takeOutput(); // the whole output stack, or null
+  furnace.close();
+  return ingots?.count ?? 0;
+};
 ```
 
 `furnace.fuel` and `furnace.progress` run from 0 to 1 while it burns, and `furnace.on("update", ...)` fires about three times a second. `furnace.outputItem()` shows the output stack. `takeOutput()` took the 3 ingots that were already in the output and the 2 new ones in one call (5 in all). The ingots show up in `bot.inventory` after you close the window and wait a moment (`quirks/inventory-lags-while-a-window-is-open`).
@@ -59,5 +64,5 @@ furnace.close();
 A furnace keeps smelting while you walk away, so you can start it and do other work. Come back and take the output.
 
 <!-- builtins -->
-`kit.furnace.smelt({ item: "raw_iron", count: 3 })` finds a furnace, loads fuel and input, waits, and takes the output. `kit.furnace.take()` collects what a furnace finished while you were away.
+`minebot call furnace.smelt --args '{"item":"raw_iron","count":3}'` finds a furnace within 4.5 blocks, loads fuel and input, waits, and takes the output. `minebot call furnace.take` collects what a furnace finished while you were away.
 <!-- /builtins -->

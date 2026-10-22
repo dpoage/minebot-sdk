@@ -26,15 +26,20 @@ Mineflayer checks every loaded entity whose `kind` is `Hostile mobs` against a b
 
 Kill the mobs in the box, or move the bed, then call `bot.sleep` again:
 
-```js
-const head = bed.position;
-const near = Object.values(bot.entities).filter((e) => e.kind === "Hostile mobs" && Math.abs(e.position.x - head.x) < 9 && Math.abs(e.position.z - head.z) < 9 && Math.abs(e.position.y - head.y) < 7);
-for (const mob of near) { /* attack it, see mechanics/combat-basics */ }
-await bot.sleep(bed);
+```ts
+import type { RoutineContext } from "minebot-sdk/routine";
+
+export default async ({ bot }: RoutineContext) => {
+  const bed = bot.findBlock({ matching: (b) => bot.isABed(b), maxDistance: 32 })!;
+  const head = bed.position;
+  const near = Object.values(bot.entities).filter((e) => e.kind === "Hostile mobs" && Math.abs(e.position.x - head.x) < 9 && Math.abs(e.position.z - head.z) < 9 && Math.abs(e.position.y - head.y) < 7);
+  for (const mob of near) { /* attack it, see mechanics/combat-basics */ }
+  await bot.sleep(bed);
+};
 ```
 
 A mob that burns in daylight (`mechanics/daylight-burning`) is gone by morning, but you can only sleep at night. Rules of beds: `mechanics/beds-and-spawn`.
 
 <!-- builtins -->
-`kit.combat.fight()` clears hostile mobs near you before `kit.survival.sleep()`.
+`minebot call combat.fight` clears hostile mobs near you before `minebot call survival.sleep`.
 <!-- /builtins -->

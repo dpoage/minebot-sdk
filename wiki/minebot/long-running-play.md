@@ -18,7 +18,7 @@ minebot notes get plan
 minebot notes rm plan
 ```
 
-In programs: `notes.set(key, text)`, `notes.get(key)`, `notes.list()`, `notes.delete(key)`.
+In a run: `ctx.notes.set(key, text)`, `ctx.notes.get(key)`, `ctx.notes.list()`, `ctx.notes.delete(key)`.
 
 Keep these notes up to date:
 
@@ -34,7 +34,7 @@ Saved routines and their bindings persist too. After a reset, `minebot routines`
 
 ## Status
 
-`minebot status` (or `await status()` in a program) shows deaths and reconnects since the body started.
+`minebot status` (or `await ctx.status()` in a run) shows deaths and reconnects since the body started.
 
 <!-- milestones -->
 It also shows progress toward the body's milestones. The server's statistics grade them, so a milestone stays met after you use its items.

@@ -15,13 +15,19 @@ Mineflayer 4.39 passes the entity's raw metadata through. Ageable mobs (animals 
 
 ## Workaround
 
-```js
-const isBaby = (e) => e.metadata?.[16] === true;
-const adults = Object.values(bot.entities).filter((e) => e.name === "cow" && !isBaby(e));
+```ts
+import type { Entity } from "minebot-sdk/routine";
+import type { RoutineContext } from "minebot-sdk/routine";
+
+export default ({ bot }: RoutineContext) => {
+  const isBaby = (e: Entity) => (e.metadata?.[16] as unknown) === true;
+  const adults = Object.values(bot.entities).filter((e) => e.name === "cow" && !isBaby(e));
+  return adults.map((e) => e.id);
+};
 ```
 
 To find the calf that a breeding produced, poll for a cow with the flag that was not in the world before.
 
 <!-- builtins -->
-`kit.farm.breed({ animal: "cow" })` picks adults only and reports the baby it sees.
+`minebot call farm.breed --args '{"animal":"cow"}'` picks adults only and reports the baby it sees.
 <!-- /builtins -->

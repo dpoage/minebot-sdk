@@ -30,6 +30,10 @@ So the sun burns zombies and skeletons only where the sky is open and the head i
 
 Wait under a roof until the day starts. `bot.time.timeOfDay` wraps from 23999 to 0 at dawn:
 
-```js
-while (bot.time.timeOfDay >= 12000) await sleep(1000);
+```ts
+import type { RoutineContext } from "minebot-sdk/routine";
+
+export default async ({ bot, sleep }: RoutineContext) => {
+  while (bot.time.timeOfDay >= 12000) await sleep(1000);
+};
 ```

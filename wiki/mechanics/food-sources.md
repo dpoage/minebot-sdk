@@ -31,17 +31,21 @@ Raw meat needs only a fire to become the best early food. Smelt it (`mechanics/s
 
 Hold the food and consume it. `bot.consume()` ends when the bite is done, so check `bot.food` before and after:
 
-```js
-const foods = bot.registry.foodsByName;
-const best = bot.inventory.items().filter((i) => foods[i.name]).sort((a, b) => foods[b.name].foodPoints - foods[a.name].foodPoints)[0];
-if (best && bot.food < 20) {
-  await bot.equip(best, "hand");
-  await bot.consume();
-}
+```ts
+import type { RoutineContext } from "minebot-sdk/routine";
+
+export default async ({ bot }: RoutineContext) => {
+  const foods = bot.registry.foodsByName;
+  const best = bot.inventory.items().filter((i) => foods[i.name]).sort((a, b) => foods[b.name]!.foodPoints - foods[a.name]!.foodPoints)[0];
+  if (best && bot.food < 20) {
+    await bot.equip(best, "hand");
+    await bot.consume();
+  }
+};
 ```
 
 Observed: with food 19, eating `cooked_beef` brought `bot.food` to 20 (the bar caps at 20). Points above 20 are lost, so eat an 8-point meal at food 12 or lower.
 
 <!-- builtins -->
-`kit.survival.eat()` eats the best food in the inventory. `kit.survival.eat({ item: "bread" })` eats that item.
+`minebot call survival.eat` eats the best food in the inventory. `minebot call survival.eat --args '{"item":"bread"}'` eats that item.
 <!-- /builtins -->

@@ -17,16 +17,20 @@ Mineflayer 4.39 writes the `entity_action` packet with `actionId: 2`. In the 26.
 
 Send the packet with the right action and wait for the event:
 
-```js
-if (!bot.isSleeping) throw new Error("not sleeping");
-const woke = new Promise((resolve) => bot.once("wake", resolve));
-bot._client.write("entity_action", { entityId: bot.entity.id, actionId: "stop_sleeping", jumpBoost: 0 });
-await Promise.race([woke, sleep(3000)]);
-return bot.isSleeping;
+```ts
+import type { RoutineContext } from "minebot-sdk/routine";
+
+export default async ({ bot, sleep }: RoutineContext) => {
+  if (!bot.isSleeping) throw new Error("not sleeping");
+  const woke = new Promise<void>((resolve) => bot.once("wake", () => resolve()));
+  bot._client.write("entity_action", { entityId: bot.entity.id, actionId: "stop_sleeping", jumpBoost: 0 });
+  await Promise.race([woke, sleep(3000)]);
+  return bot.isSleeping;
+};
 ```
 
 `bot.sleep(bed)` itself is fine. It throws `it's not night and it's not a thunderstorm` in daylight (night is `timeOfDay` 12541 to 23458), and `there are monsters nearby` when a hostile mob is within about 8 blocks of the bed.
 
 <!-- builtins -->
-`kit.survival.sleep()` walks to the nearest bed within 16 blocks and sleeps. `kit.survival.wake()` sends the right packet.
+`minebot call survival.sleep` walks to the nearest bed within 16 blocks and sleeps. `minebot call survival.wake` sends the right packet.
 <!-- /builtins -->

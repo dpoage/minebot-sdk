@@ -18,10 +18,15 @@ A blaze drops 0 to 1 `blaze_rod`, and only when a player kills it (search `blaze
 
 Find blazes with:
 
-```js
-const blaze = bot.nearestEntity((e) => e.name === "blaze");
+```ts
+import type { RoutineContext } from "minebot-sdk/routine";
+
+export default ({ bot }: RoutineContext) => {
+  const blaze = bot.nearestEntity((e) => e.name === "blaze");
+  return blaze ? { id: blaze.id, at: blaze.position } : null;
+};
 ```
 
 <!-- builtins -->
-`kit.combat.fight({ radius: 16, targets: ["blaze"] })` fights blazes in range.
+`minebot call combat.fight --args '{"radius":16,"targets":["blaze"]}'` fights blazes in range.
 <!-- /builtins -->

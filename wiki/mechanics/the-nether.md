@@ -17,9 +17,14 @@ Observed in the Nether: `bot.time.timeOfDay` was 0, so `bot.time` does not tell 
 
 A fortress is a big structure of `nether_bricks`. Find one by looking for the bricks as you explore:
 
-```js
-const bricks = bot.findBlocks({ matching: bot.registry.blocksByName.nether_bricks.id, maxDistance: 32, count: 5 });
-const spawners = bot.findBlocks({ matching: bot.registry.blocksByName.spawner.id, maxDistance: 64, count: 10 });
+```ts
+import type { RoutineContext } from "minebot-sdk/routine";
+
+export default ({ bot }: RoutineContext) => {
+  const bricks = bot.findBlocks({ matching: bot.registry.blocksByName.nether_bricks!.id, maxDistance: 32, count: 5 });
+  const spawners = bot.findBlocks({ matching: bot.registry.blocksByName.spawner!.id, maxDistance: 64, count: 10 });
+  return { bricks, spawners };
+};
 ```
 
 Observed at a fortress at about (-640, 57, 624) in the Nether: 2 `spawner` blocks within 64 blocks, and both held blazes. Blazes are what you come for (`mechanics/blazes-and-fortresses`).

@@ -17,17 +17,22 @@ A source block is 8/9 of a block deep. Aim just below its surface instead, where
 
 ## Workaround
 
-```js
-const source = new Vec3(3997, 68, 9);
-await bot.equip(bot.inventory.items().find((i) => i.name === "bucket"), "hand");
-await bot.lookAt(source.offset(0.5, 0.85, 0.5), true);
-bot.activateItem();
-await sleep(500); // the full bucket arrives in the inventory a moment later
-bot.deactivateItem();
+```ts
+import { Vec3 } from "minebot-sdk/routine";
+import type { RoutineContext } from "minebot-sdk/routine";
+
+export default async ({ bot, sleep }: RoutineContext) => {
+  const source = new Vec3(3997, 68, 9);
+  await bot.equip(bot.inventory.items().find((i) => i.name === "bucket")!, "hand");
+  await bot.lookAt(source.offset(0.5, 0.85, 0.5), true);
+  bot.activateItem();
+  await sleep(500); // the full bucket arrives in the inventory a moment later
+  bot.deactivateItem();
+};
 ```
 
 Check the ray before you try: `bot.world.raycast(eyes, direction, distance)` returns a block when something solid lies between your eyes and the point.
 
 <!-- builtins -->
-`await kit.bucket.fill({ fluid: "lava" })` tries several points of the source and uses the first one that the eyes can see.
+`minebot call bucket.fill --args '{"fluid":"lava"}'` tries several points of the source and uses the first one that the eyes can see.
 <!-- /builtins -->

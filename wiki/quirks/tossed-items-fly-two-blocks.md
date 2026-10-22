@@ -13,13 +13,18 @@ You `bot.toss` items toward another player, and they land behind the player or o
 
 Walk within one block of the recipient, look at their feet, then toss:
 
-```js
-const target = bot.players[name].entity;
-await bot.pathfinder.goto(new goals.GoalNear(target.position.x, target.position.y, target.position.z, 1));
-await bot.lookAt(target.position.offset(0, 0.2, 0), true);
-await bot.toss(itemId, null, count);
+```ts
+import { goals } from "minebot-sdk/routine";
+import type { RoutineContext } from "minebot-sdk/routine";
+
+export default async ({ bot }: RoutineContext, { name, itemId, count }: { name: string; itemId: number; count: number }) => {
+  const target = bot.players[name]!.entity;
+  await bot.pathfinder.goto(new goals.GoalNear(target.position.x, target.position.y, target.position.z, 1));
+  await bot.lookAt(target.position.offset(0, 0.2, 0), true);
+  await bot.toss(itemId, null, count);
+};
 ```
 
 <!-- builtins -->
-`kit.social.give({ player, item, count })` does this.
+`minebot call social.give --args '{"player":"alice","item":"cobblestone","count":8}'` does this.
 <!-- /builtins -->

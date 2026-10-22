@@ -37,20 +37,24 @@ Iron is the best tier you can make early: a full set is 15 points. A helmet take
 
 Equip a piece into its slot (`head`, `torso`, `legs`, `feet`). A better piece replaces the worn one, and the old one goes back to the inventory. `bot.inventory.items()` does not list worn armor, so compare against the worn slot (`bot.inventory.slots[5]` to `[8]`: head, chest, legs, feet), or you may swap a good piece for a worse one:
 
-```js
-const slots = { helmet: ["head", 5], chestplate: ["torso", 6], leggings: ["legs", 7], boots: ["feet", 8] };
-// Materials in order of the points of a full set. Diamond and netherite tie on points; netherite has more toughness.
-const tiers = ["leather", "copper", "golden", "turtle", "chainmail", "iron", "diamond", "netherite"];
-const rank = (item) => (item ? tiers.findIndex((t) => item.name.startsWith(`${t}_`)) : -1);
-for (const [piece, [slot, index]] of Object.entries(slots)) {
-  const worn = bot.inventory.slots[index];
-  const best = bot.inventory.items().filter((i) => i.name.endsWith(`_${piece}`)).sort((a, b) => rank(b) - rank(a))[0];
-  if (best && rank(best) > rank(worn)) await bot.equip(best, slot);
-}
+```ts
+import type { RoutineContext } from "minebot-sdk/routine";
+
+export default async ({ bot }: RoutineContext) => {
+  const slots = { helmet: ["head", 5], chestplate: ["torso", 6], leggings: ["legs", 7], boots: ["feet", 8] } as const;
+  // Materials in order of the points of a full set. Diamond and netherite tie on points; netherite has more toughness.
+  const tiers = ["leather", "copper", "golden", "turtle", "chainmail", "iron", "diamond", "netherite"];
+  const rank = (item: { name: string } | null) => (item ? tiers.findIndex((t) => item.name.startsWith(`${t}_`)) : -1);
+  for (const [piece, [slot, index]] of Object.entries(slots)) {
+    const worn = bot.inventory.slots[index] ?? null;
+    const best = bot.inventory.items().filter((i) => i.name.endsWith(`_${piece}`)).sort((a, b) => rank(b) - rank(a))[0];
+    if (best && rank(best) > rank(worn)) await bot.equip(best, slot);
+  }
+};
 ```
 
 Observed: with an iron helmet and copper boots worn and a diamond helmet and golden boots in the pack, this swapped both, and a second run kept everything. An iron set plus a diamond helmet added up to 16 points (3 + 6 + 5 + 2).
 
 <!-- builtins -->
-`kit.survival.armor()` equips the best armor in the inventory.
+`minebot call survival.armor` equips the best armor in the inventory.
 <!-- /builtins -->

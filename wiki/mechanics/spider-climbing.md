@@ -20,8 +20,13 @@ Observed: a spider in daylight did not burn (`mechanics/daylight-burning`), unli
 
 Find them and fight on flat ground:
 
-```js
-const spider = bot.nearestEntity((e) => e.name === "spider" || e.name === "cave_spider");
+```ts
+import type { RoutineContext } from "minebot-sdk/routine";
+
+export default ({ bot }: RoutineContext) => {
+  const spider = bot.nearestEntity((e) => e.name === "spider" || e.name === "cave_spider");
+  return spider ? { id: spider.id, at: spider.position } : null;
+};
 ```
 
 Fight rules: `mechanics/combat-basics`.

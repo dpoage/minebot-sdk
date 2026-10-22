@@ -18,10 +18,13 @@ The registry (`bot.registry`, minecraft-data) lists crafting recipes only. Smelt
 
 Use the wiki: the `reference/recipes-*` pages list the furnace, blast furnace, smoker, and campfire recipes per result item (search `iron_ingot recipe`). The common inputs are on `mechanics/smelting`. In code, keep a small map of what you need:
 
-```js
-const smelts = { raw_iron: "iron_ingot", raw_copper: "copper_ingot", raw_gold: "gold_ingot", beef: "cooked_beef", porkchop: "cooked_porkchop" };
+```ts
+export default () => {
+  const smelts = { raw_iron: "iron_ingot", raw_copper: "copper_ingot", raw_gold: "gold_ingot", beef: "cooked_beef", porkchop: "cooked_porkchop" };
+  return smelts;
+};
 ```
 
 <!-- builtins -->
-`kit.furnace.smelt({ item: "raw_iron", count: 3 })` knows the recipes. `kit.crafter.make({ item: "iron_ingot" })` smelts when it must.
+`minebot call furnace.smelt --args '{"item":"raw_iron","count":3}'` knows the recipes. `minebot call crafter.make --args '{"item":"iron_ingot"}'` smelts when it must.
 <!-- /builtins -->

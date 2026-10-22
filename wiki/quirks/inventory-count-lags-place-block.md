@@ -17,12 +17,19 @@ You place a seed or a block with `bot.placeBlock`, then read the inventory, and 
 
 Wait a moment before you read counts after placing:
 
-```js
-await bot.placeBlock(soil, new Vec3(0, 1, 0));
-await sleep(100);
-const seeds = bot.inventory.items().filter((i) => i.name === "wheat_seeds").reduce((n, i) => n + i.count, 0);
+```ts
+import { Vec3 } from "minebot-sdk/routine";
+import type { RoutineContext } from "minebot-sdk/routine";
+
+export default async ({ bot, sleep }: RoutineContext, { x, y, z }: { x: number; y: number; z: number }) => {
+  const soil = bot.blockAt(new Vec3(x, y, z))!; // the block to plant on
+  await bot.placeBlock(soil, new Vec3(0, 1, 0));
+  await sleep(100);
+  const seeds = bot.inventory.items().filter((i) => i.name === "wheat_seeds").reduce((n, i) => n + i.count, 0);
+  return seeds;
+};
 ```
 
 <!-- builtins -->
-`kit.farm.harvest` waits before it computes `gained`.
+`farm.harvest` waits before it computes `gained`.
 <!-- /builtins -->

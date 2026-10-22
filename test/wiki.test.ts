@@ -219,15 +219,15 @@ describe("repository wiki", () => {
     }
   });
 
-  it("keeps the kit shortcuts for a body that has kits", () => {
+  it("keeps the built-in routine shortcuts for a body that has built-ins", () => {
     const wiki = Wiki.load(WIKI_DIR);
     const view: WikiView = { builtins: true, milestones: false, reflexes: false, routines: false };
-    assert.match(wiki.read("flows/first-day", view).body, /kit\.gatherer\.gather\(\{ blocks: "\*_log", count: 4 \}\)/);
+    assert.match(wiki.read("flows/first-day", view).body, /minebot call gatherer\.gather --args '\{"blocks":"\*_log","count":4\}'/);
     assert.ok(wiki.list(undefined, view).some((p) => p.id === "minebot/kits"));
     assert.doesNotMatch(wiki.read("flows/first-day", view).body, /<!--/);
   });
 
-  it("shows the triggers page only to a body with reflexes, and keeps kits out of it when the body has none", () => {
+  it("shows the reflex page only to a body with reflexes, and keeps kits out of it when the body has none", () => {
     const wiki = Wiki.load(WIKI_DIR);
     const without: WikiView = { builtins: false, milestones: false, reflexes: false, routines: false };
     const triggersOnly: WikiView = { ...without, reflexes: true };
@@ -236,7 +236,7 @@ describe("repository wiki", () => {
     assert.ok(wiki.search("trigger reflex", 20, without).every((h) => h.id !== "minebot/triggers"));
     const page = wiki.read("minebot/triggers", triggersOnly);
     assert.doesNotMatch(formatPage(page), /\bkits?\b|\bkit\./i);
-    assert.match(wiki.read("minebot/triggers", { ...triggersOnly, builtins: true }).body, /kit\.survival\.eat/);
+    assert.match(wiki.read("minebot/triggers", { ...triggersOnly, builtins: true }).body, /survival\.eat\(ctx\)/);
   });
 });
 

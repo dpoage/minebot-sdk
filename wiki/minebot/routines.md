@@ -6,7 +6,7 @@ mc_version: "26.1"
 verified_by: "save, versions, revert, bind, call, a busy call, a timeout, a stop, and a leftover timer that restarted the bot host checked on the dev server, 2026-10-21"
 ---
 
-A program is text that you send once. A routine is a TypeScript module that stays on the body. You call it by name, it can import other routines, and it survives a restart of the body. Use a routine for code that you run again.
+A run is a module that you send once. A routine is a TypeScript module that stays in the body's library. You call it by name, it can import other routines, and it survives a restart of the body. Use a routine for code that you run again.
 
 ```sh
 cat > count-logs.ts <<'EOF'
@@ -30,27 +30,28 @@ minebot bind action count count-logs     # gives it a name for calls
 minebot call count --args '{"prefix":"birch"}'
 ```
 
-A program cannot call a routine. Use `minebot call`, the `call_routine` tool, or `POST /call`. An MCP server started with `--tools full` also serves `routine_save`, `routine_source`, `routine_versions`, `routine_revert`, `list_routines`, and `unbind_routine`. `bind_routine` can save the module and bind it in one call: pass `source`.
+A run can import a saved routine and call it: `import count from "./count-logs.ts"`, then `await count(ctx)`. From outside the body, use `minebot call`, the `call_routine` tool, or `POST /call`. An MCP server started with `--tools full` also serves `routine_save`, `routine_source`, `routine_versions`, `routine_revert`, `list_routines`, and `unbind_routine`. `bind_routine` can save the module and bind it in one call: pass `source`.
 
 ## What a routine has
 
-The default export is a function `(ctx, args) => result`. With `defineRoutine`, the body checks `args` (a zod schema) on every call and gives the routine the parsed value with defaults applied. A call with bad arguments fails before the routine runs, and the error holds the schema. The body also checks the result against `returns`. A call without arguments passes `{}`. A plain exported function works too, with unchecked arguments.
+The default export is a function `(ctx, args) => result`. With `defineRoutine`, the body checks `args` (a zod schema) on every call and gives the routine the parsed value with defaults applied. A call with bad arguments fails before the routine runs, and the error holds the schema. The body also checks the result against `returns`. Only a missing argument defaults to `{}`: a call without `--args` passes `{}`. `null` is an argument, not a missing one, and a schema that expects an object refuses it. `minebot call` takes `--args` as a JSON object and refuses `null`. A plain exported function works too, with unchecked arguments.
 
 `ctx` has these members and no others:
 
-- `bot`, `log(...)`, `sleep(ms)`, `signal`, and `on(event, handler)`, as in a program.
-- `notes` and `status()`, as in a program.
+- `bot`, `log(...)`, `sleep(ms)`, `signal`, and `on(event, handler)`, as in a run.
+- `notes` and `status()`, as in a run.
+- `store(namespace)`, a JSON store that survives restarts of the body and that every routine opening the same namespace shares.
 - `wiki`, when the wiki is on.
 
-`Vec3`, `goals`, and `Movements` are not in `ctx`. Import `Vec3` by name: `import { Vec3 } from "vec3"`. Use a default import for `mineflayer-pathfinder`, and take `goals` and `Movements` from it: `import pathfinder from "mineflayer-pathfinder"`, then `const { goals, Movements } = pathfinder`. A named import of `goals` passes the type check, but the call fails with `Named export 'goals' not found`.
+`Vec3`, `goals`, and `Movements` are not in `ctx`. Import them by name from `minebot-sdk/routine`, or from the packages: `import { goals, Movements } from "mineflayer-pathfinder"` and `import { Vec3 } from "vec3"`. Named imports of the body's CommonJS packages work, and so does `require`: `require("vec3")`.
 
 <!-- builtins -->
-`ctx.kit` holds the active kits' actions, for example `await ctx.kit.move.to({ position: [x, y, z], range: 1 })`.
+A built-in routine is an import, not a `ctx` member: `import * as move from "minebot-sdk/routines/move"`, then `await move.to(ctx, { position: [10, 64, 10], range: 1 })`. See `minebot/kits`.
 <!-- /builtins -->
 
 ## Imports
 
-Use `import`. `require` does not work in a routine.
+Use `import`. `require` works too, for the packages and the Node built-ins in the list below.
 
 - Node built-ins, such as `node:fs`.
 - The packages that the body ships: `mineflayer`, `mineflayer-pathfinder`, `vec3`, `minecraft-data`, the `prismarine-*` packages, and `zod`.
@@ -84,7 +85,7 @@ Only `ctx.on`, `ctx.sleep`, and `ctx.signal` end with the call. A `setTimeout`, 
 <!-- reflexes -->
 ## Run a routine on an event
 
-`minebot bind reflex <name> <routine> --on <types>` binds a routine as a reflex: the body calls it when an event of one of the types arrives, as a trigger runs a program. The routine gets `(ctx, { event })`. The event has `seq`, `type`, `time`, and `data`.
+`minebot bind reflex <name> <routine> --on <types>` binds a routine as a reflex: the body calls it when an event of one of the types arrives. The routine gets `(ctx, { event })`. The event has `seq`, `type`, `time`, and `data`.
 
 ```ts
 import type { BodyEvent } from "minebot-sdk/client";
@@ -100,7 +101,7 @@ minebot routines save note-chat.ts
 minebot bind reflex noter note-chat --on chat --cooldown 5000
 ```
 
-A reflex has the fields, the scheduling, and the failure rule of a trigger: `--when`, `--from`, `--match`, `--cooldown`, `--timeout`, `--priority`, `--preempt`. A reflex that fails three times in a row disables itself. Bind it again to turn it on: a new bind replaces the reflex and resets its counts. `minebot routines` lists the reflexes with what each did since the body started.
+A reflex takes the options `--when`, `--from`, `--match`, `--cooldown`, `--timeout`, `--priority`, and `--preempt`. A reflex that fails three times in a row disables itself. Bind it again to turn it on: a new bind replaces the reflex and resets its counts. `minebot routines` lists the reflexes with what each did since the body started.
 
-An action, a reflex, and a trigger share one namespace. A bind with a name that another kind holds is refused; run `minebot unbind <name>` first. Reflexes count toward the limit of 50 triggers.
+An action and a reflex share one namespace. A bind with a name that the other kind holds is refused; run `minebot unbind <name>` first. A body keeps at most 50 reflexes. See `minebot/triggers` for when a reflex runs, its priority, and preemption.
 <!-- /reflexes -->

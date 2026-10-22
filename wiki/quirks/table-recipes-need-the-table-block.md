@@ -18,12 +18,16 @@ The inventory has a 2x2 crafting grid. Recipes that need a 3x3 grid (`requiresTa
 
 Place a crafting table, stand within reach of it, and pass the table block to both calls:
 
-```js
-const table = bot.findBlock({ matching: bot.registry.blocksByName.crafting_table.id, maxDistance: 4 });
-const recipe = bot.recipesFor(bot.registry.itemsByName.wooden_pickaxe.id, null, 1, table)[0];
-await bot.craft(recipe, 1, table);
+```ts
+import type { RoutineContext } from "minebot-sdk/routine";
+
+export default async ({ bot }: RoutineContext) => {
+  const table = bot.findBlock({ matching: bot.registry.blocksByName.crafting_table!.id, maxDistance: 4 })!;
+  const recipe = bot.recipesFor(bot.registry.itemsByName.wooden_pickaxe!.id, null, 1, table)[0]!;
+  await bot.craft(recipe, 1, table);
+};
 ```
 
 <!-- builtins -->
-`kit.craft` and `kit.make` (crafter kit) find, place, or craft a table when a recipe needs one.
+`crafter.make` finds, places, or crafts a table when a recipe needs one. `craft.craft` uses a table within 4 blocks and fails when there is none.
 <!-- /builtins -->

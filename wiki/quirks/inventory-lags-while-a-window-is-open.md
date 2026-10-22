@@ -17,13 +17,20 @@ While a container window is open, your items live in that window's slots. `bot.i
 
 Read counts from the window while it is open, or close it and wait a moment:
 
-```js
-const chest = await bot.openContainer(block);
-await chest.withdraw(itemId, null, 2);
-const have = chest.count(itemId);       // current, while the window is open
-chest.close();
-await sleep(500);
-const after = bot.inventory.count(itemId); // current again
+```ts
+import { Vec3 } from "minebot-sdk/routine";
+import type { RoutineContext } from "minebot-sdk/routine";
+
+export default async ({ bot, sleep }: RoutineContext, { x, y, z }: { x: number; y: number; z: number }) => {
+  const itemId = bot.registry.itemsByName.iron_ingot!.id;
+  const chest = await bot.openContainer(bot.blockAt(new Vec3(x, y, z))!);
+  await chest.withdraw(itemId, null, 2);
+  const have = chest.count(itemId, null);       // current, while the window is open
+  chest.close();
+  await sleep(500);
+  const after = bot.inventory.count(itemId, null); // current again
+  return { have, after };
+};
 ```
 
 `chest.items()` lists your own items as the window shows them, and `chest.containerItems()` the container's. `chest.count(itemId)` counts your own. The same holds for a villager window (`mechanics/villagers-and-trading`).

@@ -10,11 +10,17 @@ check: water-and-lava.js
 
 Hold an empty `bucket`, look at a water or lava **source** block, and use the item:
 
-```js
-await bot.equip(bot.inventory.items().find((i) => i.name === "bucket"), "hand");
-await bot.lookAt(sourceBlock.position.offset(0.5, 0.5, 0.5), true);
-bot.activateItem();
-await sleep(600);
+```ts
+import { Vec3 } from "minebot-sdk/routine";
+import type { RoutineContext } from "minebot-sdk/routine";
+
+export default async ({ bot, sleep }: RoutineContext, { x, y, z }: { x: number; y: number; z: number }) => {
+  const sourceBlock = bot.blockAt(new Vec3(x, y, z))!;
+  await bot.equip(bot.inventory.items().find((i) => i.name === "bucket")!, "hand");
+  await bot.lookAt(sourceBlock.position.offset(0.5, 0.5, 0.5), true);
+  bot.activateItem();
+  await sleep(600);
+};
 ```
 
 Observed: the empty bucket turned into `water_bucket` (or `lava_bucket` from lava), and the source block became air. The range is the normal block reach: from 7 blocks away the first try did nothing, from 2 blocks it worked.
@@ -29,11 +35,16 @@ Three details:
 
 Hold the full bucket, look at a solid block, and use the item. The fluid appears in front of the face you look at:
 
-```js
-await bot.equip(bot.inventory.items().find((i) => i.name === "water_bucket"), "hand");
-await bot.lookAt(new Vec3(x + 0.5, y + 0.9, z + 0.5), true); // the top of a block
-bot.activateItem();
-await sleep(600);
+```ts
+import { Vec3 } from "minebot-sdk/routine";
+import type { RoutineContext } from "minebot-sdk/routine";
+
+export default async ({ bot, sleep }: RoutineContext, { x, y, z }: { x: number; y: number; z: number }) => {
+  await bot.equip(bot.inventory.items().find((i) => i.name === "water_bucket")!, "hand");
+  await bot.lookAt(new Vec3(x + 0.5, y + 0.9, z + 0.5), true); // the top of a block
+  bot.activateItem();
+  await sleep(600);
+};
 ```
 
 Observed: water appeared in the air cell in front of the wall that the bot looked at, and the bot held an empty `bucket` again.
@@ -41,5 +52,5 @@ Observed: water appeared in the air cell in front of the wall that the bot looke
 Water and lava interact: see `mechanics/water-and-lava`.
 
 <!-- builtins -->
-`kit.bucket.fill({ fluid: "water" })` fills a bucket from the nearest source. `kit.bucket.empty({ at })` places the fluid at a position.
+`minebot call bucket.fill --args '{"fluid":"water"}'` fills a bucket from the nearest source. `minebot call bucket.empty --args '{"at":[10,64,5]}'` places the fluid at a position.
 <!-- /builtins -->

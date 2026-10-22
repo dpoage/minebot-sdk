@@ -17,15 +17,20 @@ A player picks up an item only within about one block of its hitbox. `bot.dig` d
 
 After digging, walk over nearby item entities:
 
-```js
-await sleep(400); // let the drop spawn and fall
-for (const e of Object.values(bot.entities)) {
-  if (e.name !== "item" || e.position.distanceTo(bot.entity.position) > 8) continue;
-  const p = e.position.floored();
-  await bot.pathfinder.goto(new goals.GoalBlock(p.x, p.y, p.z)).catch(() => {});
-}
+```ts
+import { goals } from "minebot-sdk/routine";
+import type { RoutineContext } from "minebot-sdk/routine";
+
+export default async ({ bot, sleep }: RoutineContext) => {
+  await sleep(400); // let the drop spawn and fall
+  for (const e of Object.values(bot.entities)) {
+    if (e.name !== "item" || e.position.distanceTo(bot.entity.position) > 8) continue;
+    const p = e.position.floored();
+    await bot.pathfinder.goto(new goals.GoalBlock(p.x, p.y, p.z)).catch(() => {});
+  }
+};
 ```
 
 <!-- builtins -->
-`await kit.gatherer.collectDrops()` does the same, and `kit.gatherer.gather` already picks up drops after each block.
+`minebot call gatherer.collectDrops` does the same, and `gatherer.gather` already picks up drops after each block.
 <!-- /builtins -->
