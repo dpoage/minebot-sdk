@@ -9,7 +9,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import type { BodyFeatures } from "../src/protocol/index.ts";
 
-const EVERYTHING: BodyFeatures = { kits: ["move"], kitsLocked: false, agentKits: true, wiki: "write", lessons: true, milestones: true, triggers: true, routines: true };
+const EVERYTHING: BodyFeatures = { kits: ["move"], kitsLocked: false, agentKits: true, wiki: "write", lessons: true, milestones: true, reflexes: true, routines: true };
 const CLI = [...process.execArgv, path.join(import.meta.dirname, "..", "src", "cli.ts")];
 
 const CORE = ["api_reference", "bind_routine", "call_routine", "get_events", "kit_docs", "observe", "run_program", "stop_program", "wait_for"];
@@ -18,7 +18,7 @@ const FULL = [
   ...CORE,
   "kit_remove", "kit_revert", "kit_save", "kit_search", "kit_source", "kit_try", "kit_versions", "list_kits",
   "notes_delete", "notes_list", "notes_set", "send_chat", "status",
-  "trigger_add", "trigger_list", "trigger_remove", "trigger_set_enabled", "use_kits",
+  "use_kits",
   "wiki_add_lesson", "wiki_list", "wiki_read", "wiki_search",
   "list_routines", "routine_revert", "routine_save", "routine_source", "routine_versions", "unbind_routine",
 ].sort();

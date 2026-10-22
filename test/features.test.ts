@@ -16,7 +16,7 @@ const exec = promisify(execFile);
 const ROUTINE_KITS = ["gatherer", "crafter", "builder", "explorer", "social"];
 /** What --locks with the routine kits offers: their used primitives come along automatically. */
 const OFFERED_KITS = ["move", "sense", "dig", "place", "inventory", "craft", "items", "furnace", ...ROUTINE_KITS];
-const raw: BodyFeatures = { kits: [], kitsLocked: true, agentKits: false, wiki: "off", lessons: false, milestones: false, triggers: false, routines: false };
+const raw: BodyFeatures = { kits: [], kitsLocked: true, agentKits: false, wiki: "off", lessons: false, milestones: false, reflexes: false, routines: false };
 const kitsTier: BodyFeatures = { ...raw, kits: OFFERED_KITS, agentKits: true };
 const wikiTier: BodyFeatures = { ...raw, wiki: "read" };
 const full: BodyFeatures = { ...kitsTier, wiki: "read" };
@@ -48,18 +48,18 @@ describe("tier visibility in the usage text", () => {
     assert.doesNotMatch(usageFor(full, false), /wiki lesson/);
   });
 
-  it("lists the routine commands exactly when the body offers routines, and `bind reflex` only with triggers too", () => {
+  it("lists the routine commands exactly when the body offers routines, and `bind reflex` only with reflexes too", () => {
     const COMMANDS = [/routines save <file\.\.\.>/, /routines source\|versions <name>/, /routines revert <name> <n>/, /bind action <name> <routine>/, /unbind <name>/, /call <name>/, /call: {3}--args <json>, --timeout <ms>/];
     const REFLEX = /bind reflex <name> <routine> --on <a,b>[\s\S]*--priority, --preempt/;
     for (const routines of [false, true]) {
-      for (const triggers of [false, true]) {
+      for (const reflexes of [false, true]) {
         for (const hasBody of [false, true]) {
-          const text = usageFor({ ...raw, routines, triggers }, hasBody);
-          const label = `routines ${routines}, triggers ${triggers}, hasBody ${hasBody}`;
+          const text = usageFor({ ...raw, routines, reflexes }, hasBody);
+          const label = `routines ${routines}, reflexes ${reflexes}, hasBody ${hasBody}`;
           for (const command of COMMANDS) assert.equal(command.test(text), routines, `${command} with ${label}`);
-          assert.equal(REFLEX.test(text), routines && triggers, `bind reflex with ${label}`);
+          assert.equal(REFLEX.test(text), routines && reflexes, `bind reflex with ${label}`);
           if (!routines) assert.doesNotMatch(text, /routine|\bbind\b|reflex/i, label);
-          if (!triggers) assert.doesNotMatch(text, /reflex|trigger|--cooldown/i, label);
+          if (!reflexes) assert.doesNotMatch(text, /reflex|trigger|--cooldown/i, label);
         }
       }
     }
@@ -70,7 +70,7 @@ describe("tier visibility in the usage text", () => {
 
   it("shows an operator everything when no body can be asked", () => {
     const text = usageFor(null, true, OPERATOR_FLAG_HELP);
-    for (const word of ["body ", "--no-agent-kits", "--no-milestones", "--no-triggers", "--no-routines", "kits use", "wiki lesson", "--lock-kits"]) {
+    for (const word of ["body ", "--no-agent-kits", "--no-milestones", "--no-reflexes", "--no-routines", "kits use", "wiki lesson", "--lock-kits"]) {
       assert.match(text, new RegExp(word.replace(/[-]/g, "\\-")));
     }
     assert.doesNotMatch(usageFor(null, false), /kits|wiki|milestones/i);
@@ -142,9 +142,9 @@ describe("tier visibility on a running body", () => {
   let plainKitsBody: BodyClient;
   before(async () => {
     [rawBody, fullBody, plainKitsBody] = await Promise.all([
-      start("features-raw", "--wiki", "off", "--no-milestones", "--no-agent-kits", "--no-triggers", "--no-routines", "--kits", ""),
+      start("features-raw", "--wiki", "off", "--no-milestones", "--no-agent-kits", "--no-reflexes", "--no-routines", "--kits", ""),
       start("features-full", "--wiki", "read", "--kits", ROUTINE_KITS.join(","), "--no-milestones"),
-      start("features-plainkits", "--wiki", "off", "--no-agent-kits", "--no-milestones", "--no-triggers", "--kits", ROUTINE_KITS.join(",")),
+      start("features-plainkits", "--wiki", "off", "--no-agent-kits", "--no-milestones", "--no-reflexes", "--kits", ROUTINE_KITS.join(",")),
     ]);
   });
   after(() => {
@@ -179,7 +179,7 @@ describe("tier visibility on a running body", () => {
     });
     assert.equal(post.status, 404);
     await assert.rejects(rawBody.setMilestones({ milestones: [] }), /no route for PUT \/milestones/);
-    await assert.rejects(rawBody.addTrigger({ name: "t", on: ["hurt"], run: "return 1" }), /no route for POST \/triggers/);
+    await assert.rejects(rawBody.bind({ kind: "reflex", name: "t", routine: "act", on: ["hurt"] }), /no route for POST \/bind/);
     await assert.rejects(rawBody.addLesson({ title: "A lesson", body: "Some text here." }), /no route for POST \/wiki\/lessons/);
     for (const route of ["/routines/save", "/bind", "/unbind", "/call"]) {
       const res = await fetch(new URL(route, rawBody.endpoint.url), { method: "POST", headers: { authorization: `Bearer ${rawBody.endpoint.token}` }, body: "{ not json" });
@@ -268,25 +268,35 @@ describe("tier visibility on a running body", () => {
     assert.match((await cli(fullBody, "wiki", "read", "flows/first-day")).out, /collect\(isLog/);
   });
 
-  it("serves a body with triggers its routes, command, and reference, and saves them across the CLI and the client", async () => {
-    assert.equal((await fullBody.features()).triggers, true);
-    assert.deepEqual(await fullBody.triggers(), { triggers: [] });
-    assert.match((await cli(fullBody, "--help")).out, /triggers add <name> --on/);
-    assert.match((await fullBody.apiDoc()).doc, /triggers\.add\(/);
-    assert.match((await cli(fullBody, "triggers")).out, /^no triggers/);
-    const file = path.join(runtime, "react.js");
-    writeFileSync(file, "log('hurt', event.data);");
-    const added = await cli(fullBody, "triggers", "add", "react", "--on", "hurt,night", "--when", "event.data.health < 8", "--cooldown", "0", "--preempt", file);
-    assert.equal(added.code, 0, added.out);
-    assert.match(added.out, /^saved trigger\nreact {2}\[on\] {2}on hurt, night; when event\.data\.health < 8; preempts/);
-    const [saved] = (await fullBody.triggers()).triggers;
-    assert.deepEqual([saved!.name, saved!.cooldownMs, saved!.preempt, saved!.priority], ["react", 0, true, 0]);
-    assert.match((await cli(fullBody, "triggers", "disable", "react")).out, /\[off: disabled\]/);
-    assert.equal((await fullBody.triggers()).triggers[0]!.enabled, false);
-    await assert.rejects(fullBody.addTrigger({ name: "bad", on: ["trigger_fired"], run: "1" }), /cannot listen to trigger events/);
-    await assert.rejects(fullBody.removeTrigger("nope"), /no trigger "nope"/);
-    assert.deepEqual(await fullBody.removeTrigger("react"), { removed: "react" });
-    assert.equal((await cli(fullBody, "triggers", "rm", "react")).code, 1);
+  it("serves a body with reflexes its binding command and reference, and offers no code triggers: no route, command, flag, or word", async () => {
+    assert.equal((await fullBody.features()).reflexes, true);
+    assert.equal("triggers" in (await fullBody.features()), false);
+    assert.match((await cli(fullBody, "--help")).out, /bind reflex <name> <routine> --on/);
+    const { doc } = await fullBody.apiDoc();
+    assert.match(doc, /Reflexes: POST \/bind/);
+    assert.doesNotMatch(doc, /trigger/i);
+    assert.doesNotMatch((await cli(fullBody, "--help")).out, /trigger/i);
+    for (const [method, route] of [["GET", "/triggers"], ["POST", "/triggers"], ["POST", "/triggers/remove"], ["POST", "/triggers/enabled"]] as const) {
+      const res = await fetch(new URL(route, fullBody.endpoint.url), { method, headers: { authorization: `Bearer ${fullBody.endpoint.token}`, "content-type": "application/json" }, ...(method === "POST" && { body: "{}" }) });
+      assert.equal(res.status, 404, `${method} ${route}`);
+      const { error } = (await res.json()) as { error: string };
+      assert.equal(error, `no route for ${method} ${route}`);
+    }
+    const unknown = await cli(fullBody, "triggers");
+    assert.equal(unknown.code, 1);
+    assert.match(unknown.out, /^unknown command: triggers\n/);
+    await assert.rejects(
+      exec("node", [...CLI, "body", "--bot", "features-old-flag", "--no-triggers"], { env: { ...process.env, MINEBOT_RUNTIME_DIR: runtime } }),
+      (err: { stderr: string }) => /Unknown option '--no-triggers'/.test(err.stderr),
+    );
+    assert.equal((await rawBody.features()).reflexes, false, "--no-reflexes turns them off");
+    assert.deepEqual((await fullBody.bindings()).bindings, []);
+    await fullBody.saveRoutine("react", "export default () => 1;\n");
+    const bound = await cli(fullBody, "bind", "reflex", "react", "react", "--on", "hurt,night", "--when", "event.data.health < 8", "--cooldown", "0", "--preempt");
+    assert.equal(bound.code, 0, bound.out);
+    assert.match(bound.out, /^bound react {2}reflex of react {2}\[on\] {2}on hurt, night; when event\.data\.health < 8; preempts/);
+    await assert.rejects(fullBody.bind({ kind: "reflex", name: "bad", routine: "react", on: ["reflex_fired"] }), /cannot listen to reflex events/);
+    assert.deepEqual(await fullBody.unbind("react"), { unbound: "react" });
   });
 
   it("serves a body without kits no kit content in the wiki", async () => {

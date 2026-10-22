@@ -17,14 +17,14 @@ export interface BodyFeatures {
   lessons: boolean;
   /** Milestones can be read, set, and graded. */
   milestones: boolean;
-  /** The agent can register triggers: programs the body runs when an event arrives. */
-  triggers: boolean;
+  /** Reflexes are not turned off. The agent can bind them only where the body also has routines (`CAPABILITY_GATES.reflexes`). */
+  reflexes: boolean;
   /** The body keeps a routine library: modules the agent saves, binds to names, and calls. */
   routines: boolean;
 }
 
 /** Every optional capability a body can offer. */
-export const CAPABILITIES = ["kits", "kitSwitching", "agentKits", "wiki", "lessons", "milestones", "triggers", "routines"] as const;
+export const CAPABILITIES = ["kits", "kitSwitching", "agentKits", "wiki", "lessons", "milestones", "reflexes", "routines"] as const;
 export type Capability = (typeof CAPABILITIES)[number];
 
 /**
@@ -38,7 +38,7 @@ export const CAPABILITY_GATES: Record<Capability, (features: BodyFeatures) => bo
   wiki: (f) => f.wiki !== "off",
   lessons: (f) => f.wiki === "write",
   milestones: (f) => f.milestones,
-  triggers: (f) => f.triggers,
+  reflexes: (f) => f.reflexes && f.routines,
   routines: (f) => f.routines,
 };
 
@@ -88,11 +88,6 @@ export function programApiDoc(features: BodyFeatures): string {
       "- kits.save(source), kits.remove(name), kits.source(name): write, delete, and read agent kits — TypeScript files in the same shape as the built-ins: `import { defineKit, action, z } from \"minebot-sdk/kit\";` (the only import allowed; it also exports the helpers the built-ins use, such as nameMatcher, Position, goals) then one `export default defineKit({ name, description, uses }, { actionName: action({ doc, args, returns, run }) })` (or `export const <name> = defineKit(...)`, as the built-ins are written; other exports are ignored); run `kits.source(\"move\")` and read `minebot api` for an example. kits.save returns the kit with `typeCheck`: the type errors of the source, which do not stop the save. kits.try(source, { action, args }) compiles and audits the source like a save, runs that one action once, and returns its result or throws its error; type errors go to the log; nothing is saved. Saving over a kit keeps the old source: kits.versions(name) lists the versions, kits.revert(name, version) saves one again.",
     );
   }
-  if (caps.triggers) {
-    globals.push(
-      "- triggers: reflexes the body runs when an event arrives; they persist across body restarts. triggers.add({ name, on: ['hurt'], run: '<program source>', when?, from?, match?, cooldownMs?, timeoutMs?, preempt?, priority?, enabled? }) saves one (the same name replaces it), triggers.remove(name), triggers.enable(name), triggers.disable(name), triggers.list(). `run` is a program with the usual globals plus `event` ({ seq, type, time, data }); `when` is a JavaScript expression over `event` and `bot` that must be truthy; `from` and `match` filter chat as waits do. A trigger waits until no program is running; with preempt: true it stops the running program first (a higher priority wins). The body records trigger_fired and trigger_finished events, and disables a trigger that fails 3 times in a row (trigger_disabled).",
-    );
-  }
   if (caps.wiki) {
     const lessons = caps.lessons ? ", and lessons that agents wrote" : "";
     const write = caps.lessons ? ", wiki.addLesson({ title, tags, body }) to record what you learned" : "";
@@ -111,8 +106,8 @@ The value you return is sent back as the result. On timeout or stop, the body ha
 function routinesDoc(features: BodyFeatures): string {
   const caps = capabilities(features);
   const members = ["bot", "log", "sleep", "signal", "on", "notes", "status", ...(caps.kits ? ["kit"] : []), ...(caps.wiki ? ["wiki"] : [])];
-  const reflexes = caps.triggers
-    ? `\n- Reflexes: POST /bind { kind: "reflex", name, routine, on: ["hurt"], when?, from?, match?, cooldownMs?, timeoutMs?, preempt?, priority?, enabled? } binds a routine to events as a trigger binds a program: the same fields and defaults, and the routine's default export is called as (ctx, { event }) with the event { seq, type, time, data }. It fires, waits, preempts, and disables itself after 3 failures in a row as a trigger does (bind it again to re-enable it), and the body records trigger_fired and trigger_finished events for it. A name belongs to one binding, trigger, or reflex at a time (409 otherwise), and reflexes count toward the limit on triggers. GET /bindings lists a reflex with what it has done since the body started; POST /unbind removes it; the triggers global and /triggers do not list reflexes.`
+  const reflexes = caps.reflexes
+    ? `\n- Reflexes: POST /bind { kind: "reflex", name, routine, on: ["hurt"], when?, from?, match?, cooldownMs?, timeoutMs?, preempt?, priority?, enabled? } binds a routine to events. The routine's default export is called as (ctx, { event }) with the event { seq, type, time, data }; \`when\` is a JavaScript expression over \`event\` and \`bot\` that must be truthy; \`from\` and \`match\` filter chat as waits do; a reflex cannot listen to reflex_* events. Defaults: cooldownMs 1000, timeoutMs 30000, enabled true, preempt false, priority 0. A firing waits until no run is active; with preempt: true it stops the running run first (a higher priority wins, and a reflex never stops a running reflex of equal or higher priority). The body records reflex_fired and reflex_finished events for it, and a reflex that fails 3 times in a row disables itself (reflex_disabled; bind it again to re-enable it). A name belongs to one binding at a time (409 otherwise), and a body keeps at most 50 reflexes. A stored entry that cannot be loaded as a reflex (one saved before reflexes, say) is reported once per body start as a reflex_error event, keeps its name and counts toward the limit until POST /unbind removes it. GET /bindings lists a reflex with what it has done since the body started; POST /unbind removes it.`
     : "";
   return `Routines: a routine is a TypeScript module saved in this body's library, run by name instead of as program text. Its default export is a function (ctx, args) => result, usually \`export default defineRoutine({ description?, args?, returns? }, async (ctx, args) => result)\` with \`import { defineRoutine, z } from "minebot-sdk/routine"\`; args and returns are optional zod schemas that validate a call, and absent args are {}. Unlike a program it is a real module that uses \`import\` (\`require\` does not work): it can import Node built-ins, the packages this body ships (mineflayer, mineflayer-pathfinder, vec3, minecraft-data, prismarine-*, zod), \`minebot-sdk/<subpath>\` such as minebot-sdk/routine (bare \`minebot-sdk\` does not resolve), and other saved routines by file name (\`import { helper } from "./helper.ts"\`; save the imported routine first).
 - ctx has exactly: ${members.join(", ")}. status() resolves like the program global; the other members are the program globals of the same name, and ctx.on, ctx.sleep and ctx.signal end with the call. A timer or bot.on listener that the routine makes itself outlives the call, and a timer that throws after the call has ended restarts the bot host.

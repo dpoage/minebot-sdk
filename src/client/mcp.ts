@@ -2,7 +2,7 @@
 //
 // The default `core` tool set is what an agent needs to drive a body through programs: observe,
 // run, stop, wait, events, and the references. Everything else (notes, status, chat, kit and wiki
-// management, triggers) is a program global, so `core` leaves those tools out; `full` serves them
+// management) is a program global, so `core` leaves those tools out; `full` serves them
 // as tools too. Tools for optional features exist only while the body offers the feature, so an
 // agent does not learn about features its body lacks. `toolPlan` derives the gated tool set from
 // the capability table; the same function is what the capability test turns against every feature.
@@ -26,12 +26,11 @@ import {
   RevertRoutineInput,
   RoutineName,
   RoutineSource,
-  TriggerInput,
-  TriggerName,
+  UnbindInput,
   TryKitInput,
   WaitInput,
 } from "../protocol/index.ts";
-import { formatBound, formatHits, formatKitHits, formatKitVersions, formatLibrary, formatNotes, formatRevertedRoutine, formatRoutineVersions, formatRun, formatSavedRoutine, formatStatus, formatTriggers } from "./render.ts";
+import { formatBound, formatHits, formatKitHits, formatKitVersions, formatLibrary, formatNotes, formatRevertedRoutine, formatRoutineVersions, formatRun, formatSavedRoutine, formatStatus } from "./render.ts";
 import { BodyClient } from "./client.ts";
 
 type ToolResult = { content: { type: "text"; text: string }[]; isError?: boolean };
@@ -109,23 +108,6 @@ export function toolPlan(features: BodyFeatures, toolSet: ToolSet): Record<strin
       enabled: caps.lessons,
       description: "Record a lesson you verified in game (a mechanic, a pitfall, a working approach) so other agents can find it. Lessons are marked unreviewed.",
     },
-    trigger_add: {
-      enabled: caps.triggers,
-      description:
-        "Install a reflex: a program the body runs on its own whenever an event of the given types arrives (hurt, chat, night, ...), for example eating when food is low. The program has the same globals as run_program plus `event`. The firing waits until the running program has ended; with preempt it first stops that program. Saved on the body, so it survives restarts; a trigger with the same name is replaced. A trigger that fails 3 times in a row disables itself.",
-    },
-    trigger_list: {
-      enabled: caps.triggers,
-      description: "Your triggers: what fires them, whether they are on, how often they ran since the body started, and how the last run ended.",
-    },
-    trigger_remove: {
-      enabled: caps.triggers,
-      description: "Delete a trigger.",
-    },
-    trigger_set_enabled: {
-      enabled: caps.triggers,
-      description: "Turn a trigger on or off without deleting it. Turning it on again clears a self-disable.",
-    },
     call_routine: {
       enabled: caps.routines,
       description:
@@ -133,13 +115,13 @@ export function toolPlan(features: BodyFeatures, toolSet: ToolSet): Record<strin
     },
     bind_routine: {
       enabled: caps.routines,
-      description: caps.triggers
-        ? "Bind a name to a saved routine (a TypeScript module in this body's routine library). kind \"action\": call_routine runs it by name with JSON args. kind \"reflex\": the body calls the routine on its own whenever an event of the types in `on` arrives (hurt, chat, night, ...), with the same filters as a trigger (when, from, match, cooldown_ms, timeout_ms, preempt, priority, enabled); the routine is called as (ctx, { event }) with event { seq, type, time, data }. A reflex that fails 3 times in a row disables itself; bind it again to enable it. Pass `source` to save the module as <routine>.ts and bind it in one call; a refused bind leaves the saved module. Bindings are kept on the body and survive restarts."
+      description: caps.reflexes
+        ? "Bind a name to a saved routine (a TypeScript module in this body's routine library). kind \"action\": call_routine runs it by name with JSON args. kind \"reflex\": the body calls the routine on its own whenever an event of the types in `on` arrives (hurt, chat, night, ...), narrowed by when, from, and match, and limited by cooldown_ms, timeout_ms, preempt, priority, and enabled; the routine is called as (ctx, { event }) with event { seq, type, time, data }. A reflex cannot listen to reflex_* events. A reflex that fails 3 times in a row disables itself; bind it again to enable it. Pass `source` to save the module as <routine>.ts and bind it in one call; a refused bind leaves the saved module. Bindings are kept on the body and survive restarts."
         : "Bind a name to a saved routine (a TypeScript module in this body's routine library) as an action: call_routine runs it by name with JSON args. Pass `source` to save the module as <routine>.ts and bind it in one call; a refused bind leaves the saved module. Bindings are kept on the body and survive restarts.",
     },
     list_routines: {
       enabled: caps.routines,
-      description: caps.triggers
+      description: caps.reflexes
         ? "The saved routines with their versions, and the names bound to them: actions, and reflexes with how often each ran since the body started and how the last run ended."
         : "The saved routines with their versions, and the names bound to them as actions.",
     },
@@ -162,7 +144,9 @@ export function toolPlan(features: BodyFeatures, toolSet: ToolSet): Record<strin
     },
     unbind_routine: {
       enabled: caps.routines,
-      description: caps.triggers ? "Remove a binding: the action stops being callable, or the reflex stops firing. The saved routine stays." : "Remove a binding: the action stops being callable. The saved routine stays.",
+      description: caps.reflexes
+        ? "Remove a binding: the action stops being callable, or the reflex stops firing. A stored entry that the body skipped at start and reported as reflex_error is removed by its name too, which frees the name. The saved routine stays."
+        : "Remove a binding: the action stops being callable. The saved routine stays.",
     },
   };
   for (const [name, entry] of Object.entries(plan)) entry.enabled &&= toolSet === "full" || Object.hasOwn(CORE_TOOLS, name);
@@ -415,45 +399,6 @@ export async function serveMcp(bodyName: string, toolSet: ToolSet): Promise<void
     ({ title, tags, body }) => call(async (c) => json(await c.addLesson({ title, tags, body }))),
   );
 
-  const triggerAdd = server.registerTool(
-    "trigger_add",
-    {
-      description: "",
-      inputSchema: {
-        name: TriggerName,
-        on: TriggerInput.shape.on.describe("Event types that fire it, e.g. ['hurt'] or ['chat']; any of them matches."),
-        run: TriggerInput.shape.run.describe("Program source: the body of an async function, with `event` ({ seq, type, time, data }) in scope."),
-        when: TriggerInput.shape.when.describe("JavaScript expression over `event` and `bot` that must be truthy, e.g. event.data.health < 8."),
-        from: TriggerInput.shape.from.describe("Only chat or whisper events sent by this player."),
-        match: TriggerInput.shape.match.describe("Case-insensitive regular expression over chat, whisper, and system messages."),
-        cooldown_ms: TriggerInput.shape.cooldownMs.describe("Minimum time between two firings. Default 1000."),
-        timeout_ms: TriggerInput.shape.timeoutMs.describe("Abort the run after this many milliseconds. Default 30000."),
-        preempt: TriggerInput.shape.preempt.describe("Stop the running program when this trigger fires, then run once it has ended. Default false."),
-        priority: TriggerInput.shape.priority.describe("Waiting triggers run highest first; a preempting trigger never stops a running trigger of equal or higher priority. Default 0."),
-        enabled: TriggerInput.shape.enabled,
-      },
-    },
-    ({ cooldown_ms, timeout_ms, ...trigger }) =>
-      call(async (c) => {
-        const { trigger: saved, replaced } = await c.addTrigger({ ...trigger, cooldownMs: cooldown_ms, timeoutMs: timeout_ms });
-        return `${replaced ? "replaced" : "saved"} trigger\n${formatTriggers([saved])}`;
-      }),
-  );
-  const triggerList = server.registerTool("trigger_list", { description: "", inputSchema: {} }, () =>
-    call(async (c) => {
-      const { triggers } = await c.triggers();
-      return triggers.length === 0 ? "no triggers" : formatTriggers(triggers);
-    }),
-  );
-  const triggerRemove = server.registerTool("trigger_remove", { description: "", inputSchema: { name: TriggerName } }, ({ name }) =>
-    call(async (c) => json(await c.removeTrigger(name))),
-  );
-  const triggerSetEnabled = server.registerTool(
-    "trigger_set_enabled",
-    { description: "", inputSchema: { name: TriggerName, enabled: z.boolean() } },
-    ({ name, enabled }) => call(async (c) => formatTriggers([(await c.setTriggerEnabled(name, enabled)).trigger])),
-  );
-
   const routineName = (description: string) => RoutineName.describe(description);
   const callRoutine = server.registerTool(
     "call_routine",
@@ -542,7 +487,7 @@ export async function serveMcp(bodyName: string, toolSet: ToolSet): Promise<void
   );
   const unbindRoutine = server.registerTool(
     "unbind_routine",
-    { description: "", inputSchema: { name: BindingName.describe("The binding to remove") } },
+    { description: "", inputSchema: { name: UnbindInput.shape.name.describe("The binding to remove, or the name of a stored entry the body reported as reflex_error") } },
     ({ name }) => call(async (c) => json(await c.unbind(name))),
   );
 
@@ -564,10 +509,6 @@ export async function serveMcp(bodyName: string, toolSet: ToolSet): Promise<void
       wiki_read: wikiRead,
       wiki_list: wikiList,
       wiki_add_lesson: addLesson,
-      trigger_add: triggerAdd,
-      trigger_list: triggerList,
-      trigger_remove: triggerRemove,
-      trigger_set_enabled: triggerSetEnabled,
       call_routine: callRoutine,
       bind_routine: bindRoutine,
       list_routines: listRoutines,
@@ -581,8 +522,8 @@ export async function serveMcp(bodyName: string, toolSet: ToolSet): Promise<void
       setEnabled(tool, plan[name]!.enabled);
       tool.update({ description: plan[name]!.description });
     }
-    // Reflexes are triggers over routines: a body without triggers offers the action kind and none of the reflex fields.
-    bindRoutine.update({ paramsSchema: capabilities(features).triggers ? reflexBinding : actionBinding });
+    // A body without reflexes offers the action kind and none of the reflex fields.
+    bindRoutine.update({ paramsSchema: capabilities(features).reflexes ? reflexBinding : actionBinding });
     status.update({
       description: capabilities(features).milestones
         ? "Deaths and reconnects since the body started, and progress toward this body's milestones (graded from the server's statistics)."
@@ -591,7 +532,7 @@ export async function serveMcp(bodyName: string, toolSet: ToolSet): Promise<void
     runProgram.update({ description: runDescription(apiDoc) });
   }
 
-  for (const tool of [listKits, kitDocs, useKits, kitSave, kitRemove, kitSource, kitSearch, kitTry, kitVersions, kitRevert, wikiSearch, wikiRead, wikiList, addLesson, triggerAdd, triggerList, triggerRemove, triggerSetEnabled, callRoutine, bindRoutine, listRoutines, routineSave, routineSource, routineVersions, routineRevert, unbindRoutine]) tool.disable();
+  for (const tool of [listKits, kitDocs, useKits, kitSave, kitRemove, kitSource, kitSearch, kitTry, kitVersions, kitRevert, wikiSearch, wikiRead, wikiList, addLesson, callRoutine, bindRoutine, listRoutines, routineSave, routineSource, routineVersions, routineRevert, unbindRoutine]) tool.disable();
   // Ungated tools outside the core set: programs have notes, status(), and bot.chat.
   if (toolSet !== "full") for (const tool of [status, notesList, notesSet, notesDelete, sendChat]) tool.disable();
   await sync();

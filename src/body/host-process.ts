@@ -71,9 +71,9 @@ interface Run {
   startedAt: number;
   /** When the program's timeout aborts it, by the supervisor's clock. */
   timeoutAt: number;
-  /** The API request this run answers, absent for a trigger's. */
+  /** The API request this run answers, absent for a reflex's. */
   requestId?: number;
-  /** The trigger definition the run fires, absent for a program. */
+  /** The reflex definition the run fires, absent for a program. */
   trigger?: FiringOf;
   state: InFlight | Reported;
 }
@@ -93,13 +93,13 @@ interface InFlight {
 
 /**
  * Its end was reported and acked (the history wrote it or refused it); the host has yet to deliver
- * it: its request's answer, its trigger_finished. A death owes only that delivery.
+ * it: its request's answer, its reflex_finished. A death owes only that delivery.
  */
 interface Reported {
   kind: "reported";
   /** The answer its request gets: the run's result, or the 500 of a write the history refused. */
   answer: { status: number; body: unknown };
-  /** How its firing ended, for a trigger's run: the run's result, or the error of that write. */
+  /** How its firing ended, for a reflex's run: the run's result, or the error of that write. */
   end: FinishedEnd;
 }
 
@@ -143,7 +143,7 @@ export class HostProcess {
   #restartTimer: NodeJS.Timeout | undefined;
   /** What the host last reported of what a replacement carries over. */
   #carried: { deaths: number; reconnects: number; active?: string[]; triggerFailures?: Record<string, number> };
-  /** The trigger firing the last host ended in, until a replacement has counted it: its first trigger_counts, or its ready. */
+  /** The reflex firing the last host ended in, until a replacement has counted it: its first trigger_counts, or its ready. */
   #lostFiring: LostFiring | undefined;
   /** The host's messages are handled one at a time, in order: a history line is on disk before the response that follows it is relayed. */
   #handling = Promise.resolve();
@@ -355,8 +355,8 @@ export class HostProcess {
         return;
       case "run_delivered": {
         // Taken in with the delivery in one step: a host that dies after this owes nothing for the run, and it was counted once.
-        if (message.finished) this.#events.push("trigger_finished", message.finished);
-        if (message.disabled) this.#events.push("trigger_disabled", message.disabled);
+        if (message.finished) this.#events.push("reflex_finished", message.finished);
+        if (message.disabled) this.#events.push("reflex_disabled", message.disabled);
         if (message.triggerFailures) this.#carried = { ...this.#carried, triggerFailures: message.triggerFailures };
         const run = this.#runs.get(message.runId);
         if (run?.state.kind === "reported") this.#runs.delete(run.id);
@@ -364,8 +364,8 @@ export class HostProcess {
       }
       case "trigger_counts":
         // A firing that ended with no run behind it is taken in with its counts in one step, as a delivery is.
-        if (message.finished) this.#events.push("trigger_finished", message.finished);
-        if (message.disabled) this.#events.push("trigger_disabled", message.disabled);
+        if (message.finished) this.#events.push("reflex_finished", message.finished);
+        if (message.disabled) this.#events.push("reflex_disabled", message.disabled);
         this.#carried = { ...this.#carried, triggerFailures: message.triggerFailures };
         // This host's counts already hold the firing it was started to count (its Triggers counts it before sending any): no later host counts it again.
         this.#lostFiring = undefined;
@@ -375,7 +375,7 @@ export class HostProcess {
         return;
       case "state":
         this.#connected = message.connected;
-        // Trigger counts come only with a delivery or trigger_counts, in order with the ends they follow.
+        // Failure counts come only with a delivery or trigger_counts, in order with the ends they follow.
         this.#carried = { ...this.#carried, deaths: message.deaths, reconnects: message.reconnects, active: message.active };
         return;
       case "run_started":
@@ -441,7 +441,7 @@ export class HostProcess {
           this.#sendIfOpen(attempt, { kind: "run_ack", runId: message.runId, error });
         }
         if (!run || !flight) return;
-        // The host delivers the end after the ack (its request's answer, its trigger_finished); until it has, its death delivers it.
+        // The host delivers the end after the ack (its request's answer, its reflex_finished); until it has, its death delivers it.
         // A run that produced no result, or has nowhere to deliver one, is over.
         if (owed && (run.requestId !== undefined || run.trigger !== undefined)) run.state = owed;
         else this.#runs.delete(run.id);
@@ -509,9 +509,9 @@ export class HostProcess {
         ({ end, answer } = state);
       }
       if (run.trigger !== undefined) {
-        // As the host pushes it; the next host counts the firing in the trigger's failures.
+        // As the host pushes it; the next host counts the firing in the reflex's failures.
         this.#lostFiring = { ...run.trigger, status: end.status, ...(end.error !== undefined && { error: end.error }), durationMs: end.durationMs };
-        this.#events.push("trigger_finished", triggerFinished(run.trigger.name, end));
+        this.#events.push("reflex_finished", triggerFinished(run.trigger.name, end));
       }
       if (run.requestId !== undefined) answers.set(run.requestId, answer);
     }

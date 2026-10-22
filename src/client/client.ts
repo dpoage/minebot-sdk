@@ -10,7 +10,6 @@ import {
   type BindingsResponse,
   type BindResponse,
   type BodyFeatures,
-  type AddTriggerResponse,
   type Endpoint,
   type KitSearchHit,
   type KitVersion,
@@ -32,9 +31,6 @@ import {
   type SearchHit,
   type StatusResponse,
   type UnbindResponse,
-  type TriggerInfo,
-  type TriggerInput,
-  type TriggersResponse,
   type WaitRequest,
   type WaitResponse,
   type WikiMode,
@@ -214,23 +210,6 @@ export class BodyClient {
 
   addLesson(lesson: { title: string; tags?: string[]; body: string }): Promise<PageSummary> {
     return this.#request("POST", "/wiki/lessons", lesson);
-  }
-
-  triggers(): Promise<TriggersResponse> {
-    return this.#request("GET", "/triggers");
-  }
-
-  /** Validates and saves a trigger; one of the same name is replaced. The body checks every field. */
-  addTrigger(trigger: TriggerInput): Promise<AddTriggerResponse> {
-    return this.#request("POST", "/triggers", trigger);
-  }
-
-  removeTrigger(name: string): Promise<{ removed: string }> {
-    return this.#request("POST", "/triggers/remove", { name });
-  }
-
-  setTriggerEnabled(name: string, enabled: boolean): Promise<{ trigger: TriggerInfo }> {
-    return this.#request("POST", "/triggers/enabled", { name, enabled });
   }
 
   /** The routines saved in the library. */

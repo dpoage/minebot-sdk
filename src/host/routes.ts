@@ -24,14 +24,12 @@ import {
   programApiDoc,
   RemoveKitInput,
   RevertKitInput,
-  RemoveTriggerInput,
   RevertRoutineInput,
   RoutineSourceQuery,
   RoutineVersionsQuery,
   RunInput,
   SaveKitInput,
   SaveRoutineInput,
-  TriggerEnabledInput,
   TryKitInput,
   UnbindInput,
   UseKitsInput,
@@ -43,7 +41,6 @@ import {
   type KitsResponse,
   type SaveKitResponse,
   type SaveRoutineResponse,
-  type TriggersResponse,
 } from "../protocol/index.ts";
 import { HttpError, parse, parseBody } from "../protocol/request.ts";
 import { WikiDisabledError, WikiPageNotFoundError } from "../wiki/wiki.ts";
@@ -54,7 +51,7 @@ import type { Bindings } from "./bindings.ts";
 import { BindingInvalidError } from "./bindings.ts";
 import { RoutineSourceError, type RoutineLibrary } from "./routines/library.ts";
 import { RoutineNotFoundError } from "./routines/loader.ts";
-import { NameConflictError, TriggerInvalidError, TriggerLimitError, TriggerNotFoundError } from "./triggers.ts";
+import { NameConflictError, TriggerInvalidError, TriggerLimitError } from "./triggers.ts";
 
 export interface RequestContext {
   url: URL;
@@ -88,7 +85,7 @@ export interface ApiRequest {
 export function statusFor(err: unknown): number {
   if (err instanceof HttpError) return err.status;
   if (err instanceof BusyError || err instanceof NoteLimitError || err instanceof TriggerLimitError || err instanceof NameConflictError) return 409;
-  if (err instanceof TriggerNotFoundError || err instanceof RoutineNotFoundError) return 404;
+  if (err instanceof RoutineNotFoundError) return 404;
   if (err instanceof TriggerInvalidError || err instanceof BindingInvalidError) return 400;
   if (err instanceof NotConnectedError) return 503;
   if (err instanceof WikiDisabledError) return 403;
@@ -141,10 +138,6 @@ export interface RouteDeps {
 export function bodyRoutes({ body, kits: host, library, syncKits, saveKit, revertKit, recorder, routines }: RouteDeps): Route[] {
   function kitsResponse(): KitsResponse {
     return { kits: host.info(), active: host.active, locked: host.locked };
-  }
-
-  function triggersResponse(): TriggersResponse {
-    return { triggers: body.triggers?.list() ?? [] };
   }
 
   return [
@@ -316,32 +309,6 @@ export function bodyRoutes({ body, kits: host, library, syncKits, saveKit, rever
         const { source, action, args, timeoutMs } = parse(TryKitInput, await read());
         const code = `return await kits.try(${JSON.stringify(source)}, ${JSON.stringify({ action, args })});`;
         return recorder.record({ code, timeoutMs, requestId }, () => body.run(code, timeoutMs));
-      },
-    },
-    { method: "GET", path: "/triggers", capability: "triggers", handler: () => triggersResponse() },
-    {
-      method: "POST",
-      path: "/triggers",
-      capability: "triggers",
-      handler: async ({ read }) => body.triggers!.add(await read()),
-    },
-    {
-      method: "POST",
-      path: "/triggers/remove",
-      capability: "triggers",
-      handler: async ({ read }) => {
-        const { name } = parse(RemoveTriggerInput, await read());
-        if (!body.triggers!.remove(name)) throw new HttpError(404, `no trigger "${name}"`);
-        return { removed: name };
-      },
-    },
-    {
-      method: "POST",
-      path: "/triggers/enabled",
-      capability: "triggers",
-      handler: async ({ read }) => {
-        const { name, enabled } = parse(TriggerEnabledInput, await read());
-        return { trigger: body.triggers!.setEnabled(name, enabled) };
       },
     },
     { method: "GET", path: "/routines", capability: "routines", handler: () => ({ routines: routines!.library.list() }) },

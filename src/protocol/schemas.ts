@@ -3,6 +3,7 @@
 // client parses the endpoint file with them, so the three can never drift apart.
 import { z } from "zod";
 import { MilestoneSet } from "../milestones/milestones.ts";
+import { isReflexEvent } from "./event-filter.ts";
 import type { Endpoint } from "./types.ts";
 
 export const MAX_NOTES = 200;
@@ -14,7 +15,7 @@ export const NoteKey = z
 export const NoteText = z.string().min(1).max(MAX_NOTE_LENGTH);
 
 /** Features of a body that wiki content can depend on; the cut-block markers share these names. */
-export const WikiFeature = z.enum(["kits", "milestones", "agentKits", "triggers", "routines"]);
+export const WikiFeature = z.enum(["kits", "milestones", "agentKits", "reflexes", "routines"]);
 export type WikiFeature = z.infer<typeof WikiFeature>;
 
 /** Wiki page frontmatter. Pages that require a feature are hidden from bodies without it. */
@@ -155,47 +156,18 @@ export const LessonInput = z.object({
 export type LessonInput = z.input<typeof LessonInput>;
 
 export const MAX_TRIGGERS = 50;
-export const MAX_TRIGGER_CODE_LENGTH = 32 * 1024;
 export const DEFAULT_TRIGGER_COOLDOWN_MS = 1000;
 export const DEFAULT_TRIGGER_TIMEOUT_MS = 30_000;
-/** A trigger that fails this many times in a row disables itself. */
+/** A reflex that fails this many times in a row disables itself. */
 export const MAX_TRIGGER_FAILURES = 3;
 
-export const TriggerName = z
+/**
+ * A name the reflex store may hold. It is wider than a binding's: an entry saved before reflexes
+ * can have a dot, and `POST /unbind` must be able to name it to delete it.
+ */
+export const StoredName = z
   .string()
   .regex(/^[a-z0-9][a-z0-9._-]{0,47}$/, "use 1-48 lowercase letters, digits, and . _ -; start with a letter or digit");
-
-/** Body of `POST /triggers`; the `trigger_add` MCP tool takes the same fields (`cooldownMs` is `cooldown_ms` there). */
-export const TriggerInput = z.object({
-  name: TriggerName,
-  /** Event types that fire the trigger; any of them matches. A trigger cannot listen to `trigger_*` events. */
-  on: z
-    .array(z.string().min(1).max(64))
-    .min(1)
-    .max(16)
-    .refine((types) => !types.some((type) => type.startsWith("trigger_")), "a trigger cannot listen to trigger events"),
-  from: WaitInput.shape.from,
-  match: WaitInput.shape.match,
-  /** A JavaScript expression over `event` and `bot`; the trigger fires only when it is truthy. */
-  when: z.string().min(1).max(2000).optional(),
-  /** Program source, run with the usual globals plus `event`. */
-  run: z.string().min(1).max(MAX_TRIGGER_CODE_LENGTH, "trigger code is limited to 32 KiB"),
-  /** Minimum time between two firings of this trigger. */
-  cooldownMs: z.number().int().nonnegative().max(60 * 60_000).default(DEFAULT_TRIGGER_COOLDOWN_MS),
-  timeoutMs: z.number().int().positive().max(MAX_TIMEOUT_MS).default(DEFAULT_TRIGGER_TIMEOUT_MS),
-  enabled: z.boolean().default(true),
-  /** Abort the running program when the trigger fires; the firing runs once that program has ended. */
-  preempt: z.boolean().default(false),
-  /** Order of waiting triggers, highest first; a preempting trigger never aborts a running trigger of equal or higher priority. */
-  priority: z.number().int().min(-100).max(100).default(0),
-});
-export type TriggerInput = z.input<typeof TriggerInput>;
-
-/** Body of `POST /triggers/remove`. */
-export const RemoveTriggerInput = z.object({ name: TriggerName });
-
-/** Body of `POST /triggers/enabled`. */
-export const TriggerEnabledInput = z.object({ name: TriggerName, enabled: z.boolean() });
 
 /** Body of `POST /routines/save`. */
 export const SaveRoutineInput = z.object({ name: RoutineName, source: RoutineSource });
@@ -210,10 +182,31 @@ export const RoutineVersionsQuery = z.object({ name: RoutineName });
 export const RevertRoutineInput = z.object({ name: RoutineName, version: z.number().int().positive() });
 
 /**
- * A reflex: a saved routine that fires on events, with a trigger's fields and defaults in place of
- * its `run` program. The routine's default export is called with `(ctx, { event })`.
+ * A reflex: a saved routine that fires when events arrive. The routine's default export is called
+ * with `(ctx, { event })`; `bot.on` handlers it adds are its own.
  */
-export const ReflexInput = TriggerInput.omit({ name: true, run: true }).extend({ name: BindingName, routine: RoutineName });
+export const ReflexInput = z.object({
+  name: BindingName,
+  routine: RoutineName,
+  /** Event types that fire the reflex; any of them matches. A reflex cannot listen to `reflex_*` events. */
+  on: z
+    .array(z.string().min(1).max(64))
+    .min(1)
+    .max(16)
+    .refine((types) => !types.some(isReflexEvent), "a reflex cannot listen to reflex events"),
+  from: WaitInput.shape.from,
+  match: WaitInput.shape.match,
+  /** A JavaScript expression over `event` and `bot`; the reflex fires only when it is truthy. */
+  when: z.string().min(1).max(2000).optional(),
+  /** Minimum time between two firings of this reflex. */
+  cooldownMs: z.number().int().nonnegative().max(60 * 60_000).default(DEFAULT_TRIGGER_COOLDOWN_MS),
+  timeoutMs: z.number().int().positive().max(MAX_TIMEOUT_MS).default(DEFAULT_TRIGGER_TIMEOUT_MS),
+  enabled: z.boolean().default(true),
+  /** Abort the running run when the reflex fires; the firing runs once that run has ended. */
+  preempt: z.boolean().default(false),
+  /** Order of waiting reflexes, highest first; a preempting reflex never aborts a running reflex of equal or higher priority. */
+  priority: z.number().int().min(-100).max(100).default(0),
+});
 export type ReflexInput = z.infer<typeof ReflexInput>;
 
 /**
@@ -226,8 +219,8 @@ export const BindInput = z.discriminatedUnion("kind", [
 ]);
 export type BindInput = z.infer<typeof BindInput>;
 
-/** Body of `POST /unbind`. */
-export const UnbindInput = z.object({ name: BindingName });
+/** Body of `POST /unbind`: any name the store holds (see `StoredName`). */
+export const UnbindInput = z.object({ name: StoredName });
 
 /** Body of `POST /call`: calls the action bound to `name`. `args` default to `{}`; `timeoutMs` as for `POST /run`. */
 export const CallInput = z.object({

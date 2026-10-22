@@ -174,7 +174,6 @@ function globalsBlock(features: BodyFeatures, active: readonly string[]): string
     wiki: CAPABILITY_GATES.wiki(features),
     lessons: CAPABILITY_GATES.lessons(features),
     milestones: CAPABILITY_GATES.milestones(features),
-    triggers: CAPABILITY_GATES.triggers(features),
   };
   const out: string[] = [
     "  /** The mineflayer Bot. The pathfinder plugin is loaded: bot.pathfinder.goto(goal). */",
@@ -228,18 +227,6 @@ function globalsBlock(features: BodyFeatures, active: readonly string[]): string
     ];
     if (caps.lessons) wiki.push("    addLesson(lesson: { title: string; tags?: string[]; body: string }): Promise<unknown>;");
     out.push("  /** Notes on mechanics, flows, and quirks. */", `  const wiki: {\n${wiki.join("\n")}\n  };`);
-  }
-  if (caps.triggers) {
-    out.push(
-      "  /** Reflexes the body runs when an event arrives; they persist across body restarts. */",
-      "  const triggers: {",
-      "    add(trigger: { name: string; on: string[]; run: string; from?: string; match?: string; when?: string; cooldownMs?: number; timeoutMs?: number; enabled?: boolean; preempt?: boolean; priority?: number }): Promise<unknown>;",
-      "    remove(name: string): Promise<unknown>;",
-      "    enable(name: string): Promise<unknown>;",
-      "    disable(name: string): Promise<unknown>;",
-      "    list(): unknown[];",
-      "  };",
-    );
   }
   return `declare global {\n${out.join("\n")}\n}\n`;
 }

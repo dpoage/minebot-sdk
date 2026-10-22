@@ -50,7 +50,7 @@ export interface DaemonOptions {
   agentKits: boolean;
   /** Where agents' kits are written; default: the state directory's agent-kits/. */
   agentKitsDir?: string;
-  /** Let agents register triggers: programs the body runs when an event arrives. Default: true. */
+  /** Let agents bind reflexes: routines the body runs when an event arrives. Default: true. A body without routines offers none either way. */
   triggers?: boolean;
   /** Let agents keep routines: modules they save, bind to names, and call. Default: true. */
   routines?: boolean;

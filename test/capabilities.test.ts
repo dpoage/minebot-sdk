@@ -7,7 +7,7 @@ import { CAPABILITIES, capabilities, CAPABILITY_GATES, programApiDoc, type BodyF
 import { wikiView } from "../src/wiki/access.ts";
 
 /** A body with every capability on: the baseline to switch one off. */
-const EVERYTHING: BodyFeatures = { kits: ["move", "gatherer"], kitsLocked: false, agentKits: true, wiki: "write", lessons: true, milestones: true, triggers: true, routines: true };
+const EVERYTHING: BodyFeatures = { kits: ["move", "gatherer"], kitsLocked: false, agentKits: true, wiki: "write", lessons: true, milestones: true, reflexes: true, routines: true };
 
 /** Words an agent must not see when the capability is off. */
 const FORBIDDEN_WORDS: Record<Capability, RegExp> = {
@@ -17,7 +17,7 @@ const FORBIDDEN_WORDS: Record<Capability, RegExp> = {
   wiki: /\bwiki\b|\blessons?\b/i,
   lessons: /\blearned\b|add a lesson|wiki lesson|wiki_add_lesson|addLesson/i,
   milestones: /\bmilestones?\b|minebot milestones|body's milestones/i,
-  triggers: /\btriggers?\b|trigger_|--no-triggers|\breflexes?\b/i,
+  reflexes: /\breflexes?\b|reflex_|--no-reflexes|\btriggers?\b|trigger_|--no-triggers/i,
   routines: /\broutines?\b|call_routine|bind_routine|--no-routines|\/bind\b|\/call\b|defineRoutine/i,
 };
 
@@ -43,8 +43,8 @@ function withOff(capability: Capability): BodyFeatures {
     case "milestones":
       features.milestones = false;
       break;
-    case "triggers":
-      features.triggers = false;
+    case "reflexes":
+      features.reflexes = false;
       break;
     case "routines":
       features.routines = false;
@@ -62,10 +62,10 @@ describe("the capability table", () => {
       wiki: true,
       lessons: true,
       milestones: true,
-      triggers: true,
+      reflexes: true,
       routines: true,
     });
-    assert.deepEqual(CAPABILITIES, ["kits", "kitSwitching", "agentKits", "wiki", "lessons", "milestones", "triggers", "routines"]);
+    assert.deepEqual(CAPABILITIES, ["kits", "kitSwitching", "agentKits", "wiki", "lessons", "milestones", "reflexes", "routines"]);
   });
 
   it("turns each capability off, alone, in every surface", () => {
@@ -95,7 +95,7 @@ describe("the capability table", () => {
 
       // The wiki's view of the body: the gated features map straight onto it.
       const view = wikiView(features);
-      if (capability === "kits" || capability === "milestones" || capability === "agentKits" || capability === "triggers" || capability === "routines") {
+      if (capability === "kits" || capability === "milestones" || capability === "agentKits" || capability === "reflexes" || capability === "routines") {
         assert.equal(view[capability], false, `wikiView leaks ${capability}`);
       }
     }
@@ -125,21 +125,21 @@ describe("the capability table", () => {
     }
     assert.ok(gated.some((match) => match[1] === "/kits"), "kit routes are gated");
     assert.ok(gated.some((match) => match[1]!.startsWith("/wiki/")), "wiki routes are gated");
-    assert.ok(gated.some((match) => match[1]!.startsWith("/triggers")), "trigger routes are gated");
+    assert.ok(!routes.some((match) => match[1]!.startsWith("/triggers")), "no route of the code triggers is left");
     // The CLI's feature commands come from the same gates.
     const cli = readFileSync(new URL("../src/cli.ts", import.meta.url), "utf8");
-    assert.match(cli, /const FEATURE_COMMANDS: Record<string, \(features: BodyFeatures\) => boolean> = \{\s*kits: CAPABILITY_GATES\.kits,\s*wiki: CAPABILITY_GATES\.wiki,\s*milestones: CAPABILITY_GATES\.milestones,\s*triggers: CAPABILITY_GATES\.triggers,\s*routines: CAPABILITY_GATES\.routines,\s*bind: CAPABILITY_GATES\.routines,\s*unbind: CAPABILITY_GATES\.routines,\s*call: CAPABILITY_GATES\.routines,\s*\};/);
+    assert.match(cli, /const FEATURE_COMMANDS: Record<string, \(features: BodyFeatures\) => boolean> = \{\s*kits: CAPABILITY_GATES\.kits,\s*wiki: CAPABILITY_GATES\.wiki,\s*milestones: CAPABILITY_GATES\.milestones,\s*routines: CAPABILITY_GATES\.routines,\s*bind: CAPABILITY_GATES\.routines,\s*unbind: CAPABILITY_GATES\.routines,\s*call: CAPABILITY_GATES\.routines,\s*\};/);
   });
 
-  it("describes reflexes in bind_routine exactly when the body offers triggers, and the routine tools exactly when it offers routines", () => {
+  it("describes reflexes in bind_routine exactly when the body offers reflexes, and the routine tools exactly when it offers routines", () => {
     for (const toolSet of TOOL_SETS) {
-      const withTriggers = toolPlan(EVERYTHING, toolSet);
-      const withoutTriggers = toolPlan(withOff("triggers"), toolSet);
-      assert.match(withTriggers.bind_routine!.description, /reflex/);
-      assert.doesNotMatch(withoutTriggers.bind_routine!.description, /reflex|trigger|cooldown|preempt/i);
-      assert.equal(withoutTriggers.bind_routine!.enabled, true, "bind_routine stays for actions");
+      const withReflexes = toolPlan(EVERYTHING, toolSet);
+      const withoutReflexes = toolPlan(withOff("reflexes"), toolSet);
+      assert.match(withReflexes.bind_routine!.description, /reflex/);
+      assert.doesNotMatch(withoutReflexes.bind_routine!.description, /reflex|trigger|cooldown|preempt/i);
+      assert.equal(withoutReflexes.bind_routine!.enabled, true, "bind_routine stays for actions");
       for (const tool of ROUTINE_TOOLS) {
-        assert.equal(withTriggers[tool]!.enabled, toolSet === "full" || tool === "bind_routine" || tool === "call_routine", `${tool} in the ${toolSet} set`);
+        assert.equal(withReflexes[tool]!.enabled, toolSet === "full" || tool === "bind_routine" || tool === "call_routine", `${tool} in the ${toolSet} set`);
         assert.equal(toolPlan(withOff("routines"), toolSet)[tool]!.enabled, false, `${tool} must be off without routines`);
       }
     }
@@ -205,10 +205,6 @@ function capabilityOf(tool: string): Capability {
     wiki_read: "wiki",
     wiki_list: "wiki",
     wiki_add_lesson: "lessons",
-    trigger_add: "triggers",
-    trigger_list: "triggers",
-    trigger_remove: "triggers",
-    trigger_set_enabled: "triggers",
     ...Object.fromEntries(ROUTINE_TOOLS.map((routineTool) => [routineTool, "routines" as const])),
   };
   const capability = byTool[tool];

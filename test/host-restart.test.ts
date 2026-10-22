@@ -11,7 +11,7 @@ import path from "node:path";
 import { after, describe, it } from "node:test";
 import { setImmediate, setTimeout as sleep } from "node:timers/promises";
 import type { FromHost, HostInit } from "../src/protocol/host.ts";
-import type { BodyEvent, ReflexBindingInfo, RunResult, TriggerInfo } from "../src/protocol/index.ts";
+import type { BodyEvent, ReflexBindingInfo, RunResult } from "../src/protocol/index.ts";
 
 const ROOT = mkdtempSync(path.join(tmpdir(), "minebot-host-restart-"));
 process.env.MINEBOT_RUNTIME_DIR = path.join(ROOT, "runtime");
@@ -46,13 +46,11 @@ interface Script {
   trigger?: { mode: string; timeoutMs: number };
   spawnLog?: string;
   initLog?: string;
-  /** The one trigger of the trigger fixture (TRIGGER_FIXTURE). */
+  /** The one reflex of the reflex fixture (TRIGGER_FIXTURE). */
   reflex?: { name: string; on: string[]; run: string; when?: string; timeoutMs: number; cooldownMs: number };
-  /** The trigger fixture stores its definition as a reflex (see the fixture). */
-  asReflex?: boolean;
-  /** The trigger fixture's first host SIGKILLs itself right after the message carrying a trigger_finished leaves it. */
+  /** The reflex fixture's first host SIGKILLs itself right after the message carrying a reflex_finished leaves it. */
   killAfterFinished?: boolean;
-  /** The trigger fixture's first host SIGKILLs itself as the answer to a run's end reaches it. */
+  /** The reflex fixture's first host SIGKILLs itself as the answer to a run's end reaches it. */
   killOnEndAck?: boolean;
   /** The trigger fixture's n-th host SIGKILLs itself once its Triggers sent their counts, before it is ready. */
   dieBeforeReadyOnSpawn?: number;
@@ -186,12 +184,12 @@ describe("restart: a program that does not stop ends with its host", () => {
     assert.equal(eventsOf(t, "disconnected").length, 1);
   });
 
-  it("ends a trigger's run the same way, with a trigger_finished and no program_finished", { timeout: 20_000 }, async () => {
+  it("ends a reflex's run the same way, with a reflex_finished and no program_finished", { timeout: 20_000 }, async () => {
     const t = await scripted({ trigger: { mode: "block", timeoutMs: 200 } });
-    const finished = await waitFor(t, "trigger_finished");
+    const finished = await waitFor(t, "reflex_finished");
     await waitFor(t, "disconnected");
     assert.deepEqual(finished.data, { name: "t1", status: "timeout", durationMs: finished.data.durationMs, error: restartedError(CAUSE) });
-    assert.equal(eventsOf(t, "trigger_finished").length, 1);
+    assert.equal(eventsOf(t, "reflex_finished").length, 1);
     assert.equal(eventsOf(t, "program_finished").length, 0);
   });
 
@@ -400,105 +398,33 @@ describe("restart: what a replacement host carries over", () => {
   });
 });
 
-describe("restart: a trigger whose firing ends with its host", () => {
+describe("restart: a reflex's end when the host dies around it", () => {
   const reflex = (code: string) => ({ name: "reflex", on: ["fire"], run: code, timeoutMs: 200, cooldownMs: 0 });
 
-  it("has the trigger_finished carry the logs the host reported, cut as the host cuts them", { timeout: 20_000 }, async () => {
-    const t = await scripted({ reflex: reflex(`log("reflex-log"); log(".".repeat(${MAX_EVENT_LOGS})); await new Promise(() => {});`) }, TRIGGER_FIXTURE);
+  it("emits no second reflex_finished when the host dies idle after an ok firing", { timeout: 20_000 }, async () => {
+    const t = await scripted({ reflex: reflex("return 1;") }, TRIGGER_FIXTURE);
     t.events.push("fire");
-    const finished = await waitFor(t, "trigger_finished");
-    await waitFor(t, "disconnected");
-    assert.deepEqual(finished.data, {
-      name: "reflex",
-      status: "timeout",
-      durationMs: finished.data.durationMs,
-      error: restartedError(CAUSE),
-      logs: `reflex-log\n${".".repeat(MAX_EVENT_LOGS)}`.slice(0, MAX_EVENT_LOGS),
-    });
-  });
-
-  it("counts the firing toward the trigger's failures, so a trigger that never stops is disabled after 3 and restarts the host 3 times", { timeout: 40_000 }, async () => {
-    const t = await scripted({ reflex: reflex("await new Promise(() => {});") }, TRIGGER_FIXTURE);
-    for (let firing = 1; firing <= 4; firing++) {
-      // A host is up to hear the event.
-      await get(t, "/ping");
-      const since = t.events.since(0).next;
-      t.events.push("fire");
-      if (firing <= 3) await waitFor(t, "disconnected", since);
-    }
-    // A fourth firing would have started by now.
-    await sleep(1_000);
-    assert.equal(eventsOf(t, "trigger_fired").length, 3);
-    assert.equal(eventsOf(t, "disconnected").length, 3);
-    const reason = `failed 3 times in a row; last: ${restartedError(CAUSE)}`;
-    assert.deepEqual(eventsOf(t, "trigger_disabled").map((e) => e.data), [{ name: "reflex", failures: 3, reason }]);
-    const { body } = await get(t, "/triggers");
-    const listed = body as { triggers: TriggerInfo[] }; // the trigger fixture's /triggers
-    const [info] = listed.triggers;
-    assert.deepEqual(
-      { enabled: info!.enabled, failures: info!.failures, disabledReason: info!.disabledReason, lastStatus: info!.lastStatus, lastError: info!.lastError, fired: info!.fired },
-      { enabled: false, failures: 3, disabledReason: reason, lastStatus: "timeout", lastError: restartedError(CAUSE), fired: 0 },
-    );
-  });
-
-  it("does not charge a trigger replaced during the firing that ended its host", { timeout: 20_000 }, async () => {
-    const t = await scripted({ reflex: { ...reflex("await new Promise(() => {});"), timeoutMs: 1_000 } }, TRIGGER_FIXTURE);
-    t.events.push("fire");
-    await waitFor(t, "trigger_fired");
-    const replaced = await t.host.forward({ method: "POST", url: "/triggers", body: Buffer.from(JSON.stringify(reflex("return 2;"))), tooLarge: false });
-    assert.equal((replaced.body as { replaced: boolean }).replaced, true); // the trigger fixture answers with Triggers.add's response
-    await waitFor(t, "disconnected");
-    const [info] = ((await get(t, "/triggers")).body as { triggers: TriggerInfo[] }).triggers;
-    assert.deepEqual({ run: info!.run, failures: info!.failures, lastStatus: info!.lastStatus }, { run: "return 2;", failures: 0, lastStatus: undefined });
-  });
-
-  it("counts the firing once: a host that dies idle after it does not count it again", { timeout: 30_000 }, async () => {
-    const t = await scripted({ reflex: reflex("await new Promise(() => {});") }, TRIGGER_FIXTURE);
-    const failures = async () => {
-      const [info] = ((await get(t, "/triggers")).body as { triggers: TriggerInfo[] }).triggers;
-      return info!.failures;
-    };
-    t.events.push("fire");
-    await waitFor(t, "disconnected");
-    assert.equal(await failures(), 1);
-    await killHost(t);
-    assert.equal(await failures(), 1, "the replacement of an idle host counted the old firing again");
-  });
-
-  it("emits no second trigger_finished when the host dies idle after an ok firing", { timeout: 20_000 }, async () => {
-    const t = await scripted({ reflex: reflex("return 1;"), asReflex: true }, TRIGGER_FIXTURE);
-    t.events.push("fire");
-    await waitFor(t, "trigger_finished");
+    await waitFor(t, "reflex_finished");
     await killHost(t);
     await get(t, "/ping");
-    assert.deepEqual(eventsOf(t, "trigger_finished").map((e) => e.data.status), ["ok"], "the idle host's death delivered the firing again");
+    assert.deepEqual(eventsOf(t, "reflex_finished").map((e) => e.data.status), ["ok"], "the idle host's death delivered the firing again");
   });
 
-  it("leaves one trigger_finished, and the firing counted once, when the host dies right after delivering it", { timeout: 20_000 }, async () => {
-    // A firing that times out and settles counts; the trigger has failed once already.
-    const t = await scripted({ reflex: { ...reflex("try { await ctx.sleep(100000); } catch {}"), timeoutMs: 100 }, killAfterFinished: true, asReflex: true }, TRIGGER_FIXTURE, { triggerFailures: { reflex: 1 } });
+  it("leaves one reflex_finished, and the firing counted once, when the host dies right after delivering it", { timeout: 20_000 }, async () => {
+    // A firing that times out and settles counts; the reflex has failed once already.
+    const t = await scripted({ reflex: { ...reflex("try { await ctx.sleep(100000); } catch {}"), timeoutMs: 100 }, killAfterFinished: true }, TRIGGER_FIXTURE, { triggerFailures: { reflex: 1 } });
     t.events.push("fire");
     await waitFor(t, "disconnected");
-    const [info] = ((await get(t, "/triggers")).body as { triggers: TriggerInfo[] }).triggers; // the replacement host's
-    assert.deepEqual(eventsOf(t, "trigger_finished").map((e) => e.data.status), ["timeout"]);
+    const [info] = ((await get(t, "/triggers")).body as { triggers: ReflexBindingInfo[] }).triggers; // the replacement host's
+    assert.deepEqual(eventsOf(t, "reflex_finished").map((e) => e.data.status), ["timeout"]);
     assert.equal(info!.failures, 2, "the firing was not counted exactly once");
   });
 
-  it("logs the disable once, with one trigger_finished, when the host dies right after delivering the firing that disabled the trigger", { timeout: 20_000 }, async () => {
-    const t = await scripted({ reflex: { ...reflex("try { await sleep(100000); } catch {}"), timeoutMs: 100 }, killAfterFinished: true }, TRIGGER_FIXTURE, { triggerFailures: { reflex: 2 } });
-    t.events.push("fire");
-    await waitFor(t, "disconnected");
-    const [info] = ((await get(t, "/triggers")).body as { triggers: TriggerInfo[] }).triggers; // the replacement host's
-    assert.deepEqual(eventsOf(t, "trigger_finished").map((e) => e.data.status), ["timeout"]);
-    assert.deepEqual(eventsOf(t, "trigger_disabled").map((e) => e.data.failures), [3], "the disable the firing caused was lost or logged twice");
-    assert.deepEqual({ enabled: info!.enabled, failures: info!.failures }, { enabled: false, failures: 3 });
-  });
-
-  it("has the supervisor build, for a host that died before delivering a firing, the trigger_finished a live host builds for the same end", { timeout: 30_000 }, async () => {
+  it("has the supervisor build, for a host that died before delivering a firing, the reflex_finished a live host builds for the same end", { timeout: 30_000 }, async () => {
     const finishedOf = async (killOnEndAck: boolean, wrap?: (history: History) => History) => {
-      const t = await scripted({ reflex: reflex(`ctx.log("same end"); return 1;`), killOnEndAck, asReflex: true }, TRIGGER_FIXTURE, {}, wrap);
+      const t = await scripted({ reflex: reflex(`ctx.log("same end"); return 1;`), killOnEndAck }, TRIGGER_FIXTURE, {}, wrap);
       t.events.push("fire");
-      const { data } = await waitFor(t, "trigger_finished");
+      const { data } = await waitFor(t, "reflex_finished");
       if (killOnEndAck) await waitFor(t, "disconnected");
       else assert.equal(eventsOf(t, "disconnected").length, 0);
       const { durationMs, ...rest } = data;
@@ -515,78 +441,39 @@ describe("restart: a trigger whose firing ends with its host", () => {
   });
 
   describe("the streak a replacement starts from is the dead host's, with nothing sent after the end", () => {
-    /** Kills the host by the pid it had before the firing, with no request in between, and reads the replacement's trigger. */
-    async function idleDeath(t: Scripted, pid: number): Promise<TriggerInfo> {
+    /** Kills the host by the pid it had before the firing, with no request in between, and reads the replacement's reflex. */
+    async function idleDeath(t: Scripted, pid: number): Promise<ReflexBindingInfo> {
       const since = t.events.since(0).next;
       process.kill(pid, "SIGKILL");
       await waitFor(t, "disconnected", since);
-      const [info] = ((await get(t, "/triggers")).body as { triggers: TriggerInfo[] }).triggers;
+      const [info] = ((await get(t, "/triggers")).body as { triggers: ReflexBindingInfo[] }).triggers;
       return info!;
     }
 
-    it("after a firing whose start the history refused", { timeout: 20_000 }, async () => {
-      const t = await scripted({ reflex: reflex("return 1;") }, TRIGGER_FIXTURE, { triggerFailures: { reflex: 1 } }, refusingStarts);
-      const pid = await pidOf(t);
-      t.events.push("fire");
-      await waitFor(t, "trigger_finished");
-      const info = await idleDeath(t, pid);
-      assert.deepEqual(eventsOf(t, "trigger_finished").map(({ data: { durationMs: _, ...rest } }) => rest), [{ name: "reflex", status: "error", error: "start refused" }]);
-      // Only the streak carries over a restart (PD5).
-      assert.equal(info.failures, 2, "the refused firing's count did not reach the supervisor");
-    });
-
-    it("after a delivered firing", { timeout: 20_000 }, async () => {
-      const t = await scripted({ reflex: { ...reflex("try { await sleep(100000); } catch {}"), timeoutMs: 100 } }, TRIGGER_FIXTURE, { triggerFailures: { reflex: 1 } });
-      const pid = await pidOf(t);
-      t.events.push("fire");
-      await waitFor(t, "trigger_finished");
-      await sleep(300);
-      const info = await idleDeath(t, pid);
-      assert.deepEqual(eventsOf(t, "trigger_finished").map((e) => e.data.status), ["timeout"]);
-      assert.equal(info.failures, 2, "the delivered firing's count did not reach the supervisor");
-    });
-
-    it("after the trigger was saved again, which starts its streak over", { timeout: 20_000 }, async () => {
-      const t = await scripted({ reflex: reflex("return 1;") }, TRIGGER_FIXTURE, { triggerFailures: { reflex: 2 } });
-      const pid = await pidOf(t);
-      await t.host.forward({ method: "POST", url: "/triggers", body: Buffer.from(JSON.stringify(reflex("return 2;"))), tooLarge: false });
-      const info = await idleDeath(t, pid);
-      assert.deepEqual({ run: info.run, failures: info.failures }, { run: "return 2;", failures: 0 });
-    });
-
-    it("after the trigger was enabled again, which starts its streak over", { timeout: 20_000 }, async () => {
-      const t = await scripted({ reflex: reflex("return 1;") }, TRIGGER_FIXTURE, { triggerFailures: { reflex: 2 } });
-      const pid = await pidOf(t);
-      await t.host.forward({ method: "POST", url: "/triggers/enabled", body: Buffer.from(JSON.stringify({ name: "reflex", enabled: true })), tooLarge: false });
-      const info = await idleDeath(t, pid);
-      assert.deepEqual({ enabled: info.enabled, failures: info.failures }, { enabled: true, failures: 0 });
-    });
-
     // A firing with no run behind it reaches the supervisor in one message with its counts: a death right after it cannot split them.
     const runLess = {
-      "its start refused by the history": { run: "return 1;", when: undefined, wrap: refusingStarts, error: /^start refused$/, asReflex: true },
-      "its `when` throwing": { run: "return 1;", when: "event.data.nope.x", wrap: undefined, error: /^when: /, asReflex: undefined },
+      "its start refused by the history": { run: "return 1;", when: undefined, wrap: refusingStarts, error: /^start refused$/ },
     };
     for (const [name, end] of Object.entries(runLess)) {
-      it(`after a firing with no run, ${name}, with the host killed right after the message carrying its trigger_finished`, { timeout: 20_000 }, async () => {
+      it(`after a firing with no run, ${name}, with the host killed right after the message carrying its reflex_finished`, { timeout: 20_000 }, async () => {
         const t = await scripted(
-          { reflex: { ...reflex(end.run), ...(end.when !== undefined && { when: end.when }) }, killAfterFinished: true, asReflex: end.asReflex },
+          { reflex: { ...reflex(end.run), ...(end.when !== undefined && { when: end.when }) }, killAfterFinished: true },
           TRIGGER_FIXTURE,
           { triggerFailures: { reflex: 1 } },
           end.wrap,
         );
         t.events.push("fire");
         await waitFor(t, "disconnected");
-        const [info] = ((await get(t, "/triggers")).body as { triggers: TriggerInfo[] }).triggers; // the replacement host's
-        const finished = eventsOf(t, "trigger_finished");
+        const [info] = ((await get(t, "/triggers")).body as { triggers: ReflexBindingInfo[] }).triggers; // the replacement host's
+        const finished = eventsOf(t, "reflex_finished");
         assert.deepEqual(finished.map((e) => e.data.status), ["error"]);
         assert.match(String(finished[0]!.data.error), end.error);
-        assert.equal(info!.failures, 2, "the firing's count was split from its trigger_finished");
+        assert.equal(info!.failures, 2, "the firing's count was split from its reflex_finished");
       });
     }
 
     it("after a replacement that counted the lost firing died before it was ready: the next host counts it once", { timeout: 30_000 }, async () => {
-      const t = await scripted({ reflex: reflex("await new Promise(() => {});"), dieBeforeReadyOnSpawn: 2, asReflex: true }, TRIGGER_FIXTURE, { triggerFailures: { reflex: 1 } });
+      const t = await scripted({ reflex: reflex("await new Promise(() => {});"), dieBeforeReadyOnSpawn: 2 }, TRIGGER_FIXTURE, { triggerFailures: { reflex: 1 } });
       t.events.push("fire");
       await waitFor(t, "disconnected");
       // The second host dies before ready (requests answer 503 until a host is); the third serves.
@@ -597,10 +484,10 @@ describe("restart: a trigger whose firing ends with its host", () => {
       }
       assert.equal(listed?.status, 200, "no host became ready");
       assert.equal(readFileSync(path.join(path.dirname(t.history), "spawns"), "utf8").trim().split("\n").length, 3);
-      const [info] = (listed!.body as { triggers: TriggerInfo[] }).triggers;
+      const [info] = (listed!.body as { triggers: ReflexBindingInfo[] }).triggers;
       assert.equal(info!.failures, 2, "the killed firing was counted twice");
-      assert.equal(eventsOf(t, "trigger_disabled").length, 0);
-      assert.equal(eventsOf(t, "trigger_finished").length, 1);
+      assert.equal(eventsOf(t, "reflex_disabled").length, 0);
+      assert.equal(eventsOf(t, "reflex_finished").length, 1);
     });
   });
 });
@@ -608,7 +495,7 @@ describe("restart: a trigger whose firing ends with its host", () => {
 describe("restart: what a run is owed follows its state", () => {
   it("never kills a run whose end waits behind a slow history write across its deadline", { timeout: 20_000 }, async () => {
     const history = new ProgramHistory({ file: path.join(ROOT, "slow-register.jsonl") });
-    // A disk this slow holds the register a POST /triggers sends during the program; the program's end, sent within its grace, queues behind it past the deadline.
+    // A disk this slow holds the register a reflex bind sends during the program; the program's end, sent within its grace, queues behind it past the deadline.
     const slow = {
       begin: history.begin.bind(history),
       register: async (...args: Parameters<typeof history.register>) => {
@@ -669,7 +556,7 @@ describe("restart: what a run is owed follows its state", () => {
           const late = death === "late at its deadline";
           // Late: it blocks past its 100 ms timeout and ends just as the deadline (900 ms) fires, the supervisor held up from 750 to 1000 ms.
           const code = late ? `${blocks(850)} return 1;` : "return 1;";
-          const t = await scripted({ reflex: { name: "reflex", on: ["fire"], run: code, timeoutMs: 100, cooldownMs: 0 }, killOnEndAck: !late, asReflex: true }, TRIGGER_FIXTURE, { triggerFailures: { reflex: 1 } }, refusingEnds);
+          const t = await scripted({ reflex: { name: "reflex", on: ["fire"], run: code, timeoutMs: 100, cooldownMs: 0 }, killOnEndAck: !late }, TRIGGER_FIXTURE, { triggerFailures: { reflex: 1 } }, refusingEnds);
           const request = kind === "request" ? t.host.forward({ method: "POST", url: "/call", body: Buffer.from(JSON.stringify({ source: code, timeoutMs: 100 })), tooLarge: false }) : undefined;
           if (kind === "trigger") t.events.push("fire");
           const acked = Number((await waitFor(t, "acked")).data.at);
@@ -684,13 +571,13 @@ describe("restart: what a run is owed follows its state", () => {
             assert.deepEqual(await request, { status: 500, body: { error: "disk full" } });
             // The host pushed it before it reported the end.
             assert.deepEqual(eventsOf(t, "program_finished").map((e) => e.data.status), ["ok"]);
-            assert.equal(eventsOf(t, "trigger_finished").length, 0);
+            assert.equal(eventsOf(t, "reflex_finished").length, 0);
             return;
           }
-          const finished = eventsOf(t, "trigger_finished").map(({ data: { durationMs: _, ...rest } }) => rest);
+          const finished = eventsOf(t, "reflex_finished").map(({ data: { durationMs: _, ...rest } }) => rest);
           assert.deepEqual(finished, [{ name: "reflex", status: "error", error: "disk full" }]);
           assert.equal(eventsOf(t, "program_finished").length, 0);
-          const [info] = ((await get(t, "/triggers")).body as { triggers: TriggerInfo[] }).triggers; // the replacement host's
+          const [info] = ((await get(t, "/triggers")).body as { triggers: ReflexBindingInfo[] }).triggers; // the replacement host's
           assert.deepEqual({ failures: info!.failures, lastStatus: info!.lastStatus, lastError: info!.lastError }, { failures: 2, lastStatus: "error", lastError: "disk full" });
         });
       }
@@ -712,7 +599,7 @@ describe("restart: every run in flight at its host's death ends once, with its r
     for (const [name, end] of Object.entries(cases) as [keyof typeof cases, (typeof cases)[keyof typeof cases]][]) {
       it(`${kind} run, ${name}`, { timeout: 20_000 }, async () => {
         // The trigger has failed once already: its end counts on, or resets, the streak.
-        const t = await scripted({ reflex: { name: "reflex", on: ["fire"], run: end.code, timeoutMs: 100, cooldownMs: 0 }, asReflex: true }, TRIGGER_FIXTURE, { triggerFailures: { reflex: 1 } });
+        const t = await scripted({ reflex: { name: "reflex", on: ["fire"], run: end.code, timeoutMs: 100, cooldownMs: 0 } }, TRIGGER_FIXTURE, { triggerFailures: { reflex: 1 } });
         const request =
           kind === "request" ? t.host.forward({ method: "POST", url: "/call", body: Buffer.from(JSON.stringify({ source: end.code, timeoutMs: 100 })), tooLarge: false }) : undefined;
         if (kind === "trigger") t.events.push("fire");
@@ -730,16 +617,16 @@ describe("restart: every run in flight at its host's death ends once, with its r
           assert.deepEqual(withoutDuration(answer.body).rest, { ...expected, ...(end.result !== undefined && { result: end.result }), logs: "" });
         }
         // program_finished carries the status alone, as the host pushes it.
-        const finished = eventsOf(t, kind === "request" ? "program_finished" : "trigger_finished");
+        const finished = eventsOf(t, kind === "request" ? "program_finished" : "reflex_finished");
         assert.deepEqual(finished.map(({ data: { durationMs: _, ...rest } }) => rest), [kind === "request" ? { status: end.status } : { name: "reflex", ...expected }]);
-        assert.equal(eventsOf(t, kind === "request" ? "trigger_finished" : "program_finished").length, 0);
+        assert.equal(eventsOf(t, kind === "request" ? "reflex_finished" : "program_finished").length, 0);
         assert.deepEqual(historyOf(t).map((line) => line.status), [end.status]);
         const reasons = eventsOf(t, "disconnected").map((e) => String(e.data.reason));
         assert.equal(reasons.length, 1);
         if (name === "killed") assert.equal(reasons[0], `bot host restarted: ${CAUSE}`);
         else assert.doesNotMatch(reasons[0]!, /did not stop/, "the host was restarted for a hang of a run that finished");
         if (kind === "trigger") {
-          const [info] = ((await get(t, "/triggers")).body as { triggers: TriggerInfo[] }).triggers; // the replacement host's
+          const [info] = ((await get(t, "/triggers")).body as { triggers: ReflexBindingInfo[] }).triggers; // the replacement host's
           assert.deepEqual({ failures: info!.failures, lastStatus: info!.lastStatus }, { failures: failuresAfter[name], lastStatus: end.status });
         }
       });
@@ -870,13 +757,12 @@ describe("restart: a run's start is recorded before its code may run", () => {
   });
 });
 
-// A reflex is a trigger whose body is a routine: the restart rules of "a trigger whose firing ends
-// with its host", over the trigger fixture with `asReflex` (its definition is stored with a
-// `routine`, and its firings run `reflex.run` as the stand-in routine). The real body's reflexes
-// are killed with their host in test/reflex.test.ts.
+// The restart rules of "a reflex's end when the host dies around it", over the reflex fixture: its
+// definition is stored with a `routine`, and its firings run `reflex.run` as the stand-in routine.
+// The real body's reflexes are killed with their host in test/reflex.test.ts.
 describe("restart: a reflex whose firing ends with its host", () => {
   const reflex = (code: string) => ({ name: "reflex", on: ["fire"], run: code, timeoutMs: 200, cooldownMs: 0 });
-  const scriptedReflex = (script: Script, carried: Partial<HostInit> = {}, wrap?: (history: History) => History) => scripted({ ...script, asReflex: true }, TRIGGER_FIXTURE, carried, wrap);
+  const scriptedReflex = (script: Script, carried: Partial<HostInit> = {}, wrap?: (history: History) => History) => scripted(script, TRIGGER_FIXTURE, carried, wrap);
   /** The reflexes the trigger fixture lists. */
   const reflexesOf = async (t: Scripted): Promise<ReflexBindingInfo[]> => ((await get(t, "/triggers")).body as { triggers: ReflexBindingInfo[] }).triggers;
 
@@ -889,10 +775,10 @@ describe("restart: a reflex whose firing ends with its host", () => {
     assert.equal("run" in stored.reflex!, false);
   });
 
-  it("has the trigger_finished carry the logs the host reported, cut as the host cuts them", { timeout: 20_000 }, async () => {
+  it("has the reflex_finished carry the logs the host reported, cut as the host cuts them", { timeout: 20_000 }, async () => {
     const t = await scriptedReflex({ reflex: reflex(`ctx.log("reflex-log"); ctx.log(".".repeat(${MAX_EVENT_LOGS})); await new Promise(() => {});`) });
     t.events.push("fire");
-    const finished = await waitFor(t, "trigger_finished");
+    const finished = await waitFor(t, "reflex_finished");
     await waitFor(t, "disconnected");
     assert.deepEqual(finished.data, {
       name: "reflex",
@@ -914,10 +800,10 @@ describe("restart: a reflex whose firing ends with its host", () => {
     }
     // A fourth firing would have started by now.
     await sleep(1_000);
-    assert.equal(eventsOf(t, "trigger_fired").length, 3);
+    assert.equal(eventsOf(t, "reflex_fired").length, 3);
     assert.equal(eventsOf(t, "disconnected").length, 3);
     const reason = `failed 3 times in a row; last: ${restartedError(CAUSE)}`;
-    assert.deepEqual(eventsOf(t, "trigger_disabled").map((e) => e.data), [{ name: "reflex", failures: 3, reason }]);
+    assert.deepEqual(eventsOf(t, "reflex_disabled").map((e) => e.data), [{ name: "reflex", failures: 3, reason }]);
     const [info] = await reflexesOf(t);
     assert.deepEqual(
       { enabled: info!.enabled, failures: info!.failures, disabledReason: info!.disabledReason, lastStatus: info!.lastStatus, lastError: info!.lastError, fired: info!.fired },
@@ -928,7 +814,7 @@ describe("restart: a reflex whose firing ends with its host", () => {
   it("does not charge a reflex bound again during the firing that ended its host", { timeout: 20_000 }, async () => {
     const t = await scriptedReflex({ reflex: { ...reflex("await new Promise(() => {});"), timeoutMs: 1_000 } });
     t.events.push("fire");
-    await waitFor(t, "trigger_fired");
+    await waitFor(t, "reflex_fired");
     const replaced = await t.host.forward({ method: "POST", url: "/triggers", body: Buffer.from(JSON.stringify(reflex("return 2;"))), tooLarge: false });
     assert.equal((replaced.body as { replaced: boolean }).replaced, true); // the trigger fixture answers with Triggers.addReflex's response
     await waitFor(t, "disconnected");
@@ -945,13 +831,13 @@ describe("restart: a reflex whose firing ends with its host", () => {
     assert.equal((await reflexesOf(t))[0]!.failures, 1, "the replacement of an idle host counted the old firing again");
   });
 
-  it("leaves one trigger_finished and the disable logged once when the host dies right after delivering the firing that disabled the reflex", { timeout: 20_000 }, async () => {
+  it("leaves one reflex_finished and the disable logged once when the host dies right after delivering the firing that disabled the reflex", { timeout: 20_000 }, async () => {
     const t = await scriptedReflex({ reflex: { ...reflex("try { await ctx.sleep(100000); } catch {}"), timeoutMs: 100 }, killAfterFinished: true }, { triggerFailures: { reflex: 2 } });
     t.events.push("fire");
     await waitFor(t, "disconnected");
     const [info] = await reflexesOf(t); // the replacement host's
-    assert.deepEqual(eventsOf(t, "trigger_finished").map((e) => e.data.status), ["timeout"]);
-    assert.deepEqual(eventsOf(t, "trigger_disabled").map((e) => e.data.failures), [3], "the disable the firing caused was lost or logged twice");
+    assert.deepEqual(eventsOf(t, "reflex_finished").map((e) => e.data.status), ["timeout"]);
+    assert.deepEqual(eventsOf(t, "reflex_disabled").map((e) => e.data.failures), [3], "the disable the firing caused was lost or logged twice");
     assert.deepEqual({ enabled: info!.enabled, failures: info!.failures }, { enabled: false, failures: 3 });
   });
 
@@ -968,9 +854,9 @@ describe("restart: a reflex whose firing ends with its host", () => {
       const t = await scriptedReflex({ reflex: reflex("return 1;") }, { triggerFailures: { reflex: 1 } }, refusingStarts);
       const pid = await pidOf(t);
       t.events.push("fire");
-      await waitFor(t, "trigger_finished");
+      await waitFor(t, "reflex_finished");
       const info = await idleDeath(t, pid);
-      assert.deepEqual(eventsOf(t, "trigger_finished").map(({ data: { durationMs: _, ...rest } }) => rest), [{ name: "reflex", status: "error", error: "start refused" }]);
+      assert.deepEqual(eventsOf(t, "reflex_finished").map(({ data: { durationMs: _, ...rest } }) => rest), [{ name: "reflex", status: "error", error: "start refused" }]);
       assert.equal(info.failures, 2, "the refused firing's count did not reach the supervisor");
     });
 
@@ -978,10 +864,10 @@ describe("restart: a reflex whose firing ends with its host", () => {
       const t = await scriptedReflex({ reflex: { ...reflex("try { await ctx.sleep(100000); } catch {}"), timeoutMs: 100 } }, { triggerFailures: { reflex: 1 } });
       const pid = await pidOf(t);
       t.events.push("fire");
-      await waitFor(t, "trigger_finished");
+      await waitFor(t, "reflex_finished");
       await sleep(300);
       const info = await idleDeath(t, pid);
-      assert.deepEqual(eventsOf(t, "trigger_finished").map((e) => e.data.status), ["timeout"]);
+      assert.deepEqual(eventsOf(t, "reflex_finished").map((e) => e.data.status), ["timeout"]);
       assert.equal(info.failures, 2, "the delivered firing's count did not reach the supervisor");
     });
 
@@ -993,15 +879,15 @@ describe("restart: a reflex whose firing ends with its host", () => {
       assert.equal(info.failures, 0);
     });
 
-    it("after a firing with no run, its `when` throwing, with the host killed right after the message carrying its trigger_finished", { timeout: 20_000 }, async () => {
+    it("after a firing with no run, its `when` throwing, with the host killed right after the message carrying its reflex_finished", { timeout: 20_000 }, async () => {
       const t = await scriptedReflex({ reflex: { ...reflex("return 1;"), when: "event.data.nope.x" }, killAfterFinished: true }, { triggerFailures: { reflex: 1 } });
       t.events.push("fire");
       await waitFor(t, "disconnected");
       const [info] = await reflexesOf(t); // the replacement host's
-      const finished = eventsOf(t, "trigger_finished");
+      const finished = eventsOf(t, "reflex_finished");
       assert.deepEqual(finished.map((e) => e.data.status), ["error"]);
       assert.match(String(finished[0]!.data.error), /^when: /);
-      assert.equal(info!.failures, 2, "the firing's count was split from its trigger_finished");
+      assert.equal(info!.failures, 2, "the firing's count was split from its reflex_finished");
     });
   });
 });

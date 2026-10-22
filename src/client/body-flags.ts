@@ -23,7 +23,7 @@ export const BODY_FLAG_OPTIONS = {
   "no-milestones": { type: "boolean", default: false },
   "agent-kits": { type: "string" },
   "no-agent-kits": { type: "boolean", default: false },
-  "no-triggers": { type: "boolean", default: false },
+  "no-reflexes": { type: "boolean", default: false },
   routines: { type: "string" },
   "no-routines": { type: "boolean", default: false },
 } as const;
@@ -48,7 +48,7 @@ export const BodyFlags = z
     noMilestones: z.boolean(),
     agentKits: z.string().optional(),
     noAgentKits: z.boolean(),
-    noTriggers: z.boolean(),
+    noReflexes: z.boolean(),
     routines: z.string().optional(),
     noRoutines: z.boolean(),
   })
@@ -70,10 +70,10 @@ export const OPERATOR_FLAG_HELP = [
   "          --wiki <off|read|write> (default read; write lets the agent add lessons),",
   "          --wiki-dir <dir> (curated pages; default the repository's wiki/),",
   `          --lessons <dir> (default ${path.join(RUNTIME_DIR, "lessons")}),`,
-  `          --state <dir> (notes, milestones, triggers, bindings, kit stores, agent kits, routines; default ${path.join(RUNTIME_DIR, "state", "<bot>")}),`,
+  `          --state <dir> (notes, milestones, reflexes, bindings, kit stores, agent kits, routines; default ${path.join(RUNTIME_DIR, "state", "<bot>")}),`,
   "          --milestones <file> (milestones JSON; replaces the stored set),",
   "          --no-milestones (no milestones: the agent cannot read, set, or grade them),",
-  "          --no-triggers (the agent cannot register triggers: programs that run when an event arrives),",
+  "          --no-reflexes (the agent cannot bind reflexes: routines that run when an event arrives),",
   "          --no-routines (no routines: the agent cannot save, bind, or call modules), --routines <dir> (default <state>/routines; \"\" turns routines off),",
 ];
 
@@ -97,7 +97,7 @@ export function parseBodyFlags(name: string, values: Record<string, string | boo
     noMilestones: values["no-milestones"],
     agentKits: values["agent-kits"],
     noAgentKits: values["no-agent-kits"],
-    noTriggers: values["no-triggers"],
+    noReflexes: values["no-reflexes"],
     routines: values.routines,
     noRoutines: values["no-routines"],
   });

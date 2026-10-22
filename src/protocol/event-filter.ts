@@ -18,3 +18,8 @@ export function eventMatches(event: BodyEvent, filter: EventFilter): boolean {
   const message = event.data.message;
   return filter.match === undefined || (typeof message === "string" && filter.match.test(message));
 }
+
+/** Whether an event type is one a reflex's firing pushes (`reflex_fired`, `reflex_finished`, ...): reflexes never listen to these, so they cannot feed each other. */
+export function isReflexEvent(type: string): boolean {
+  return type.startsWith("reflex_");
+}

@@ -57,7 +57,7 @@ async function scripted(script: Script): Promise<Scripted> {
   const dir = path.join(ROOT, `scripted-${++scripts}`);
   mkdirSync(dir);
   const events = new EventLog();
-  const init = { stateDir: dir, startedAt: "t0", deaths: 0, reconnects: 0, applyMilestones: true, script: { graceMs: GRACE_MS, asReflex: true, ...script } } as unknown as HostInit;
+  const init = { stateDir: dir, startedAt: "t0", deaths: 0, reconnects: 0, applyMilestones: true, script: { graceMs: GRACE_MS, ...script } } as unknown as HostInit;
   const host = new HostProcess({ init, events, history: new ProgramHistory({ file: path.join(dir, "history.jsonl") }), entry: TRIGGER_FIXTURE, graceMs: GRACE_MS });
   hosts.push(host);
   await host.start();
@@ -126,14 +126,14 @@ describe("a preemption's abort is backed by the supervisor's deadline", () => {
     const before = await pidOf(t);
     await post(t, "/triggers", { name: "high", on: ["high"], run: "return 1;", preempt: true, priority: 1, cooldownMs: 0 });
     t.events.push("low");
-    await waitFor(t, "trigger_fired");
+    await waitFor(t, "reflex_fired");
     const since = t.events.since(0).next;
     const askedAt = Date.now();
     t.events.push("high");
     await waitFor(t, "disconnected", since);
     const tookMs = Date.now() - askedAt;
     assert.ok(tookMs <= BOUND_MS, `the host was restarted ${tookMs} ms after the ask (bound ${BOUND_MS} ms)`);
-    const finished = await waitFor(t, "trigger_finished");
+    const finished = await waitFor(t, "reflex_finished");
     assert.deepEqual({ name: finished.data.name, status: finished.data.status, error: finished.data.error }, { name: "low", status: "stopped", error: restartedError(CAUSE) });
     assert.notEqual(await pidOf(t), before);
   });
@@ -146,9 +146,9 @@ describe("a preemption's abort is backed by the supervisor's deadline", () => {
     const result = (await answer).body as RunResult;
     assert.equal(result.status, "stopped");
     assert.equal(result.error, undefined);
-    const finished = await waitFor(t, "trigger_finished");
+    const finished = await waitFor(t, "reflex_finished");
     assert.equal(finished.data.status, "ok");
-    assert.deepEqual(eventsOf(t, "trigger_fired").map((e) => e.data.preempted), [true]);
+    assert.deepEqual(eventsOf(t, "reflex_fired").map((e) => e.data.preempted), [true]);
     // Past the deadline the supervisor would have set for the preempted run.
     await sleep(GRACE_MS + KILL_MARGIN_MS + 500);
     assert.equal(await pidOf(t), before, "the host of a program that settled in its grace was replaced");
@@ -172,8 +172,8 @@ describe("a preemption after a run refused as busy still stops the run that exec
     t.events.push("fire");
     const result = (await answer).body as RunResult;
     assert.deepEqual({ status: result.status, error: result.error }, { status: "stopped", error: undefined });
-    assert.equal((await waitFor(t, "trigger_finished")).data.status, "ok");
-    assert.deepEqual(eventsOf(t, "trigger_fired").map((e) => e.data.preempted), [true]);
+    assert.equal((await waitFor(t, "reflex_finished")).data.status, "ok");
+    assert.deepEqual(eventsOf(t, "reflex_fired").map((e) => e.data.preempted), [true]);
     // Past the deadline the supervisor would have set for the preempted run.
     await sleep(GRACE_MS + KILL_MARGIN_MS + 500);
     assert.equal(await pidOf(t), before, "the host of a program that settled in its grace was replaced");
@@ -204,8 +204,8 @@ describe("a preemption after a run refused as busy still stops the run that exec
     const result = (await answer).body as RunResult;
     assert.deepEqual({ status: result.status, error: result.error }, { status: "stopped", error: undefined });
     await refused(refusal);
-    assert.equal((await waitFor(t, "trigger_finished")).data.status, "ok");
-    assert.deepEqual(eventsOf(t, "trigger_fired").map((e) => e.data.preempted), [true]);
+    assert.equal((await waitFor(t, "reflex_finished")).data.status, "ok");
+    assert.deepEqual(eventsOf(t, "reflex_fired").map((e) => e.data.preempted), [true]);
     await sleep(GRACE_MS + KILL_MARGIN_MS + 500);
     assert.equal(await pidOf(t), before, "the host of a program that settled in its grace was replaced");
     assert.equal(eventsOf(t, "disconnected").length, 0);

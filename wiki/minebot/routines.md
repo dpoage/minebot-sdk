@@ -81,7 +81,7 @@ No command deletes a routine. `minebot unbind <name>` removes a binding and keep
 
 Only `ctx.on`, `ctx.sleep`, and `ctx.signal` end with the call. A `setTimeout`, a `setInterval`, or a `bot.on` listener that the routine makes itself keeps running after the call, and the body does not clear it. Clear your own timers before the routine returns. A leftover timer that throws after the call has ended crashes the bot host: the body restarts it, and you see a `disconnected` event.
 
-<!-- triggers -->
+<!-- reflexes -->
 ## Run a routine on an event
 
 `minebot bind reflex <name> <routine> --on <types>` binds a routine as a reflex: the body calls it when an event of one of the types arrives, as a trigger runs a program. The routine gets `(ctx, { event })`. The event has `seq`, `type`, `time`, and `data`.
@@ -103,4 +103,4 @@ minebot bind reflex noter note-chat --on chat --cooldown 5000
 A reflex has the fields, the scheduling, and the failure rule of a trigger: `--when`, `--from`, `--match`, `--cooldown`, `--timeout`, `--priority`, `--preempt`. A reflex that fails three times in a row disables itself. Bind it again to turn it on: a new bind replaces the reflex and resets its counts. `minebot routines` lists the reflexes with what each did since the body started.
 
 An action, a reflex, and a trigger share one namespace. A bind with a name that another kind holds is refused; run `minebot unbind <name>` first. Reflexes count toward the limit of 50 triggers.
-<!-- /triggers -->
+<!-- /reflexes -->

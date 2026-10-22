@@ -27,7 +27,7 @@ after(() => {
   removeScratch();
 });
 
-const FEATURES: BodyFeatures = { kits: [], kitsLocked: true, agentKits: false, wiki: "off", lessons: false, milestones: false, triggers: true, routines: true };
+const FEATURES: BodyFeatures = { kits: [], kitsLocked: true, agentKits: false, wiki: "off", lessons: false, milestones: false, reflexes: true, routines: true };
 
 interface Seen {
   method: string;
@@ -296,8 +296,8 @@ describe("the routine commands of the CLI, against the HTTP contract", () => {
     }
   });
 
-  it("offers `bind reflex` only to a body that offers triggers, and still binds actions there", async () => {
-    const stub = await stubBody({ ...FEATURES, triggers: false }, { "POST /bind": { status: 200, body: { binding: ACTION, replaced: false } } });
+  it("offers `bind reflex` only to a body that offers reflexes, and still binds actions there", async () => {
+    const stub = await stubBody({ ...FEATURES, reflexes: false }, { "POST /bind": { status: 200, body: { binding: ACTION, replaced: false } } });
     try {
       const reflex = await minebot(stub.url, "bind", "reflex", "echo", "echo", "--on", "chat");
       assert.equal(reflex.code, 1);
@@ -441,21 +441,21 @@ describe("the routine tools of the MCP server, against a recording body", () => 
     }
   });
 
-  it("describes reflexes in bind_routine's input only for a body that offers triggers", async () => {
-    for (const triggers of [true, false]) {
-      const stub = await stubBody({ ...FEATURES, triggers }, {});
+  it("describes reflexes in bind_routine's input only for a body that offers reflexes", async () => {
+    for (const reflexes of [true, false]) {
+      const stub = await stubBody({ ...FEATURES, reflexes }, {});
       try {
         const bind = await withMcp(stub.url, [], async (client) => (await client.listTools()).tools.find((candidate) => candidate.name === "bind_routine")!);
         const fields = Object.keys(bind.inputSchema.properties ?? {}).sort();
         assert.deepEqual(
           fields,
-          triggers
+          reflexes
             ? ["cooldown_ms", "enabled", "from", "kind", "match", "name", "on", "preempt", "priority", "routine", "source", "timeout_ms", "when"]
             : ["kind", "name", "routine", "source"],
-          `triggers ${triggers}`,
+          `reflexes ${reflexes}`,
         );
-        assert.equal(/reflex/i.test(bind.description ?? ""), triggers, `triggers ${triggers}`);
-        assert.equal(/reflex/.test(JSON.stringify(bind.inputSchema)), triggers, `triggers ${triggers}`);
+        assert.equal(/reflex/i.test(bind.description ?? ""), reflexes, `reflexes ${reflexes}`);
+        assert.equal(/reflex/.test(JSON.stringify(bind.inputSchema)), reflexes, `reflexes ${reflexes}`);
       } finally {
         stub.server.close();
       }
