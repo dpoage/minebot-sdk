@@ -327,7 +327,7 @@ The history (`--history`) records a trigger's code when it is saved (status `reg
 
 ## Routines
 
-A routine is a TypeScript module that the agent saves in a library on the body. The agent calls a routine by name, or binds it to events. A routine is a real ES module, not program text: it uses `import`, it imports other routines, and its source stays on the body between runs. A body offers routines unless it starts with `--no-routines`.
+A routine is a TypeScript module that the agent saves in a library on the body. The agent calls a routine by name, or binds it to events. A routine is a real ES module, not program text: it uses `import`, it imports other routines, and its source stays on the body between runs. A body offers routines unless it starts with `--no-routines` or `--routines ""`.
 
 ```ts
 // helper.ts
