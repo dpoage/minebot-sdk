@@ -244,6 +244,26 @@ export default {
       }
     });
   });
+
+  it("on a body without routines, imports data: URLs, node: built-ins, and packages, and its refusal of a file import says none of them fail", async () => {
+    await using({ init: { routines: false } }, async (body) => {
+      const kinds = {
+        "data: URLs": { source: "import x from 'data:text/javascript,export default 7';\nexport default x;\n", result: 7, named: /data:/ },
+        "node: built-ins": { source: "import { sep } from 'node:path';\nexport default sep;\n", result: path.sep, named: /node:|Node built-ins/ },
+        packages: { source: "import { Vec3 } from 'vec3';\nexport default new Vec3(1, 2, 3).x;\n", result: 1, named: /packages?/ },
+      };
+      for (const [kind, { source, result }] of Object.entries(kinds)) assert.equal(runOf(await run(body, source)).result, result, kind);
+      for (const specifier of ["./x.ts", "/x.ts", "file:///x.ts"]) {
+        const { status, error = "" } = runOf(await run(body, `import x from ${JSON.stringify(specifier)};\nexport default x;\n`));
+        assert.equal(status, "error", specifier);
+        // The refusal may say what a run imports. If it says "only", the list holds every kind that just worked; it denies none of them.
+        for (const [kind, { named }] of Object.entries(kinds)) {
+          if (/\bonly\b/i.test(error)) assert.match(error, named, `the refusal of ${specifier} lists what a run imports without ${kind}: ${error}`);
+          assert.doesNotMatch(error, new RegExp(`\\bno (?:${named.source})`, "i"), `the refusal of ${specifier} denies ${kind}: ${error}`);
+        }
+      }
+    });
+  });
 });
 
 describe("a run does not change the library's generation", () => {

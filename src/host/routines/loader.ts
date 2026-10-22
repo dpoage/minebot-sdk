@@ -249,7 +249,7 @@ registerHooks({
       return { ...resolved, url, format: "module" };
     }
     const { home } = parent;
-    if (!home) throw new Error(`"${specifier}" names a library module, and this body has no routine library: a run here imports only packages and Node built-ins`);
+    if (!home) throw new Error(`"${specifier}" imports a file, and this body has no routine library: a run here imports no file by path or file: URL`);
     // A run names a library module as `./<name>.ts`; an absolute path or a URL, even into the library, is refused. Any path or URL that leaves the importer's directory is refused whether or not a file is there.
     if (!isInLibrary(specifier, context.parentURL!, home.library) || (runs.has(context.parentURL!) && !specifier.startsWith("."))) throw refusal(specifier);
     const resolved = nextResolve(specifier, context);
