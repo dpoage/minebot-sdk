@@ -116,7 +116,7 @@ describe("ProgramRunner", () => {
 
   it("truncates logs beyond the byte cap", async () => {
     const runner = new ProgramRunner({ globals: () => ({}), maxLogBytes: 20 });
-    const run = await runner.run(`for (let i = 0; i < 10; i++) log("0123456789");`);
+    const run = await runner.call(async ({ log }) => { for (let i = 0; i < 10; i++) log("0123456789"); }, { sourceDir: "/nonexistent/routines" });
     assert.equal(run.logs, "0123456789\n[logs truncated at 20 bytes]");
   });
 });
@@ -236,17 +236,17 @@ describe("ProgramRunner.call", () => {
 
   it("rejects a call while a program runs and a program while a call runs", async () => {
     const { runner } = makeRunner();
-    const program = runner.run(`await sleep(30);`);
+    const program = runner.call(async ({ sleep }) => sleep(30), { sourceDir });
     await assert.rejects(runner.call(async () => 1, { sourceDir }), BusyError);
     mock.timers.tick(30);
     assert.equal((await program).status, "ok");
 
     const call = runner.call(async ({ sleep }) => sleep(30), { sourceDir });
-    await assert.rejects(runner.run(`return 1;`), BusyError);
+    await assert.rejects(runner.call(async () => 1, { sourceDir }), BusyError);
     await assert.rejects(runner.call(async () => 1, { sourceDir }), BusyError);
     mock.timers.tick(30);
     assert.equal((await call).status, "ok");
-    assert.equal((await runner.run(`return 1;`)).result, 1);
+    assert.equal((await runner.call(async () => 1, { sourceDir })).result, 1);
   });
 
   it("times out a call, rejects its sleep, halts the body, and frees the runner", async () => {
@@ -325,9 +325,9 @@ describe("restart: ProgramRunner.call after an abort", () => {
     const runner = hungRunner();
     const pending = runner.call(() => new Promise(() => {}), { timeoutMs: 30, sourceDir });
     runner.stop();
-    await assert.rejects(runner.run(`return 1;`), BusyError);
+    await assert.rejects(runner.call(async () => 1, { sourceDir }), BusyError);
     assert.equal((await pending).hung, true);
-    assert.equal((await runner.run(`return 1;`)).result, 1);
+    assert.equal((await runner.call(async () => 1, { sourceDir })).result, 1);
   });
 
   it("reports a call that times out and never settles as hung with status timeout", async () => {

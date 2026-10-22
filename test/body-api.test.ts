@@ -360,7 +360,7 @@ describe("body API on a body with every feature on", () => {
     await body.call("GET", "/status", unauthorized, { auth: null });
     await body.call("GET", "/status", unauthorized, { auth: "Bearer wrong" });
     await body.call("GET", "/status", unauthorized, { auth: body.token });
-    await body.call("POST", "/run", unauthorized, { auth: null, json: { code: "return 1" } });
+    await body.call("POST", "/call", unauthorized, { auth: null, json: { name: "act" } });
     await body.call("GET", "/nope", unauthorized, { auth: null });
     await body.call("POST", "/health", unauthorized, { auth: null });
   });
@@ -378,7 +378,7 @@ describe("body API on a body with every feature on", () => {
     // A route that takes no body never reads it either.
     await body.call("POST", "/stop", { body: { stopped: false } }, { raw: "x".repeat(MAX_BODY_BYTES + 1) });
     await body.call("PUT", "/notes/lazy", { status: 400, body: { error: "request body is not valid JSON" } }, { raw: "{ not json" });
-    await body.call("POST", "/run", { status: 400, body: { error: "request body is not valid JSON" } }, { raw: "nope" });
+    await body.call("POST", "/call", { status: 400, body: { error: "request body is not valid JSON" } }, { raw: "nope" });
     // Exactly MAX_BODY_BYTES is read whole (and is not JSON); one byte more is refused.
     await body.call("PUT", "/notes/lazy", { status: 400, body: { error: "request body is not valid JSON" } }, { raw: "x".repeat(MAX_BODY_BYTES) });
     await body.call("PUT", "/notes/lazy", { status: 413, body: { error: "request body too large" } }, { raw: "x".repeat(MAX_BODY_BYTES + 1) });
@@ -937,7 +937,7 @@ describe("body API: the program history file", () => {
       .map((line) => normalize(JSON.parse(line), { token: body.token, ports: body.ports }));
 
   before(async () => {
-    body = await startBody({ kits: ["move"], history: true });
+    body = await startBody({ kits: ["move"], history: true, stateFiles: { "bindings.json": { act: { kind: "action", routine: "act" } } } });
   });
   after(() => body.close());
 
@@ -947,7 +947,7 @@ describe("body API: the program history file", () => {
 
   it("writes nothing for an unflagged program that failed to run", async () => {
     assert.deepStrictEqual(findEscapeAttempts("return 1"), []);
-    await body.call("POST", "/run", { status: 503, body: NOT_CONNECTED }, { json: { code: "return 1" } });
+    await body.call("POST", "/call", { status: 503, body: NOT_CONNECTED }, { json: { name: "act" } });
     assert.deepStrictEqual(lines(), []);
   });
 
