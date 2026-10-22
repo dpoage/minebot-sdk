@@ -123,7 +123,7 @@ describe("POST /call", () => {
     });
   });
 
-  it("kills a routine that blocks the host by the supervisor's deadline, answers with the restarted error, and keeps the bindings", async () => {
+  it("kills a routine that blocks the host by the supervisor's deadline, answers with the restarted error, and keeps the bindings", { timeout: 30_000 }, async () => {
     const body = await bodyWith({ blocker: BLOCKER, pid: PID });
     await using(body, async () => {
       const before = runOf(await body.request("POST", "/call", { name: "pid" })).result;
@@ -140,9 +140,10 @@ describe("POST /call", () => {
     });
   });
 
-  it("starts a firing queued during the call when the call ends", async () => {
+  it("starts a firing queued during the call when the call ends, though no event echo tells the triggers", { timeout: 30_000 }, async () => {
     const chatter = "export default async (ctx: { bot: { emit(event: string, ...args: unknown[]): void }; sleep(ms: number): Promise<void> }) => {\n  ctx.bot.emit('chat', 'alice', 'go');\n  await ctx.sleep(400);\n  return 'done';\n};\n";
-    const body = await bodyWith({ chatter });
+    // The echo of program_finished would also wake the triggers; here only the call's own end can.
+    const body = await bodyWith({ chatter }, { dropEchoes: ["program_finished"] });
     await using(body, async () => {
       await body.ok("POST", "/triggers", { name: "reflex", on: ["chat"], run: "return 1", cooldownMs: 0 });
       const run = runOf(await body.request("POST", "/call", { name: "chatter" }));

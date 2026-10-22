@@ -32,6 +32,8 @@ export interface FakeBodyOptions {
   stateFiles?: Record<string, unknown>;
   /** Overrides of the body's options (kits, wikiMode, routines, triggers, ...). */
   init?: Partial<HostInit>;
+  /** Event types whose echo from the event log never reaches the host's triggers. */
+  dropEchoes?: string[];
 }
 
 export class FakeBody {
@@ -125,7 +127,8 @@ export async function startFakeBody(options: FakeBodyOptions = {}): Promise<Fake
     deaths: 0,
     reconnects: 0,
     applyMilestones: true,
-  };
+    ...(options.dropEchoes && { dropEchoes: options.dropEchoes }),
+  } as HostInit;
   const history = new ProgramHistory({ file: historyFile });
   const host = new Host({ init, events, history, entry: ENTRY, graceMs: GRACE_MS });
   await host.start();

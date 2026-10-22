@@ -3,6 +3,9 @@
 // Connection, Body, world, routes, triggers, and bindings run as they do against a server. The
 // fake bot emits whatever the test makes it emit (`ctx.bot.emit("chat", "alice", "hi")` in a
 // routine reaches the body's event log as a chat event, through the real Connection).
+// `init.dropEchoes` (the test's own field, read from the init message) lists event types whose echo
+// from the supervisor's log never reaches the host's triggers, so a firing that waits for the runner
+// can start only when something tells the triggers the runner is idle, not when an echo does.
 import { EventEmitter } from "node:events";
 import mineflayer from "mineflayer";
 import pathfinderPkg from "mineflayer-pathfinder";
@@ -46,6 +49,20 @@ function fakeBot(): EventEmitter {
 }
 
 flayer.createBot = fakeBot;
+
+/** Event types whose echoes the host does not hear (see the top of this file). */
+let dropped: string[] = [];
+const listen = process.on.bind(process) as (event: string, listener: (message: unknown) => void) => unknown;
+(process as unknown as { on: typeof listen }).on = (event, listener) =>
+  listen(event, (message) => {
+    if (event === "message" && typeof message === "object" && message !== null) {
+      if ("kind" in message && message.kind === "init" && "init" in message && typeof message.init === "object" && message.init !== null && "dropEchoes" in message.init) {
+        dropped = message.init.dropEchoes as string[];
+      }
+      if ("kind" in message && message.kind === "event" && "event" in message && typeof message.event === "object" && message.event !== null && "type" in message.event && dropped.includes(message.event.type as string)) return;
+    }
+    listener(message);
+  });
 
 // Not a static import: the host must load after the patches above (static imports are evaluated first).
 await import("../../../src/host/main.ts");
