@@ -31,6 +31,17 @@ export function hungCause(graceMs: number): string {
   return `the program did not stop within ${graceMs / 1000} s`;
 }
 
+/** What a host reports of the uncaught error that ends it: the error's text and the stack frame it was thrown from, as `path:line:column` when the frame has a location. */
+export interface HostCrash {
+  message: string;
+  frame?: string;
+}
+
+/** How a crash reads in the reason of the restart that follows it. */
+export function crashDetail({ message, frame }: HostCrash): string {
+  return frame === undefined ? message : `${message} (at ${frame})`;
+}
+
 /** The error a run carries when its host was restarted. */
 export function restartedError(cause: string): string {
   return `${cause}; the bot host was restarted`;
@@ -158,4 +169,9 @@ export type FromHost =
    * counts reach the supervisor.
    */
   | { kind: "trigger_counts"; triggerFailures: Record<string, number>; finished?: TriggerFinished; disabled?: TriggerDisabled }
-  | { kind: "state"; connected: boolean; deaths: number; reconnects: number; active: string[] };
+  | { kind: "state"; connected: boolean; deaths: number; reconnects: number; active: string[] }
+  /**
+   * The host is exiting because of an uncaught exception or unhandled rejection; sent as the last
+   * message, and written before the host exits. The error's text and frame travel in this one message.
+   */
+  | ({ kind: "crashed" } & HostCrash);

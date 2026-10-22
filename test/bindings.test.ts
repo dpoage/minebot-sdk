@@ -413,6 +413,7 @@ describe("no module is evaluated until a reflex fires", () => {
     await using(body, async () => {
       const marker = path.join(body.stateDir, "marker");
       body.writeRoutines({ marked: `import { appendFileSync } from "node:fs";\nappendFileSync(${JSON.stringify(marker)}, "x");\nexport default () => 1;\n` });
+      body.writeRoutines({ chatter: "export default (ctx: { bot: { emit(event: string, ...args: unknown[]): void } }) => {\n  ctx.bot.emit('chat', 'ana', 'go');\n};\n" });
       await body.ok("POST", "/bind", { kind: "reflex", name: "rfx", routine: "marked", on: ["chat"], cooldownMs: 0 });
       await body.ok("POST", "/bind", { kind: "reflex", name: "rfx", routine: "marked", on: ["hurt"], cooldownMs: 0 });
       await listed(body);
@@ -420,7 +421,8 @@ describe("no module is evaluated until a reflex fires", () => {
       await body.ok("POST", "/unbind", { name: "again" });
       assert.equal(existsSync(marker), false, "a module's top level ran");
       await body.ok("POST", "/bind", { kind: "reflex", name: "rfx", routine: "marked", on: ["chat"], cooldownMs: 0 });
-      runOf(await body.request("POST", "/run", { code: "bot.emit('chat', 'ana', 'go')" }));
+      await body.ok("POST", "/bind", { kind: "action", name: "chatter", routine: "chatter" });
+      runOf(await body.request("POST", "/call", { name: "chatter" }));
       await body.waitFor("trigger_finished");
       assert.equal(readFileSync(marker, "utf8"), "x");
     });

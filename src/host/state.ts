@@ -3,6 +3,7 @@
 import path from "node:path";
 import { JsonStore } from "../store.ts";
 import { Notes } from "../notes.ts";
+import { BODY_STORES, checkStoreNamespace } from "../routine/define.ts";
 
 export class BodyState {
   readonly dir: string;
@@ -17,7 +18,7 @@ export class BodyState {
 
   /** The agent's persistent notes. */
   get notes(): Notes {
-    return new Notes(this.store("notes"));
+    return new Notes(this.store(BODY_STORES.notes));
   }
 
   /** The agent's triggers, one entry per trigger name. Apart from the kit stores, which are named by kit. */
@@ -58,13 +59,19 @@ export class BodyState {
     return store;
   }
 
+  /** The store a routine opens as `ctx.store(namespace)`: a routine name other than the body's own (`BODY_STORES`), else it throws naming the rule. */
+  routineStore(namespace: string): JsonStore {
+    checkStoreNamespace(namespace);
+    return this.store(namespace);
+  }
+
   /** The body's milestones, or null when none are set. */
   get milestones(): unknown {
-    return this.store("body").get("milestones");
+    return this.store(BODY_STORES.body).get("milestones");
   }
 
   /** Replaces the milestones; null removes them. */
   setMilestones(value: unknown): void {
-    this.store("body").set("milestones", value ?? undefined);
+    this.store(BODY_STORES.body).set("milestones", value ?? undefined);
   }
 }

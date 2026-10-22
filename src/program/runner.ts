@@ -167,6 +167,8 @@ export class ProgramRunner {
 
     const log = (...args: unknown[]) => logs.append(args);
     const on = (event: string, handler: (...args: unknown[]) => void) => {
+      // A subscription after the run's abort (stop, timeout, or its end) would outlive the run: nothing clears it.
+      if (signal.aborted) return;
       const emitter = this.#options.events?.();
       if (!emitter) throw new Error("on() is unavailable: the body has no event source");
       emitter.on(event, handler);

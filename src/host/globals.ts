@@ -20,6 +20,8 @@ export interface GlobalsDeps {
   kits: KitHost;
   wiki: WikiAccess;
   notes: Notes;
+  /** The persistent store of a routine namespace, for `ctx.store`. */
+  store: (namespace: string) => ReturnType<RoutineContext["store"]>;
   features: () => BodyFeatures;
   status: () => Promise<StatusResponse>;
   /** Present only when the body offers triggers. */
@@ -88,11 +90,11 @@ export function programGlobals(scope: ProgramScope, deps: GlobalsDeps): Record<s
 
 /**
  * What a routine's default export receives for one call: the run's scope, the live bot, and the
- * facilities the body offers programs. Nothing else: the kit controller and the triggers stay program globals.
+ * facilities the body offers programs, plus `store`, which programs have no global for. Nothing else: the kit controller and the triggers stay program globals.
  */
 export function routineContext(scope: ProgramScope, deps: GlobalsDeps): RoutineContext {
   const bot = deps.connection.requireBot();
   const { kit, ...rest } = facilities(scope, deps, bot);
   // The kit calls of the host's registry are the shape `KitRegistry` types for authors.
-  return { ...scope, bot, ...rest, ...(kit && { kit: kit as Readonly<KitRegistry> }) };
+  return { ...scope, bot, ...rest, store: deps.store, ...(kit && { kit: kit as Readonly<KitRegistry> }) };
 }

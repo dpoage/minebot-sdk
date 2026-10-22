@@ -5,7 +5,8 @@ import type { LessonInput, Note, PageSummary, SearchHit, StatusResponse } from "
 /**
  * What a routine's default export receives: the live bot, this run's log, sleep, signal and event
  * subscription, and the body's facilities. `kit` is present when the body offers kits and `wiki`
- * when its wiki is on; no other member exists.
+ * when its wiki is on; no other member exists. A context may also carry the observer of routine
+ * calls (see `withObserver`), which is not a member routines use.
  */
 export interface RoutineContext {
   readonly bot: Bot;
@@ -23,6 +24,18 @@ export interface RoutineContext {
     get(key: string): string | undefined;
     set(key: string, text: string): Note;
     delete(key: string): boolean;
+  };
+  /**
+   * The persistent JSON store of `namespace`: it survives body restarts and is shared by every
+   * routine that opens the same namespace. A namespace is a routine name (1-48
+   * lowercase letters, digits, `_` and `-`, starting with a letter); `notes` and `body` are the body's own.
+   */
+  store(namespace: string): {
+    get(key: string): unknown;
+    /** Stores a JSON-serializable value; `undefined` deletes the key. */
+    set(key: string, value: unknown): void;
+    delete(key: string): boolean;
+    keys(): string[];
   };
   /** Deaths, reconnects, and milestone progress. */
   status(): Promise<StatusResponse>;
