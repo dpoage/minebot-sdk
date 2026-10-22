@@ -384,7 +384,7 @@ A call without arguments passes `{}`. A reflex passes `{ event }`.
 | `kit` | The active kits' actions. Only when the body offers kits. |
 | `wiki` | The wiki. Only when the wiki is not `off`. |
 
-`Vec3`, `goals`, and `Movements` are not in `ctx`: import them from `vec3` and `mineflayer-pathfinder`. The program globals `kits` and `triggers` are not in `ctx` either.
+`Vec3`, `goals`, and `Movements` are not in `ctx`. Import `Vec3` by name: `import { Vec3 } from "vec3"`. Use a default import for `mineflayer-pathfinder`, and take `goals` and `Movements` from it: `import pathfinder from "mineflayer-pathfinder"`, then `const { goals, Movements } = pathfinder`. A named import of `goals` passes the type check, but the call fails with `Named export 'goals' not found`. The program globals `kits` and `triggers` are not in `ctx` either.
 
 A routine does not share the lifetime rules of a program. Only `ctx.on`, `ctx.sleep`, and `ctx.signal` end with the call. The timers and the `bot.on` listeners that the routine creates itself are real: they outlive the call, and the body never clears them. A leftover timer that throws after the call has ended crashes the bot host. The supervisor then restarts the host, and the agent sees a `disconnected` event.
 
@@ -404,7 +404,7 @@ A save returns `typeCheck`, as a kit save does: `passed`, `failed` with one `<na
 
 ### Imports
 
-A routine imports with `import`. `require` does not work in a routine: the call fails with `require is not defined in ES module scope`.
+A routine imports with `import`. `require` is not defined in a routine, so a call that uses `require` fails with a `ReferenceError`.
 
 - Node built-ins, such as `node:fs`.
 - The packages that the body ships: `mineflayer`, `mineflayer-pathfinder`, `vec3`, `minecraft-data`, the `prismarine-*` packages, and `zod`.

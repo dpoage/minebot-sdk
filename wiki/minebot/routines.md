@@ -42,7 +42,7 @@ The default export is a function `(ctx, args) => result`. With `defineRoutine`, 
 - `notes` and `status()`, as in a program.
 - `wiki`, when the wiki is on.
 
-`Vec3`, `goals`, and `Movements` are not in `ctx`. Import them: `import { Vec3 } from "vec3"` and `import { goals } from "mineflayer-pathfinder"`.
+`Vec3`, `goals`, and `Movements` are not in `ctx`. Import `Vec3` by name: `import { Vec3 } from "vec3"`. Use a default import for `mineflayer-pathfinder`, and take `goals` and `Movements` from it: `import pathfinder from "mineflayer-pathfinder"`, then `const { goals, Movements } = pathfinder`. A named import of `goals` passes the type check, but the call fails with `Named export 'goals' not found`.
 
 <!-- kits -->
 `ctx.kit` holds the active kits' actions, for example `await ctx.kit.move.to({ position: [x, y, z], range: 1 })`.
