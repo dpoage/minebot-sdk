@@ -33,6 +33,7 @@ describe("tier visibility in the usage text", () => {
       assert.doesNotMatch(text, WIKI_WORDS);
       assert.doesNotMatch(text, MILESTONE_WORDS);
       assert.doesNotMatch(text, /trigger/i);
+      assert.doesNotMatch(text, /routine|\bbind\b|unbind|call <name>|--args/i);
       assert.doesNotMatch(text, /--kits|--lock-kits|--wiki|--lessons|--milestones|body:/);
     }
   });
@@ -45,6 +46,26 @@ describe("tier visibility in the usage text", () => {
     assert.match(usageFor(full, false), /kits docs/);
     assert.match(usageFor(full, false), /wiki read/);
     assert.doesNotMatch(usageFor(full, false), /wiki lesson/);
+  });
+
+  it("lists the routine commands exactly when the body offers routines, and `bind reflex` only with triggers too", () => {
+    const COMMANDS = [/routines save <file\.\.\.>/, /routines source\|versions <name>/, /routines revert <name> <n>/, /bind action <name> <routine>/, /unbind <name>/, /call <name>/, /call: {3}--args <json>, --timeout <ms>/];
+    const REFLEX = /bind reflex <name> <routine> --on <a,b>[\s\S]*--priority, --preempt/;
+    for (const routines of [false, true]) {
+      for (const triggers of [false, true]) {
+        for (const hasBody of [false, true]) {
+          const text = usageFor({ ...raw, routines, triggers }, hasBody);
+          const label = `routines ${routines}, triggers ${triggers}, hasBody ${hasBody}`;
+          for (const command of COMMANDS) assert.equal(command.test(text), routines, `${command} with ${label}`);
+          assert.equal(REFLEX.test(text), routines && triggers, `bind reflex with ${label}`);
+          if (!routines) assert.doesNotMatch(text, /routine|\bbind\b|reflex/i, label);
+          if (!triggers) assert.doesNotMatch(text, /reflex|trigger|--cooldown/i, label);
+        }
+      }
+    }
+    // Nothing known: an operator reads about everything, a client-only install about nothing optional.
+    assert.match(usageFor(null, true, OPERATOR_FLAG_HELP), /bind reflex <name> <routine>/);
+    assert.doesNotMatch(usageFor(null, false), /routine|bind/i);
   });
 
   it("shows an operator everything when no body can be asked", () => {
@@ -226,7 +247,8 @@ describe("tier visibility on a running body", () => {
     assert.equal(help.code, 0);
     assert.doesNotMatch(help.out, KIT_WORDS);
     assert.doesNotMatch(help.out, /wiki|lesson|milestone|trigger/i);
-    for (const command of ["kits", "kits docs", "wiki search logs", "milestones", "triggers"]) {
+    assert.doesNotMatch(help.out, /routine|\bbind\b|unbind/i);
+    for (const command of ["kits", "kits docs", "wiki search logs", "milestones", "triggers", "routines", "routines save act.ts", "bind action act act", "unbind act", "call act"]) {
       const result = await cli(rawBody, ...command.split(" "));
       assert.equal(result.code, 1, command);
       assert.match(result.out, new RegExp(`^unknown command: ${command.split(" ")[0]}\\n`), command);

@@ -2,9 +2,13 @@
 import { readFile } from "node:fs/promises";
 import http from "node:http";
 import { text } from "node:stream/consumers";
+import type { z } from "zod";
 import {
   EndpointSchema,
   endpointFile,
+  type BindInput,
+  type BindingsResponse,
+  type BindResponse,
   type BodyFeatures,
   type AddTriggerResponse,
   type Endpoint,
@@ -17,11 +21,17 @@ import {
   type Note,
   type Observation,
   type PageSummary,
+  type RevertRoutineResponse,
+  type RoutinesResponse,
+  type RoutineSourceResponse,
+  type RoutineVersionsResponse,
   type RunResult,
+  type SaveRoutineResponse,
   type SaveKitResponse,
   type KitInfo,
   type SearchHit,
   type StatusResponse,
+  type UnbindResponse,
   type TriggerInfo,
   type TriggerInput,
   type TriggersResponse,
@@ -221,6 +231,50 @@ export class BodyClient {
 
   setTriggerEnabled(name: string, enabled: boolean): Promise<{ trigger: TriggerInfo }> {
     return this.#request("POST", "/triggers/enabled", { name, enabled });
+  }
+
+  /** The routines saved in the library. */
+  routines(): Promise<RoutinesResponse> {
+    return this.#request("GET", "/routines");
+  }
+
+  /** A saved routine's source. */
+  routineSource(name: string): Promise<RoutineSourceResponse> {
+    return this.#request("GET", `/routines/source?name=${encodeURIComponent(name)}`);
+  }
+
+  /** Saves a routine module under `name` as a new version. The type check of the source comes back with the routine and never blocks the save. */
+  saveRoutine(name: string, source: string): Promise<SaveRoutineResponse> {
+    return this.#request("POST", "/routines/save", { name, source });
+  }
+
+  /** The saved versions of a routine, oldest first. */
+  routineVersions(name: string): Promise<RoutineVersionsResponse> {
+    return this.#request("GET", `/routines/versions?name=${encodeURIComponent(name)}`);
+  }
+
+  /** Saves an earlier version of a routine again, as a new version. */
+  revertRoutine(name: string, version: number): Promise<RevertRoutineResponse> {
+    return this.#request("POST", "/routines/revert", { name, version });
+  }
+
+  /** The names bound to routines: actions, and reflexes with what they have done since the body started. */
+  bindings(): Promise<BindingsResponse> {
+    return this.#request("GET", "/bindings");
+  }
+
+  /** Binds a name to a saved routine, as an action or a reflex; a binding of the same name and kind is replaced. The body checks every field. */
+  bind(binding: z.input<typeof BindInput>): Promise<BindResponse> {
+    return this.#request("POST", "/bind", binding);
+  }
+
+  unbind(name: string): Promise<UnbindResponse> {
+    return this.#request("POST", "/unbind", { name });
+  }
+
+  /** Calls the action bound to `name` with `args` as one run: the result or the error comes back like any run's. */
+  call(name: string, args?: Record<string, unknown>, timeoutMs?: number): Promise<RunResult> {
+    return this.#request("POST", "/call", { name, args, timeoutMs });
   }
 
   async #request<T>(method: string, path: string, body?: unknown): Promise<T> {

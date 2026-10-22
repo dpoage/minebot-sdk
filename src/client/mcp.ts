@@ -10,7 +10,10 @@ import { McpServer, type RegisteredTool } from "@modelcontextprotocol/sdk/server
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import {
+  BindingName,
+  type BindInput,
   capabilities,
+  CallInput,
   ChatInput,
   DEFAULT_TIMEOUT_MS,
   type BodyFeatures,
@@ -18,13 +21,17 @@ import {
   MAX_TIMEOUT_MS,
   NoteKey,
   NoteText,
+  ReflexInput,
   RevertKitInput,
+  RevertRoutineInput,
+  RoutineName,
+  RoutineSource,
   TriggerInput,
   TriggerName,
   TryKitInput,
   WaitInput,
 } from "../protocol/index.ts";
-import { formatHits, formatKitHits, formatKitVersions, formatNotes, formatRun, formatStatus, formatTriggers } from "./render.ts";
+import { formatBound, formatHits, formatKitHits, formatKitVersions, formatLibrary, formatNotes, formatRevertedRoutine, formatRoutineVersions, formatRun, formatSavedRoutine, formatStatus, formatTriggers } from "./render.ts";
 import { BodyClient } from "./client.ts";
 
 type ToolResult = { content: { type: "text"; text: string }[]; isError?: boolean };
@@ -38,7 +45,7 @@ export const TOOL_SETS = ["core", "full"] as const;
 export type ToolSet = (typeof TOOL_SETS)[number];
 
 /** The tools of the core set. Programs reach everything else through their globals. */
-const CORE_TOOLS: Readonly<Record<string, true>> = { observe: true, run_program: true, stop_program: true, wait_for: true, get_events: true, api_reference: true, kit_docs: true };
+const CORE_TOOLS: Readonly<Record<string, true>> = { observe: true, run_program: true, stop_program: true, wait_for: true, get_events: true, api_reference: true, kit_docs: true, call_routine: true, bind_routine: true };
 
 /** The description of every capability-gated tool, and whether it is served, by capability state and tool set: one place, reused by apply() and the tests. */
 export function toolPlan(features: BodyFeatures, toolSet: ToolSet): Record<string, { enabled: boolean; description: string }> {
@@ -118,6 +125,42 @@ export function toolPlan(features: BodyFeatures, toolSet: ToolSet): Record<strin
     trigger_set_enabled: {
       enabled: caps.triggers,
       description: "Turn a trigger on or off without deleting it. Turning it on again clears a self-disable.",
+    },
+    call_routine: {
+      enabled: caps.routines,
+      description:
+        "Call an action: a saved routine that bind_routine bound to a name, with JSON args. Blocks until the routine returns, fails, or times out, and answers like run_program: status, logs, error or result. One run at a time, programs included.",
+    },
+    bind_routine: {
+      enabled: caps.routines,
+      description: caps.triggers
+        ? "Bind a name to a saved routine (a TypeScript module in this body's routine library). kind \"action\": call_routine runs it by name with JSON args. kind \"reflex\": the body calls the routine on its own whenever an event of the types in `on` arrives (hurt, chat, night, ...), with the same filters as a trigger (when, from, match, cooldown_ms, timeout_ms, preempt, priority, enabled); a reflex that fails 3 times in a row disables itself. Pass `source` to save the module as <routine>.ts and bind it in one call; a refused bind leaves the saved module. Bindings are kept on the body and survive restarts."
+        : "Bind a name to a saved routine (a TypeScript module in this body's routine library) as an action: call_routine runs it by name with JSON args. Pass `source` to save the module as <routine>.ts and bind it in one call; a refused bind leaves the saved module. Bindings are kept on the body and survive restarts.",
+    },
+    list_routines: {
+      enabled: caps.routines,
+      description: "The saved routines with their versions, and the names bound to them: actions, and reflexes with how often each ran since the body started and how the last run ended.",
+    },
+    routine_save: {
+      enabled: caps.routines,
+      description:
+        "Save a routine: a TypeScript module whose default export is a function (ctx, args) => result, usually `export default defineRoutine({ description?, args?, returns? }, async (ctx, args) => result)` with `import { defineRoutine, z } from \"minebot-sdk/routine\"`. It may import Node built-ins, the packages this body ships, and other saved routines (`./helper.ts`). The answer includes the type check of the source, which does not stop the save; fix the errors and save again. Saving over a routine keeps the old source (routine_versions). Bind it with bind_routine to call it.",
+    },
+    routine_source: {
+      enabled: caps.routines,
+      description: "Print a saved routine's source.",
+    },
+    routine_versions: {
+      enabled: caps.routines,
+      description: "List the saved versions of a routine: number, time, and which body saved it.",
+    },
+    routine_revert: {
+      enabled: caps.routines,
+      description: "Save an earlier version of a routine again, as a new version.",
+    },
+    unbind_routine: {
+      enabled: caps.routines,
+      description: "Remove a binding: the action stops being callable, or the reflex stops firing. The saved routine stays.",
     },
   };
   for (const [name, entry] of Object.entries(plan)) entry.enabled &&= toolSet === "full" || Object.hasOwn(CORE_TOOLS, name);
@@ -409,6 +452,98 @@ export async function serveMcp(bodyName: string, toolSet: ToolSet): Promise<void
     ({ name, enabled }) => call(async (c) => formatTriggers([(await c.setTriggerEnabled(name, enabled)).trigger])),
   );
 
+  const routineName = (description: string) => RoutineName.describe(description);
+  const callRoutine = server.registerTool(
+    "call_routine",
+    {
+      description: "",
+      inputSchema: {
+        name: BindingName.describe("The name of an action, as bound by bind_routine"),
+        args: CallInput.shape.args.describe("The routine's arguments: a JSON object. Default {}."),
+        timeout_ms: CallInput.shape.timeoutMs.describe(`Abort the call after this many milliseconds. Default ${DEFAULT_TIMEOUT_MS}.`),
+      },
+    },
+    ({ name, args, timeout_ms }) => call(async (c) => formatRun(await c.call(name, args, timeout_ms))),
+  );
+  const actionBinding = {
+    kind: z.enum(["action"]).describe("action: call_routine runs it by name."),
+    name: BindingName.describe("The binding's name: what call_routine takes for an action. 1-48 lowercase letters, digits, _ and -."),
+    routine: routineName("The saved routine to bind"),
+    source: RoutineSource.optional().describe("TypeScript source of the routine's module: saved as <routine>.ts first, then bound. Omit to bind a routine that is already saved."),
+  };
+  const reflexBinding = {
+    ...actionBinding,
+    kind: z.enum(["action", "reflex"]).describe("action: call_routine runs it by name. reflex: the body calls it when an event arrives (needs `on`)."),
+    on: ReflexInput.shape.on.optional().describe("Reflex only. Event types that fire it, e.g. ['hurt'] or ['chat']; any of them matches."),
+    when: ReflexInput.shape.when.describe("Reflex only. JavaScript expression over `event` and `bot` that must be truthy, e.g. event.data.health < 8."),
+    from: ReflexInput.shape.from.describe("Reflex only. Only chat or whisper events sent by this player."),
+    match: ReflexInput.shape.match.describe("Reflex only. Case-insensitive regular expression over chat, whisper, and system messages."),
+    // The body applies the defaults, so an omitted field stays omitted here.
+    cooldown_ms: ReflexInput.shape.cooldownMs.removeDefault().optional().describe("Reflex only. Minimum time between two firings. Default 1000."),
+    timeout_ms: ReflexInput.shape.timeoutMs.removeDefault().optional().describe("Reflex only. Abort a run after this many milliseconds. Default 30000."),
+    preempt: ReflexInput.shape.preempt.removeDefault().optional().describe("Reflex only. Stop the running program instead of waiting for it. Default false."),
+    priority: ReflexInput.shape.priority.removeDefault().optional().describe("Reflex only. Waiting reflexes run highest first; a preempting one never stops a running one of equal or higher priority. Default 0."),
+    enabled: ReflexInput.shape.enabled.removeDefault().optional().describe("Reflex only. Default true."),
+  };
+  const bindRoutine = server.registerTool(
+    "bind_routine",
+    { description: "", inputSchema: reflexBinding },
+    ({ kind, name, routine, source, on, cooldown_ms, timeout_ms, ...reflex }) =>
+      call(async (c) => {
+        // A malformed request is refused before the save, so it changes nothing.
+        let request: z.input<typeof BindInput>;
+        if (kind === "reflex") {
+          if (on === undefined) throw new Error('kind "reflex" needs on: the event types that fire it');
+          request = { kind, name, routine, on, ...reflex, cooldownMs: cooldown_ms, timeoutMs: timeout_ms };
+        } else {
+          if ([on, cooldown_ms, timeout_ms, ...Object.values(reflex)].some((value) => value !== undefined)) {
+            throw new Error('on, when, from, match, cooldown_ms, timeout_ms, preempt, priority and enabled only apply to kind "reflex"');
+          }
+          request = { kind, name, routine };
+        }
+        const saved = source === undefined ? undefined : await c.saveRoutine(routine, source);
+        let bound;
+        try {
+          bound = await c.bind(request);
+        } catch (err) {
+          // The save stands: the agent fixes the binding and binds again, without the source.
+          throw saved ? new Error(`${err instanceof Error ? err.message : String(err)}\nThe module "${routine}" was saved; the binding was not made.`) : err;
+        }
+        return [saved && formatSavedRoutine(saved), formatBound(bound)].filter(Boolean).join("\n");
+      }),
+  );
+  const listRoutines = server.registerTool("list_routines", { description: "", inputSchema: {} }, () =>
+    call(async (c) => {
+      const [{ routines }, { bindings }] = await Promise.all([c.routines(), c.bindings()]);
+      return formatLibrary(routines, bindings);
+    }),
+  );
+  const routineSave = server.registerTool(
+    "routine_save",
+    { description: "", inputSchema: { name: routineName("The routine's name: its file name in the library, and what other routines import. 1-48 lowercase letters, digits, _ and -."), source: RoutineSource.describe("TypeScript source of the module") } },
+    ({ name, source }) => call(async (c) => formatSavedRoutine(await c.saveRoutine(name, source))),
+  );
+  const routineSource = server.registerTool(
+    "routine_source",
+    { description: "", inputSchema: { name: routineName("A saved routine") } },
+    ({ name }) => call(async (c) => (await c.routineSource(name)).source),
+  );
+  const routineVersions = server.registerTool(
+    "routine_versions",
+    { description: "", inputSchema: { name: routineName("A saved routine") } },
+    ({ name }) => call(async (c) => formatRoutineVersions(name, (await c.routineVersions(name)).versions)),
+  );
+  const routineRevert = server.registerTool(
+    "routine_revert",
+    { description: "", inputSchema: { name: routineName("A saved routine"), version: RevertRoutineInput.shape.version.describe("A version from routine_versions") } },
+    ({ name, version }) => call(async (c) => formatRevertedRoutine((await c.revertRoutine(name, version)).routine)),
+  );
+  const unbindRoutine = server.registerTool(
+    "unbind_routine",
+    { description: "", inputSchema: { name: BindingName.describe("The binding to remove") } },
+    ({ name }) => call(async (c) => json(await c.unbind(name))),
+  );
+
   const setEnabled = (tool: RegisteredTool, on: boolean) => (on ? tool.enable() : tool.disable());
   function apply(features: BodyFeatures, apiDoc: string): void {
     const plan = toolPlan(features, toolSet);
@@ -431,11 +566,21 @@ export async function serveMcp(bodyName: string, toolSet: ToolSet): Promise<void
       trigger_list: triggerList,
       trigger_remove: triggerRemove,
       trigger_set_enabled: triggerSetEnabled,
+      call_routine: callRoutine,
+      bind_routine: bindRoutine,
+      list_routines: listRoutines,
+      routine_save: routineSave,
+      routine_source: routineSource,
+      routine_versions: routineVersions,
+      routine_revert: routineRevert,
+      unbind_routine: unbindRoutine,
     };
     for (const [name, tool] of Object.entries(tools)) {
       setEnabled(tool, plan[name]!.enabled);
       tool.update({ description: plan[name]!.description });
     }
+    // Reflexes are triggers over routines: a body without triggers offers the action kind and none of the reflex fields.
+    bindRoutine.update({ paramsSchema: capabilities(features).triggers ? reflexBinding : actionBinding });
     status.update({
       description: capabilities(features).milestones
         ? "Deaths and reconnects since the body started, and progress toward this body's milestones (graded from the server's statistics)."
@@ -444,7 +589,7 @@ export async function serveMcp(bodyName: string, toolSet: ToolSet): Promise<void
     runProgram.update({ description: runDescription(apiDoc) });
   }
 
-  for (const tool of [listKits, kitDocs, useKits, kitSave, kitRemove, kitSource, kitSearch, kitTry, kitVersions, kitRevert, wikiSearch, wikiRead, wikiList, addLesson, triggerAdd, triggerList, triggerRemove, triggerSetEnabled]) tool.disable();
+  for (const tool of [listKits, kitDocs, useKits, kitSave, kitRemove, kitSource, kitSearch, kitTry, kitVersions, kitRevert, wikiSearch, wikiRead, wikiList, addLesson, triggerAdd, triggerList, triggerRemove, triggerSetEnabled, callRoutine, bindRoutine, listRoutines, routineSave, routineSource, routineVersions, routineRevert, unbindRoutine]) tool.disable();
   // Ungated tools outside the core set: programs have notes, status(), and bot.chat.
   if (toolSet !== "full") for (const tool of [status, notesList, notesSet, notesDelete, sendChat]) tool.disable();
   await sync();

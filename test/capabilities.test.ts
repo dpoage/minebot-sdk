@@ -83,11 +83,11 @@ describe("the capability table", () => {
       assert.doesNotMatch(usage, forbidden, `usageFor leaks ${capability}`);
 
       // The MCP tool plan, in both tool sets: the capability's tools are disabled, and no enabled tool leaks it.
-      // kit_docs is the one gated tool in the core set (test/mcp.test.ts checks the whole list).
+      // kit_docs, call_routine and bind_routine are the gated tools in the core set (test/mcp.test.ts checks the whole list).
       const capsNow = capabilities(features);
       for (const toolSet of TOOL_SETS) {
         for (const [tool, entry] of Object.entries(toolPlan(features, toolSet))) {
-          const served = capsNow[capabilityOf(tool)] && (toolSet === "full" || tool === "kit_docs");
+          const served = capsNow[capabilityOf(tool)] && (toolSet === "full" || CORE_GATED_TOOLS.includes(tool));
           assert.equal(entry.enabled, served, `${tool} enabled state wrong with ${capability} off in the ${toolSet} set`);
           if (entry.enabled) assert.doesNotMatch(entry.description, forbidden, `enabled tool ${tool} description leaks ${capability}`);
         }
@@ -128,7 +128,21 @@ describe("the capability table", () => {
     assert.ok(gated.some((match) => match[1]!.startsWith("/triggers")), "trigger routes are gated");
     // The CLI's feature commands come from the same gates.
     const cli = readFileSync(new URL("../src/cli.ts", import.meta.url), "utf8");
-    assert.match(cli, /const FEATURE_COMMANDS: Record<string, \(features: BodyFeatures\) => boolean> = \{\s*kits: CAPABILITY_GATES\.kits,\s*wiki: CAPABILITY_GATES\.wiki,\s*milestones: CAPABILITY_GATES\.milestones,\s*triggers: CAPABILITY_GATES\.triggers,\s*\};/);
+    assert.match(cli, /const FEATURE_COMMANDS: Record<string, \(features: BodyFeatures\) => boolean> = \{\s*kits: CAPABILITY_GATES\.kits,\s*wiki: CAPABILITY_GATES\.wiki,\s*milestones: CAPABILITY_GATES\.milestones,\s*triggers: CAPABILITY_GATES\.triggers,\s*routines: CAPABILITY_GATES\.routines,\s*bind: CAPABILITY_GATES\.routines,\s*unbind: CAPABILITY_GATES\.routines,\s*call: CAPABILITY_GATES\.routines,\s*\};/);
+  });
+
+  it("describes reflexes in bind_routine exactly when the body offers triggers, and the routine tools exactly when it offers routines", () => {
+    for (const toolSet of TOOL_SETS) {
+      const withTriggers = toolPlan(EVERYTHING, toolSet);
+      const withoutTriggers = toolPlan(withOff("triggers"), toolSet);
+      assert.match(withTriggers.bind_routine!.description, /reflex/);
+      assert.doesNotMatch(withoutTriggers.bind_routine!.description, /reflex|trigger|cooldown|preempt/i);
+      assert.equal(withoutTriggers.bind_routine!.enabled, true, "bind_routine stays for actions");
+      for (const tool of ROUTINE_TOOLS) {
+        assert.equal(withTriggers[tool]!.enabled, toolSet === "full" || tool === "bind_routine" || tool === "call_routine", `${tool} in the ${toolSet} set`);
+        assert.equal(toolPlan(withOff("routines"), toolSet)[tool]!.enabled, false, `${tool} must be off without routines`);
+      }
+    }
   });
 
   it("tags every routine and binding route with the routines capability", () => {
@@ -170,6 +184,10 @@ function capabilitiesOn(features: BodyFeatures): Capability[] {
   return CAPABILITIES.filter((capability) => CAPABILITY_GATES[capability](features));
 }
 
+/** The gated tools the core set serves: the rest of the gated tools are in the full set only. */
+const CORE_GATED_TOOLS = ["kit_docs", "call_routine", "bind_routine"];
+const ROUTINE_TOOLS = ["call_routine", "bind_routine", "list_routines", "routine_save", "routine_source", "routine_versions", "routine_revert", "unbind_routine"];
+
 /** The capability a capability-gated tool belongs to. */
 function capabilityOf(tool: string): Capability {
   const byTool: Record<string, Capability> = {
@@ -191,6 +209,7 @@ function capabilityOf(tool: string): Capability {
     trigger_list: "triggers",
     trigger_remove: "triggers",
     trigger_set_enabled: "triggers",
+    ...Object.fromEntries(ROUTINE_TOOLS.map((routineTool) => [routineTool, "routines" as const])),
   };
   const capability = byTool[tool];
   if (capability === undefined) throw new Error(`unknown tool ${tool}`);
