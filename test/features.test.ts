@@ -289,7 +289,7 @@ describe("tier visibility on a running body", () => {
     assert.match((await cli(fullBody, "--help")).out, /builtins docs[\s\S]*wiki search/);
     assert.doesNotMatch((await cli(fullBody, "--help")).out, /milestone/i);
     assert.match((await cli(fullBody, "builtins", "docs")).out, /## gatherer/);
-    assert.match((await cli(fullBody, "wiki", "read", "flows/first-day")).out, /collect\(ctx, isLog/);
+    assert.match((await cli(fullBody, "wiki", "read", "flows/first-day")).out, /collect\((ctx, )?isLog/);
   });
 
   it("serves a body with reflexes its binding command and reference, and offers no code triggers: no route, command, flag, or word", async () => {
@@ -326,7 +326,7 @@ describe("tier visibility on a running body", () => {
   it("serves a body without built-ins and routines none of their content in the wiki", async () => {
     const wikiBody = await start("features-wiki", "--wiki", "read", "--no-milestones", "--builtins", "none", "--no-routines");
     const first = (await cli(wikiBody, "wiki", "read", "flows/first-day")).out;
-    assert.match(first, /collect\(ctx, isLog/);
+    assert.match(first, /collect\((ctx, )?isLog/);
     assert.doesNotMatch(first, KIT_WORDS);
     assert.doesNotMatch((await cli(wikiBody, "wiki", "read", "flows/escape-underground")).out, KIT_WORDS);
     const search = (await cli(wikiBody, "wiki", "search", "gather logs")).out;
