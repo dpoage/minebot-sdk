@@ -1,6 +1,6 @@
 // Reads the containers out of a saved world: the block entities with an inventory, in every chunk of every region file.
 // The snapshot (snapshot.ts) uses it after the server flushed its chunks, so the contents are the server's own record.
-// It runs in the body's container, which mounts the world volume read-only; it is not part of the verifier image.
+// It runs in the grader's container, which mounts the world volume read-only (the body has no world mount); it is not part of the verifier image.
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { inflateSync, gunzipSync } from "node:zlib";
