@@ -2,7 +2,7 @@
 // triggers, action bindings, per-kit stores, agent kits, and routines survive body restarts here, and every file is written atomically.
 import path from "node:path";
 import { JsonStore } from "../store.ts";
-import { Notes } from "./notes.ts";
+import { Notes } from "../notes.ts";
 
 export class BodyState {
   readonly dir: string;

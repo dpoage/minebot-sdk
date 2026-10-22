@@ -1,10 +1,10 @@
 // Notes: the agent's own persistent notepad on the body. Notes survive context compaction,
 // body restarts, and a change of harness, so a long-running agent can keep its plan and findings here.
 import { z } from "zod";
-import { MAX_NOTES, NoteKey, NoteText, type Note } from "../protocol/index.ts";
-import type { JsonStore } from "../store.ts";
+import { MAX_NOTES, NoteKey, NoteText, type Note } from "./protocol/index.ts";
+import type { JsonStore } from "./store.ts";
 
-export { MAX_NOTES, MAX_NOTE_LENGTH, NoteKey, NoteText } from "../protocol/index.ts";
+export { MAX_NOTES, MAX_NOTE_LENGTH, NoteKey, NoteText } from "./protocol/index.ts";
 
 export class NoteLimitError extends Error {}
 

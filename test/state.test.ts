@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, it } from "node:test";
 import type { Bot } from "mineflayer";
-import { MAX_NOTES, NoteLimitError, Notes } from "../src/host/notes.ts";
+import { MAX_NOTES, NoteLimitError, Notes } from "../src/notes.ts";
 import { StallTracker } from "../src/host/progress.ts";
 import { statsFromEntries } from "../src/host/stats.ts";
 import { JsonStore } from "../src/store.ts";

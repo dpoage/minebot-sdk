@@ -13,7 +13,7 @@ import { invokeRoutine } from "../routine/invoke.ts";
 import { programGlobals, routineContext, type GlobalsDeps } from "./globals.ts";
 import type { RoutineLoader } from "./routines/loader.ts";
 import { briefOf, observation } from "./observation.ts";
-import { Notes } from "./notes.ts";
+import { Notes } from "../notes.ts";
 import { StallTracker } from "./progress.ts";
 import { requestStats } from "./stats.ts";
 import { BodyState } from "./state.ts";

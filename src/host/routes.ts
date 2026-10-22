@@ -49,7 +49,7 @@ import { HttpError, parse, parseBody } from "../protocol/request.ts";
 import { WikiDisabledError, WikiPageNotFoundError } from "../wiki/wiki.ts";
 import type { Body, RunRecorder } from "./body.ts";
 import { NotConnectedError } from "./connection.ts";
-import { NoteLimitError } from "./notes.ts";
+import { NoteLimitError } from "../notes.ts";
 import type { Bindings } from "./bindings.ts";
 import { BindingConflictError } from "./bindings.ts";
 import { RoutineSourceError, type RoutineLibrary } from "./routines/library.ts";
