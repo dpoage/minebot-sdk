@@ -127,6 +127,8 @@ describe("package boundaries", () => {
     // The harness ships in dist/, so it may load the kit framework and the shipped kits, and nothing that starts a body or talks to one.
     const outside = files.filter((file) => !file.startsWith("src/") || file.startsWith("src/body/") || file.startsWith("src/host/") || file.startsWith("src/client/") || file === "src/cli.ts");
     assert.deepEqual(outside, [], "the testing entry would ship or crash on body or client code");
+    // It runs routines through the routine runtime's one call (invoke, and define for the metadata it reads); the bot host's routine loader and library stay out (src/host/ is refused above).
+    assert.deepEqual(files.filter((file) => file.startsWith("src/routine/")), ["src/routine/define.ts", "src/routine/invoke.ts"]);
   });
 
   it("keeps the supervisor free of the bot host, the kits, the programs, the wiki, and the Minecraft libraries", () => {

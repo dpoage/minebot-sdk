@@ -41,7 +41,7 @@ import { HttpError, parse, parseBody } from "../protocol/request.ts";
 import { WikiDisabledError, WikiPageNotFoundError } from "../wiki/wiki.ts";
 import type { Body, RunRecorder } from "./body.ts";
 import { NotConnectedError } from "./connection.ts";
-import { NoteLimitError } from "./notes.ts";
+import { NoteLimitError } from "../notes.ts";
 import { TriggerInvalidError, TriggerLimitError, TriggerNotFoundError } from "./triggers.ts";
 
 export interface RequestContext {

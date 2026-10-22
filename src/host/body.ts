@@ -11,7 +11,7 @@ import { Connection, type ServerAuth } from "./connection.ts";
 import { programFinished, type EventSink, type FiringOf, type LostFiring, type TriggerDisabled, type TriggerFinished } from "../protocol/host.ts";
 import { programGlobals, type GlobalsDeps } from "./globals.ts";
 import { briefOf, observation } from "./observation.ts";
-import { Notes } from "./notes.ts";
+import { Notes } from "../notes.ts";
 import { StallTracker } from "./progress.ts";
 import { requestStats } from "./stats.ts";
 import { BodyState } from "./state.ts";

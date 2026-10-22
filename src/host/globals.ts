@@ -8,7 +8,7 @@ import { capabilities, type BodyFeatures, type LessonInput, type StatusResponse 
 import type { ProgramScope } from "../program/scope.ts";
 import type { WikiAccess } from "../wiki/access.ts";
 import type { Connection } from "./connection.ts";
-import type { Notes } from "./notes.ts";
+import type { Notes } from "../notes.ts";
 import type { Triggers } from "./triggers.ts";
 
 const { goals, Movements } = pathfinderPkg;
