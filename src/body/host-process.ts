@@ -7,6 +7,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { MAX_TIMEOUT_MS, type RunResult, type RunStatus } from "../protocol/index.ts";
 import {
+  crashDetail,
   hostArguments,
   hungCause,
   KILL_MARGIN_MS,
@@ -17,6 +18,7 @@ import {
   triggerFinished,
   type FinishedEnd,
   type FromHost,
+  type HostCrash,
   type HostInit,
   type FiringOf,
   type LostFiring,
@@ -113,6 +115,8 @@ interface Attempt {
   readyAt: number;
   /** Why the supervisor killed it, when it did. */
   cause?: string;
+  /** The uncaught error it reported as its last message, when it did. */
+  crash?: HostCrash;
 }
 
 export class HostProcess {
@@ -366,6 +370,9 @@ export class HostProcess {
         // This host's counts already hold the firing it was started to count (its Triggers counts it before sending any): no later host counts it again.
         this.#lostFiring = undefined;
         return;
+      case "crashed":
+        attempt.crash = { message: message.message, ...(message.frame !== undefined && { frame: message.frame }) };
+        return;
       case "state":
         this.#connected = message.connected;
         // Trigger counts come only with a delivery or trigger_counts, in order with the ends they follow.
@@ -508,7 +515,9 @@ export class HostProcess {
       }
       if (run.requestId !== undefined) answers.set(run.requestId, answer);
     }
-    this.#events.push("disconnected", { reason: `bot host restarted: ${cause}` });
+    // A host the supervisor ended names its own cause; the error of one that crashed on its own follows the exit text.
+    const crash = attempt.cause === undefined && attempt.crash !== undefined ? `: ${crashDetail(attempt.crash)}` : "";
+    this.#events.push("disconnected", { reason: `bot host restarted: ${cause}${crash}` });
     // A request the host already answered is not waiting any more.
     for (const [id, answer] of answers) {
       this.#requests.get(id)?.resolve(answer);
