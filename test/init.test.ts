@@ -4,12 +4,13 @@
 // for the published layout's own check).
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { after, describe, it } from "node:test";
 import { promisify } from "node:util";
 import { initWorkspace } from "../src/client/init.ts";
+import { ROUTINE_COMPILER_OPTIONS } from "../src/protocol/routine-tsconfig.ts";
 import { usageFor } from "../src/client/usage.ts";
 
 const exec = promisify(execFile);
@@ -32,6 +33,37 @@ async function minebot(...args: string[]): Promise<{ code: number; out: string; 
     const failed = err as { code: number; stdout: string; stderr: string };
     return { code: failed.code, out: failed.stdout, err: failed.stderr };
   }
+}
+
+/**
+ * The compiler options of the project the body's routine check compiles. The check runs in a child whose
+ * `typescript` resolves to a stand-in compiler that copies the project's tsconfig.json out and passes.
+ */
+async function routineCheckOptions(): Promise<Record<string, unknown>> {
+  const root = path.join(SCRATCH, "check");
+  const typescript = path.join(root, "typescript");
+  mkdirSync(path.join(typescript, "bin"), { recursive: true });
+  writeFileSync(path.join(typescript, "package.json"), '{ "name": "typescript" }\n');
+  writeFileSync(
+    path.join(typescript, "bin", "tsc"),
+    'const fs = require("node:fs");\nconst path = require("node:path");\nfs.copyFileSync(path.join(process.argv[process.argv.indexOf("-p") + 1], "tsconfig.json"), process.env.MINEBOT_TEST_TSCONFIG);\n',
+  );
+  const preload = path.join(root, "stand-in-typescript.cjs");
+  writeFileSync(
+    preload,
+    `const Module = require("node:module");\nconst resolve = Module._resolveFilename;\nModule._resolveFilename = function (request, ...rest) {\n  return request === "typescript/package.json" ? ${JSON.stringify(path.join(typescript, "package.json"))} : resolve.call(this, request, ...rest);\n};\n`,
+  );
+  const library = path.join(root, "library");
+  mkdirSync(library);
+  writeFileSync(path.join(library, "walk.ts"), "export default 1;\n");
+  const copied = path.join(root, "tsconfig.json");
+  const script = `import { typeCheckRoutine } from ${JSON.stringify(new URL("../src/host/typecheck.ts", import.meta.url).href)};
+console.log(JSON.stringify(await typeCheckRoutine(${JSON.stringify(library)}, "walk")));`;
+  const { stdout } = await exec("node", ["--conditions=minebot-sdk:source", "--require", preload, "--input-type=module", "--eval", script], {
+    env: { ...process.env, MINEBOT_TEST_TSCONFIG: copied },
+  });
+  assert.deepEqual(JSON.parse(stdout), { status: "passed" });
+  return JSON.parse(readFileSync(copied, "utf8")).compilerOptions;
 }
 
 describe("initWorkspace", () => {
@@ -64,6 +96,22 @@ describe("initWorkspace", () => {
     assert.equal(compilerOptions.allowImportingTsExtensions, true);
     assert.deepEqual(compilerOptions.rootDirs, ["routines", "runs"]);
     assert.deepEqual(include, ["routines/**/*.ts", "runs/**/*.ts", "test/**/*.ts"]);
+  });
+
+  it("type-checks with the options of the body's routine check: the shared options, and every option the check's project sets", async () => {
+    const dir = freshDir();
+    await initWorkspace(dir);
+    const workspace: Record<string, unknown> = JSON.parse(read(dir, "tsconfig.json")).compilerOptions;
+    const check = await routineCheckOptions();
+    for (const [key, value] of Object.entries(ROUTINE_COMPILER_OPTIONS)) {
+      assert.deepEqual(workspace[key], value, `workspace ${key}`);
+      assert.deepEqual(check[key], value, `check ${key}`);
+    }
+    // The check's own project sets customConditions only because it runs from source here; a workspace takes the installed package.
+    const { customConditions, ...checkOptions } = check;
+    assert.deepEqual(customConditions, ["minebot-sdk:source"]);
+    for (const [key, value] of Object.entries(checkOptions)) assert.deepEqual(workspace[key], value, `the check sets ${key}`);
+    assert.deepEqual(Object.keys(workspace).filter((key) => !(key in checkOptions)), ["rootDirs"]);
   });
 
   it("writes a routine that calls a built-in by import, a run that imports it, and a test through the harness", async () => {

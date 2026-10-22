@@ -5,6 +5,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
 import { PACKAGE_ROOT } from "../package.ts";
+import { ROUTINE_COMPILER_OPTIONS } from "../protocol/routine-tsconfig.ts";
 
 const EXAMPLE_ROUTINE = `// An example routine: copy it, rename it, and change what it does. Save it into a body's library
 // with: npx minebot routines save routines/*.ts
@@ -105,23 +106,13 @@ async function packageJson(dir: string): Promise<string> {
   )}\n`;
 }
 
+// The body's routine check options, plus what only a workspace has: the Node types it installs, and the run folder.
+// The body's check also sets customConditions when it runs from source; a workspace takes the installed package.
 const TSCONFIG = `${JSON.stringify(
   {
     compilerOptions: {
-      target: "es2023",
-      module: "nodenext",
-      strict: true,
-      noEmit: true,
-      skipLibCheck: true,
-      // esnext: Node 24 has Promise.withResolvers, which the built-in routines use; the body's own check uses the same lib.
-      lib: ["esnext"],
+      ...ROUTINE_COMPILER_OPTIONS,
       types: ["node"],
-      moduleDetection: "force",
-      // Files import each other by their .ts names.
-      allowImportingTsExtensions: true,
-      // The body only strips types, so the check refuses what stripping cannot run: a type imported as a value, an enum.
-      verbatimModuleSyntax: true,
-      erasableSyntaxOnly: true,
       // A run's \`./hello.ts\` names a library module, which is routines/hello.ts here: the two folders read as one.
       rootDirs: ["routines", "runs"],
     },

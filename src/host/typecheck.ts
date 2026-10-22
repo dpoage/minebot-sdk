@@ -8,6 +8,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { PACKAGE_ROOT } from "../package.ts";
 import type { TypeCheck } from "../protocol/index.ts";
+import { ROUTINE_COMPILER_OPTIONS } from "../protocol/routine-tsconfig.ts";
 import { RoutineLibrary } from "./routines/library.ts";
 
 const run = promisify(execFile);
@@ -124,25 +125,14 @@ declare var require: RoutineRequire;
 `;
 
 /**
- * The options of the check of a routine: the ones that make the module load as the body loads it, as
- * ES TypeScript that Node only strips of types. `verbatimModuleSyntax` rejects `import { Bot } from
- * "mineflayer"` (a type imported as a value, which the runtime cannot load) and `erasableSyntaxOnly` rejects
- * enums, namespaces with code, and parameter properties.
+ * The project of the check of a routine: the routine options (shared with the workspace `minebot init`
+ * writes), the Node types when they are installed, and the source entry points when the body runs from source.
  */
 function routineTsconfig(file: string, nodeTypes: boolean): string {
   return JSON.stringify({
     compilerOptions: {
-      target: "esnext",
-      module: "nodenext",
-      strict: true,
-      noEmit: true,
-      skipLibCheck: true,
-      lib: ["esnext"],
+      ...ROUTINE_COMPILER_OPTIONS,
       types: nodeTypes ? ["node"] : [],
-      moduleDetection: "force",
-      allowImportingTsExtensions: true,
-      erasableSyntaxOnly: true,
-      verbatimModuleSyntax: true,
       // A body running from source takes the package's entry points from src/; an installed one from dist/.
       ...(import.meta.url.endsWith(".ts") && { customConditions: ["minebot-sdk:source"] }),
     },
