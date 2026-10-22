@@ -64,7 +64,7 @@ describe("minebot mcp tool sets", () => {
     assert.deepEqual(await tools(url, "--tools", "full"), FULL);
   });
 
-  it("serves no routine tool, in either set, for a body without routines", async () => {
+  it("serves no routine tool but the call of a built-in, in either set, for a body without routines", async () => {
     const { server, url: bare } = await stubBody({ ...EVERYTHING, routines: false });
     try {
       for (const args of [[], ["--tools", "full"]]) {
