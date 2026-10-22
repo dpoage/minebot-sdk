@@ -1,6 +1,6 @@
-// Renderers for agent-facing output: program runs, status, notes, wiki hits and pages.
+// Renderers for agent-facing output: program runs, status, notes, wiki hits and pages, routines and their bindings.
 // The CLI and the MCP server share them, so an agent sees the same text through both.
-import type { ActionStats, KitInfo, KitSearchHit, KitVersion, Note, RunResult, SearchHit, StatusResponse, TriggerInfo } from "../protocol/index.ts";
+import type { ActionStats, BindingInfo, BindResponse, KitInfo, KitSearchHit, KitTypeCheck, KitVersion, Note, RoutineInfo, RoutineVersion, RunResult, SaveRoutineResponse, SearchHit, StatusResponse, TriggerInfo } from "../protocol/index.ts";
 
 const json = (value: unknown) => JSON.stringify(value, null, 2);
 
@@ -68,18 +68,70 @@ export function formatKitVersions(name: string, versions: KitVersion[]): string 
     .join("\n");
 }
 
+/** What a trigger and a reflex share in their rendering: when it fires, its state, its limits, and what it has done since the body started. */
+type Firing = Pick<TriggerInfo, "on" | "from" | "match" | "when" | "preempt" | "priority" | "enabled" | "disabledReason" | "cooldownMs" | "timeoutMs" | "fired" | "lastStatus" | "lastError">;
+
+function formatFiring(head: string, t: Firing): string {
+  const filters = [t.from && `from ${t.from}`, t.match && `match /${t.match}/`, t.when && `when ${t.when}`, t.preempt && "preempts", t.priority !== 0 && `priority ${t.priority}`]
+    .filter(Boolean)
+    .join("; ");
+  const state = t.enabled ? "on" : `off: ${t.disabledReason ?? "disabled"}`;
+  const last = t.lastStatus ? `; last ${t.lastStatus}${t.lastError ? ` (${t.lastError.split("\n")[0]})` : ""}` : "";
+  return `${head}  [${state}]  on ${t.on.join(", ")}${filters ? `; ${filters}` : ""}\n  cooldown ${t.cooldownMs} ms, timeout ${t.timeoutMs} ms; fired ${t.fired} times${last}`;
+}
+
 /** Renders a trigger listing: one header line per trigger, then what it did since the body started. */
 export function formatTriggers(triggers: TriggerInfo[]): string {
-  return triggers
-    .map((t) => {
-      const filters = [t.from && `from ${t.from}`, t.match && `match /${t.match}/`, t.when && `when ${t.when}`, t.preempt && "preempts", t.priority !== 0 && `priority ${t.priority}`]
-        .filter(Boolean)
-        .join("; ");
-      const state = t.enabled ? "on" : `off: ${t.disabledReason ?? "disabled"}`;
-      const last = t.lastStatus ? `; last ${t.lastStatus}${t.lastError ? ` (${t.lastError.split("\n")[0]})` : ""}` : "";
-      return `${t.name}  [${state}]  on ${t.on.join(", ")}${filters ? `; ${filters}` : ""}\n  cooldown ${t.cooldownMs} ms, timeout ${t.timeoutMs} ms; fired ${t.fired} times${last}`;
-    })
-    .join("\n");
+  return triggers.map((t) => formatFiring(t.name, t)).join("\n");
+}
+
+/** `act  v3  2026-10-21T...`: a routine, its saved version, and when it was saved. */
+function formatRoutine(routine: RoutineInfo): string {
+  return routine.version === undefined ? `${routine.name}  (not saved through the library)` : `${routine.name}  v${routine.version}  ${routine.savedAt}`;
+}
+
+/** The routine library, one line per routine. */
+function formatRoutines(routines: RoutineInfo[]): string {
+  return routines.length === 0 ? "no routines" : routines.map(formatRoutine).join("\n");
+}
+
+/** Renders the saved versions of a routine, one per line: the same as for an agent kit. */
+export function formatRoutineVersions(name: string, versions: RoutineVersion[]): string {
+  return versions.length === 0 ? `no saved versions of ${name}` : formatKitVersions(name, versions);
+}
+
+/** Bindings: an action on one line, a reflex with its filters, limits, and what it has done since the body started. */
+function formatBindings(bindings: BindingInfo[]): string {
+  return bindings.length === 0
+    ? "no bindings"
+    : bindings.map((b) => (b.kind === "action" ? `${b.name}  action of ${b.routine}` : formatFiring(`${b.name}  reflex of ${b.routine}`, b))).join("\n");
+}
+
+/** Renders the routine library and the bindings over it: what an agent reads to see what it can call and what runs on its own. */
+export function formatLibrary(routines: RoutineInfo[], bindings: BindingInfo[]): string {
+  return `routines:\n${formatRoutines(routines)}\n\nbindings:\n${formatBindings(bindings)}`;
+}
+
+/** Renders the type check of a routine's source: the verdict, then one line per error. */
+function formatTypeCheck(check: KitTypeCheck): string {
+  if (check.status === "passed") return "type check: passed";
+  if (check.status === "skipped") return `type check: skipped (${check.reason})`;
+  return `type check: failed\n${check.errors.map((error) => `  ${error}`).join("\n")}`;
+}
+
+/** Renders a saved routine and the type check of its source, which did not stop the save. */
+export function formatSavedRoutine({ routine, typeCheck }: SaveRoutineResponse): string {
+  return `saved ${formatRoutine(routine)}\n${formatTypeCheck(typeCheck)}`;
+}
+
+/** Renders a routine after a revert: the new version holds the earlier source. */
+export function formatRevertedRoutine(routine: RoutineInfo): string {
+  return `reverted ${formatRoutine(routine)}`;
+}
+
+/** Renders a binding as the body stored it, and whether it replaced one of the same name. */
+export function formatBound({ binding, replaced }: BindResponse): string {
+  return `${replaced ? "replaced" : "bound"} ${formatBindings([binding])}`;
 }
 
 /** Renders a note listing, one header line per note. */

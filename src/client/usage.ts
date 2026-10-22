@@ -17,7 +17,7 @@ const NOTHING: BodyFeatures = { kits: [], kitsLocked: true, agentKits: false, wi
  */
 export function usageFor(features: BodyFeatures | null, hasBody = HAS_BODY, operatorFlags: readonly string[] = []): string {
   const f = features ?? (hasBody ? EVERYTHING : NOTHING);
-  const caps = { kits: CAPABILITY_GATES.kits(f), kitSwitching: CAPABILITY_GATES.kitSwitching(f), agentKits: CAPABILITY_GATES.agentKits(f), wiki: CAPABILITY_GATES.wiki(f), lessons: CAPABILITY_GATES.lessons(f), milestones: CAPABILITY_GATES.milestones(f), triggers: CAPABILITY_GATES.triggers(f) };
+  const caps = { kits: CAPABILITY_GATES.kits(f), kitSwitching: CAPABILITY_GATES.kitSwitching(f), agentKits: CAPABILITY_GATES.agentKits(f), wiki: CAPABILITY_GATES.wiki(f), lessons: CAPABILITY_GATES.lessons(f), milestones: CAPABILITY_GATES.milestones(f), triggers: CAPABILITY_GATES.triggers(f), routines: CAPABILITY_GATES.routines(f) };
   // Starting a body is for whoever runs it. A body that answers is already running, and its agent has no use for the flags.
   const operator = hasBody && features === null;
   const commands = [
@@ -35,6 +35,22 @@ export function usageFor(features: BodyFeatures | null, hasBody = HAS_BODY, oper
           `  triggers             List the body's triggers: programs that run when an event arrives. "triggers add <name> --on <a,b> [file]"`,
           `                       saves one (program from stdin when file is omitted; options --from, --match, --when, --cooldown, --timeout,`,
           `                       --priority, --preempt), "triggers rm|enable|disable <name>".`,
+        ]
+      : []),
+    ...(caps.routines
+      ? [
+          `  routines             List the saved routines (TypeScript modules the body runs by name) and what is bound to them. "routines save <file...>"`,
+          `                       saves each .ts or .js file under its file name, in the order given (list the modules a routine imports first, so its type`,
+          `                       check finds them), "routines source|versions <name>", "routines revert <name> <n>".`,
+          `  bind action <name> <routine>   Bind a name to a saved routine; "call" runs it.`,
+          ...(caps.triggers
+            ? [
+                `  bind reflex <name> <routine> --on <a,b>   Run a saved routine on its own when an event arrives (options --from, --match, --when,`,
+                `                       --cooldown, --timeout, --priority, --preempt).`,
+              ]
+            : []),
+          `  unbind <name>        Remove a binding.`,
+          `  call <name>          Call the routine bound to name as an action; --args <json> are its arguments. Prints and exits like run.`,
         ]
       : []),
     "  stop                 Abort the running program.",
@@ -76,6 +92,7 @@ export function usageFor(features: BodyFeatures | null, hasBody = HAS_BODY, oper
     ...(operator ? operatorFlags : []),
     "  run:    --timeout <ms>",
     "  wait:   --types <a,b>, --from <name>, --match <regex>, --since <seq>, --timeout <ms>; prints \"timed out\" on timeout",
+    ...(caps.routines ? ["  call:   --args <json>, --timeout <ms>"] : []),
     "  events: --since <seq>",
     ...(caps.wiki ? ["  wiki:   --limit <n> (search results, default 5)"] : []),
   ];

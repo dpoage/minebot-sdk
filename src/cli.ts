@@ -7,12 +7,12 @@ import path from "node:path";
 import { text } from "node:stream/consumers";
 import { parseArgs } from "node:util";
 import { BodyClient } from "./client/client.ts";
-import { formatKitHits, formatKits, formatKitVersions, formatRun, formatStatus, formatTriggers } from "./client/render.ts";
+import { formatBound, formatKitHits, formatKits, formatKitVersions, formatLibrary, formatRevertedRoutine, formatRoutineVersions, formatRun, formatSavedRoutine, formatStatus, formatTriggers } from "./client/render.ts";
 import { HAS_BODY, usageFor } from "./client/usage.ts";
 import { BODY_FLAG_OPTIONS, OPERATOR_FLAG_HELP } from "./client/body-flags.ts";
 import { ENV_FILE, initWorkspace } from "./client/init.ts";
 import { generateEnv } from "./protocol/declarations.ts";
-import { CAPABILITY_GATES, DEFAULT_SERVER_HOST, DEFAULT_SERVER_PORT, type BodyFeatures, RUNTIME_DIR } from "./protocol/index.ts";
+import { CAPABILITY_GATES, DEFAULT_SERVER_HOST, DEFAULT_SERVER_PORT, type BodyFeatures, RUNTIME_DIR, type RunResult } from "./protocol/index.ts";
 
 const { values: opts, positionals } = parseArgs({
   allowPositionals: true,
@@ -44,6 +44,27 @@ const { values: opts, positionals } = parseArgs({
 const [command, ...rest] = positionals;
 const print = (value: unknown) => console.log(JSON.stringify(value, null, 2));
 
+/** Prints a run as `minebot run` does and gives the exit code it ends with: 0 for an ok run, 2 for any other status. */
+function printRun(run: RunResult): number {
+  console.log(formatRun(run));
+  return run.status === "ok" ? 0 : 2;
+}
+
+/** The trigger options of the command line, as the body takes them. `command` names who needs them, for the error. */
+function triggerOptions(command: string) {
+  if (!opts.on) throw new Error(`${command} needs --on <event types>`);
+  return {
+    on: opts.on.split(",").map((t) => t.trim()).filter(Boolean),
+    from: opts.from,
+    match: opts.match,
+    when: opts.when,
+    cooldownMs: opts.cooldown === undefined ? undefined : Number(opts.cooldown),
+    timeoutMs: opts.timeout === undefined ? undefined : Number(opts.timeout),
+    priority: opts.priority === undefined ? undefined : Number(opts.priority),
+    preempt: opts.preempt || undefined,
+  };
+}
+
 /** What the body offers, or null when it cannot be reached. */
 async function probeFeatures(): Promise<BodyFeatures | null> {
   try {
@@ -59,6 +80,10 @@ const FEATURE_COMMANDS: Record<string, (features: BodyFeatures) => boolean> = {
   wiki: CAPABILITY_GATES.wiki,
   milestones: CAPABILITY_GATES.milestones,
   triggers: CAPABILITY_GATES.triggers,
+  routines: CAPABILITY_GATES.routines,
+  bind: CAPABILITY_GATES.routines,
+  unbind: CAPABILITY_GATES.routines,
+  call: CAPABILITY_GATES.routines,
 };
 
 async function main(): Promise<number> {
@@ -153,20 +178,9 @@ async function main(): Promise<number> {
         }
         case "add": {
           if (!name) throw new Error("triggers add needs a name");
-          if (!opts.on) throw new Error("triggers add needs --on <event types>");
+          const options = triggerOptions("triggers add");
           const run = !file || file === "-" ? await text(process.stdin) : await readFile(file, "utf8");
-          const { trigger, replaced } = await client.addTrigger({
-            name,
-            on: opts.on.split(",").map((t) => t.trim()).filter(Boolean),
-            run,
-            from: opts.from,
-            match: opts.match,
-            when: opts.when,
-            cooldownMs: opts.cooldown === undefined ? undefined : Number(opts.cooldown),
-            timeoutMs: opts.timeout === undefined ? undefined : Number(opts.timeout),
-            priority: opts.priority === undefined ? undefined : Number(opts.priority),
-            preempt: opts.preempt || undefined,
-          });
+          const { trigger, replaced } = await client.addTrigger({ name, run, ...options });
           console.log(`${replaced ? "replaced" : "saved"} trigger\n${formatTriggers([trigger])}`);
           return 0;
         }
@@ -191,8 +205,71 @@ async function main(): Promise<number> {
       const code = file?.endsWith(".ts") ? stripTypeScriptTypes(source) : source;
       const client = await BodyClient.connect(opts.bot);
       const run = await client.run(code, opts.timeout === undefined ? undefined : Number(opts.timeout));
-      console.log(formatRun(run));
-      return run.status === "ok" ? 0 : 2;
+      return printRun(run);
+    }
+    case "routines": {
+      const client = await BodyClient.connect(opts.bot);
+      const [action, ...names] = rest;
+      switch (action) {
+        case undefined: {
+          const [{ routines }, { bindings }] = await Promise.all([client.routines(), client.bindings()]);
+          console.log(formatLibrary(routines, bindings));
+          return 0;
+        }
+        case "save": {
+          if (names.length === 0) throw new Error("routines save needs at least one .ts or .js file");
+          // Every file is checked before the first is sent: a typo in the last name saves nothing.
+          const modules = names.map((file) => {
+            const extension = path.extname(file);
+            if (extension !== ".ts" && extension !== ".js") throw new Error(`routines save takes .ts or .js files, not ${file}`);
+            return { file, name: path.basename(file, extension) };
+          });
+          for (const { file, name } of modules) console.log(formatSavedRoutine(await client.saveRoutine(name, await readFile(file, "utf8"))));
+          return 0;
+        }
+        case "source":
+          if (!names[0]) throw new Error("routines source needs a routine name");
+          console.log((await client.routineSource(names[0])).source);
+          return 0;
+        case "versions":
+          if (!names[0]) throw new Error("routines versions needs a routine name");
+          console.log(formatRoutineVersions(names[0], (await client.routineVersions(names[0])).versions));
+          return 0;
+        case "revert": {
+          const version = Number(names[1]);
+          if (!names[0] || !Number.isInteger(version)) throw new Error("routines revert needs a routine name and a version number");
+          console.log(formatRevertedRoutine((await client.revertRoutine(names[0], version)).routine));
+          return 0;
+        }
+        default:
+          throw new Error(`unknown routines action "${action}"; use save, source, versions, or revert`);
+      }
+    }
+    case "bind": {
+      const [kind, name, routine] = rest;
+      // Reflexes are triggers over routines: a body that offers no triggers answers as if the kind did not exist. Without an answer from the body, both kinds.
+      const kinds = features && !CAPABILITY_GATES.triggers(features) ? ["action"] : ["action", "reflex"];
+      if (!kind || !kinds.includes(kind)) throw new Error(`bind needs a kind: ${kinds.join(" or ")}`);
+      if (!name || !routine) throw new Error(`bind ${kind} needs a name and a routine: bind ${kind} <name> <routine>`);
+      const client = await BodyClient.connect(opts.bot);
+      console.log(formatBound(await client.bind(kind === "reflex" ? { kind, name, routine, ...triggerOptions("bind reflex") } : { kind: "action", name, routine })));
+      return 0;
+    }
+    case "unbind": {
+      if (!rest[0]) throw new Error("unbind needs a binding name");
+      print(await (await BodyClient.connect(opts.bot)).unbind(rest[0]));
+      return 0;
+    }
+    case "call": {
+      if (!rest[0]) throw new Error("call needs the name of an action");
+      let args: Record<string, unknown> | undefined;
+      try {
+        args = opts.args === undefined ? undefined : JSON.parse(opts.args);
+      } catch (err) {
+        throw new Error(`--args is not JSON: ${err instanceof Error ? err.message : String(err)}`);
+      }
+      const client = await BodyClient.connect(opts.bot);
+      return printRun(await client.call(rest[0], args, opts.timeout === undefined ? undefined : Number(opts.timeout)));
     }
     case "stop":
       print(await (await BodyClient.connect(opts.bot)).stop());
@@ -285,8 +362,7 @@ async function main(): Promise<number> {
         const file = names[0];
         const source = !file || file === "-" ? await text(process.stdin) : await readFile(file, "utf8");
         const run = await client.tryKit(source, opts.action, opts.args === undefined ? undefined : JSON.parse(opts.args), opts.timeout === undefined ? undefined : Number(opts.timeout));
-        console.log(formatRun(run));
-        return run.status === "ok" ? 0 : 2;
+        return printRun(run);
       }
       if (action === "versions") {
         if (!names[0]) throw new Error("kits versions needs a kit name");
