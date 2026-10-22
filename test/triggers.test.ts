@@ -472,6 +472,9 @@ describe("Triggers: the names a reflex may take", () => {
     }
     await assert.rejects(triggers.addReflex({ name: "r", on: ["hurt"], routine: "Not A Routine" }), TriggerInvalidError);
     await assert.rejects(triggers.addReflex({ name: "r", on: ["hurt"], routine: "ok", when: "event.data.health <" }), /when does not compile/);
+    for (const match of ["a(", "[", "(?<x", "*"]) {
+      await assert.rejects(triggers.addReflex({ name: "r", on: ["chat"], routine: "ok", match }), (err: Error) => err instanceof TriggerInvalidError && /must be a regular expression\n {2}→ at match$/.test(err.message), match);
+    }
     await assert.rejects(triggers.addReflex({ name: "r.dotted", on: ["hurt"], routine: "ok" }), TriggerInvalidError);
     assert.deepEqual(triggers.reflexes(), []);
   });
@@ -534,6 +537,32 @@ describe("Triggers: stored entries that are not reflexes", () => {
     const [error] = events.since(0).events.filter((e) => e.type === "reflex_error");
     assert.equal(error!.data.name, "loop");
     assert.match(String(error!.data.error), /cannot listen to reflex events/);
+  });
+
+  describe("under a name unbind cannot take, tell how to remove them: edit triggers.json, not unbind, keeping why each was skipped", () => {
+    const errorsOf = async (entries: Record<string, unknown>) => {
+      const { triggers, events } = await harness({ file: await fileOf({ ...entries, good: reflexEntry }) });
+      assert.deepEqual(triggers.reflexes().map((r) => r.name), ["good"]);
+      return Object.fromEntries(events.since(0).events.filter((e) => e.type === "reflex_error").map((e) => [e.data.name, String(e.data.error)]));
+    };
+    const editFile = (name: string) => `"${name}" is not a name unbind accepts (1-48 lowercase letters, digits, and . _ -, starting with a letter or digit), so remove the entry by stopping the body and deleting "${name}" from triggers.json in its state directory`;
+
+    it("a code trigger or a reflex under \"Bad Name\" or \"UPPER\" gets the edit-the-file text; a dotted name keeps `unbind`", async () => {
+      const errors = await errorsOf({ "Bad Name": codeEntry, UPPER: reflexEntry, "key.login": codeEntry });
+      assert.deepEqual(Object.keys(errors), ["Bad Name", "UPPER", "key.login"]);
+      assert.equal(errors["Bad Name"], `a code trigger saved before reflexes is stored under "Bad Name" and is no longer run; bind a routine as a reflex instead\n${editFile("Bad Name")}`);
+      assert.match(errors.UPPER!, /^✖ use 1-48 lowercase letters[^]*→ at name\n/, "the parse error comes first");
+      assert.ok(errors.UPPER!.endsWith(`\n${editFile("UPPER")}`), errors.UPPER);
+      assert.doesNotMatch(errors.UPPER!, /`unbind/);
+      assert.equal(errors["key.login"], 'a code trigger saved before reflexes is stored under "key.login" and is no longer run; bind a routine as a reflex after `unbind key.login`');
+    });
+
+    it("a junk entry under \"Bad Name\" keeps its parse error and gets the edit-the-file text", async () => {
+      const junk = (await errorsOf({ "Bad Name": { on: "hurt", routine: 5 } }))["Bad Name"]!;
+      assert.match(junk, /^✖ [^]*→ at routine\n/, "the parse error comes first");
+      assert.ok(junk.endsWith(`\n${editFile("Bad Name")}`), junk);
+      assert.doesNotMatch(junk, /`unbind/);
+    });
   });
 
   it("leaves their stored bytes as they were through any binds, unbinds, rebinds, and firings", async () => {

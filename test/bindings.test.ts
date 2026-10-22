@@ -2,10 +2,17 @@
 // map, its persistence across a host SIGKILL and a body restart, the entries a body skips, the
 // names it refuses, and that nothing here ever evaluates a routine's module.
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { createServer, type Server } from "node:http";
+import type { AddressInfo } from "node:net";
 import path from "node:path";
-import { after, describe, it } from "node:test";
+import { text } from "node:stream/consumers";
+import { after, before, describe, it } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
+import { promisify } from "node:util";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import type { BindingInfo, RunResult } from "../src/protocol/index.ts";
 import { BaseStored } from "./fixtures/host/base-trigger-stored.ts";
 import { FakeBody, removeScratch, startFakeBody } from "./fixtures/host/fake-body.ts";
@@ -388,6 +395,70 @@ describe("reflexes and the body's features", () => {
       assert.equal(JSON.parse(readFileSync(path.join(body.stateDir, "triggers.json"), "utf8")).fresh, undefined);
       assert.equal((await body.request("GET", "/triggers")).status, 404);
     });
+  });
+});
+
+describe("a reflex's invalid match, on every bind path", () => {
+  const BAD = ["a(", "[", "(?<x", "*"];
+  const CLI = [...process.execArgv, path.join(import.meta.dirname, "..", "src", "cli.ts")];
+  let body: FakeBody;
+  let server: Server;
+  let env: Record<string, string>;
+  const mcp = new Client({ name: "test", version: "0" });
+
+  before(async () => {
+    body = await startFakeBody();
+    body.writeRoutines({ r1: "export default () => 1;\n" });
+    // The body's API over HTTP, as the daemon's transport hands each request to the host.
+    server = createServer(async (req, res) => {
+      const raw = await text(req);
+      const answer = await body.request(req.method!, req.url!, raw === "" ? undefined : JSON.parse(raw));
+      res.statusCode = answer.status;
+      res.setHeader("content-type", "application/json");
+      res.end(JSON.stringify(answer.body));
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    env = { ...process.env, MINEBOT_URL: `http://127.0.0.1:${(server.address() as AddressInfo).port}`, MINEBOT_TOKEN: "" } as Record<string, string>;
+    await mcp.connect(new StdioClientTransport({ command: process.execPath, args: [...CLI, "mcp"], env, stderr: "ignore" }));
+  });
+  after(async () => {
+    await mcp.close();
+    server.close();
+    await body.close();
+  });
+
+  /** Asserts that no reflex `name` was bound or stored. */
+  async function nothingStored(name: string): Promise<void> {
+    assert.equal((await listed(body)).some((binding) => binding.name === name), false, `${name} was bound`);
+    const file = path.join(body.stateDir, "triggers.json");
+    assert.equal(existsSync(file) && name in (JSON.parse(readFileSync(file, "utf8")) as object), false, `${name} was stored`);
+  }
+
+  it("is refused over HTTP POST /bind with 400 naming match, and nothing is stored", async () => {
+    for (const match of BAD) {
+      const answer = await body.request("POST", "/bind", { kind: "reflex", name: "bad-http", routine: "r1", on: ["chat"], match });
+      assert.deepEqual(answer, { status: 400, body: { error: "✖ must be a regular expression\n  → at match" } }, match);
+    }
+    await nothingStored("bad-http");
+  });
+
+  it("is refused by `minebot bind reflex --match` with the 400's error naming match, and nothing is stored", { timeout: 60_000 }, async () => {
+    for (const match of BAD) {
+      const cli = await promisify(execFile)(process.execPath, [...CLI, "bind", "reflex", "bad-cli", "r1", "--on", "chat", "--match", match], { env }).then(
+        () => ({ code: 0, err: "" }),
+        (error: { code: number; stderr: string }) => ({ code: error.code, err: error.stderr }),
+      );
+      assert.deepEqual(cli, { code: 1, err: "[minebot] ✖ must be a regular expression\n  → at match\n" }, match);
+    }
+    await nothingStored("bad-cli");
+  });
+
+  it("is refused by the MCP bind_routine tool naming match, and nothing is stored", async () => {
+    for (const match of BAD) {
+      const tool = (await mcp.callTool({ name: "bind_routine", arguments: { kind: "reflex", name: "bad-mcp", routine: "r1", on: ["chat"], match } })) as { content: { text: string }[]; isError?: boolean };
+      assert.deepEqual([tool.isError, tool.content[0]!.text], [true, "MCP error -32602: Input validation error: Invalid arguments for tool bind_routine: must be a regular expression at match"], match);
+    }
+    await nothingStored("bad-mcp");
   });
 });
 

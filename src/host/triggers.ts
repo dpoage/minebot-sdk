@@ -12,6 +12,7 @@ import {
   MAX_TRIGGER_FAILURES,
   MAX_TRIGGERS,
   ReflexInput,
+  StoredName,
   type BodyEvent,
   type RunResult,
   type RunStatus,
@@ -44,7 +45,13 @@ export type StoredReflex = z.output<typeof StoredReflex>;
 
 /** What a skipped entry's error says of a code trigger: the migration. */
 function codeTriggerError(name: string): string {
-  return `a code trigger saved before reflexes is stored under "${name}" and is no longer run; bind a routine as a reflex after \`unbind ${name}\``;
+  const migration = `a code trigger saved before reflexes is stored under "${name}" and is no longer run`;
+  return StoredName.safeParse(name).success ? `${migration}; bind a routine as a reflex after \`unbind ${name}\`` : `${migration}; bind a routine as a reflex instead`;
+}
+
+/** What a skipped entry's error adds when `unbind` cannot name the entry: the store keeps it in memory and rewrites the whole file, so it is edited while the body is stopped. */
+function editStoreHint(name: string): string {
+  return `"${name}" is not a name unbind accepts (1-48 lowercase letters, digits, and . _ -, starting with a letter or digit), so remove the entry by stopping the body and deleting "${name}" from triggers.json in its state directory`;
 }
 
 interface Stats {
@@ -134,7 +141,8 @@ export class Triggers {
       } catch (err) {
         this.#when.delete(name);
         this.#skipped.add(name);
-        deps.events.push("reflex_error", { name, error: err instanceof Error ? err.message : String(err) });
+        const error = err instanceof Error ? err.message : String(err);
+        deps.events.push("reflex_error", { name, error: StoredName.safeParse(name).success ? error : `${error}\n${editStoreHint(name)}` });
       }
     }
     // A replacement host goes on counting where the one it replaces stopped, and counts the firing that ended it.

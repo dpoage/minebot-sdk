@@ -42,7 +42,7 @@ export function usageFor(features: BodyFeatures | null, hasBody = HAS_BODY, oper
                 `                       enables it (options --from, --match, --when, --cooldown, --timeout, --priority, --preempt).`,
               ]
             : []),
-          `  unbind <name>        Remove a binding${caps.reflexes ? "; also a stored entry the body skipped at start and reported as reflex_error" : ""}.`,
+          `  unbind <name>        Remove a binding${caps.reflexes ? "; also a stored entry the body skipped at start and reported as reflex_error, if unbind accepts its name (otherwise its reflex_error names the file to edit)" : ""}.`,
           `  call <name>          Call the routine bound to name as an action; --args <json> are its arguments. Prints and exits like run.`,
         ]
       : []),

@@ -145,7 +145,7 @@ export function toolPlan(features: BodyFeatures, toolSet: ToolSet): Record<strin
     unbind_routine: {
       enabled: caps.routines,
       description: caps.reflexes
-        ? "Remove a binding: the action stops being callable, or the reflex stops firing. A stored entry that the body skipped at start and reported as reflex_error is removed by its name too, which frees the name. The saved routine stays."
+        ? "Remove a binding: the action stops being callable, or the reflex stops firing. A stored entry that the body skipped at start and reported as reflex_error is removed by its name too, which frees the name, when the name is one this tool accepts (1-48 lowercase letters, digits, and . _ -, starting with a letter or digit); any other such entry cannot be removed here, and its reflex_error names the file to edit instead. The saved routine stays."
         : "Remove a binding: the action stops being callable. The saved routine stays.",
     },
   };
@@ -487,7 +487,7 @@ export async function serveMcp(bodyName: string, toolSet: ToolSet): Promise<void
   );
   const unbindRoutine = server.registerTool(
     "unbind_routine",
-    { description: "", inputSchema: { name: UnbindInput.shape.name.describe("The binding to remove, or the name of a stored entry the body reported as reflex_error") } },
+    { description: "", inputSchema: { name: UnbindInput.shape.name.describe("The binding to remove, or the name of a stored entry the body reported as reflex_error, if that name fits this pattern") } },
     ({ name }) => call(async (c) => json(await c.unbind(name))),
   );
 
