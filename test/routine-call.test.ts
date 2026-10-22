@@ -61,9 +61,9 @@ describe("POST /call", () => {
       assert.equal(lines[0]!.status, "ok");
       assert.equal(body.eventsOf("program_finished").length, 1);
 
-      // A call with no args calls the routine with {}.
-      assert.deepEqual(runOf(await body.request("POST", "/call", { name: "echo" })).result, {});
-      assert.deepEqual(body.history()[1]!.call, { name: "echo", routine: "echo", args: {} });
+      // The args are the request's, as given.
+      assert.deepEqual(runOf(await body.request("POST", "/call", { name: "echo", args: { deep: [1, { x: null }] } })).result, { deep: [1, { x: null }] });
+      assert.deepEqual(body.history()[1]!.call, { name: "echo", routine: "echo", args: { deep: [1, { x: null }] } });
       assert.equal(body.eventsOf("program_finished").length, 2);
     });
   });

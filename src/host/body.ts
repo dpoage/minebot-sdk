@@ -189,7 +189,7 @@ export class Body {
   }
 
   /**
-   * Calls routine `routine` with `args` as one run, with the duties of `run`: the routine's module is
+   * Calls routine `routine` with `args` (as given: absent stays absent) as one run, with the duties of `run`: the routine's module is
    * loaded and its default export called inside the run, so what its top level does is bounded by the
    * run's timeout, stop, and kill deadline. `result` is the routine's awaited return as JSON.
    * Throws when the body is not connected, and `BusyError` while another run is active.
@@ -204,7 +204,7 @@ export class Body {
     const result = await this.runner.call(
       async (scope) => {
         const ctx = routineContext(scope, environment);
-        return invokeRoutine(await loader.load(routine), routine, ctx, args ?? {});
+        return invokeRoutine(await loader.load(routine), routine, ctx, args);
       },
       { timeoutMs, sourceDir: loader.dir },
     );

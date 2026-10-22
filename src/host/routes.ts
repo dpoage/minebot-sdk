@@ -409,8 +409,7 @@ export function bodyRoutes({ body, kits: host, library, syncKits, saveKit, rever
         const { name, args, timeoutMs } = parse(CallInput, await read());
         const binding = routines!.bindings.action(name);
         if (!binding) throw new HttpError(404, `no action bound to "${name}"`);
-        const given = args ?? {};
-        return recorder.record({ code: "", timeoutMs, requestId, extra: { call: { name, routine: binding.routine, args: given } } }, () => body.call(binding.routine, given, timeoutMs));
+        return recorder.record({ code: "", timeoutMs, requestId, extra: { call: { name, routine: binding.routine, args } } }, () => body.call(binding.routine, args, timeoutMs));
       },
     },
     {
