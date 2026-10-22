@@ -365,8 +365,40 @@ export interface ActionBindingInfo {
   routine: string;
 }
 
+/**
+ * A reflex: the saved routine `routine` runs when the events in `on` arrive, as a trigger's program
+ * does, and has a trigger's fields and what the body has counted for it since it started.
+ */
+export interface ReflexBindingInfo {
+  kind: "reflex";
+  name: string;
+  routine: string;
+  on: string[];
+  from?: string;
+  match?: string;
+  when?: string;
+  cooldownMs: number;
+  timeoutMs: number;
+  enabled: boolean;
+  preempt: boolean;
+  priority: number;
+  /** ISO time the reflex was bound. */
+  updated: string;
+  /** Why the body disabled it, when it did. */
+  disabledReason?: string;
+  /** Times it has run since the body started. */
+  fired: number;
+  /** ISO time of the latest firing since the body started. */
+  lastFired?: string;
+  /** How the latest run ended. */
+  lastStatus?: RunStatus;
+  lastError?: string;
+  /** Runs in a row that failed. */
+  failures: number;
+}
+
 /** A name bound to a routine. */
-export type BindingInfo = ActionBindingInfo;
+export type BindingInfo = ActionBindingInfo | ReflexBindingInfo;
 
 export interface BindingsResponse {
   bindings: BindingInfo[];

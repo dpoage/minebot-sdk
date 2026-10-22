@@ -2,17 +2,22 @@
 // reflexes (eat when hungry, fight when hurt) that fire while it is not looking. The body acts
 // only because the agent registered the trigger; it decides nothing. Triggers persist in the
 // state directory, run through the same runner as programs, and never crash the body.
+// A definition's body is a program (`run`, a code trigger) or a saved routine (`routine`, a
+// reflex). Both kinds share one scheduler, one limit, and the namespace; what is a code trigger and
+// what is a reflex is decided here, so the program global and `/triggers*` see code triggers only.
 import vm from "node:vm";
 import { z } from "zod";
 import { BusyError } from "../program/runner.ts";
 import {
   MAX_TRIGGER_FAILURES,
   MAX_TRIGGERS,
+  ReflexInput,
   TriggerInput,
   type AddTriggerResponse,
   type BodyEvent,
   type RunResult,
   type RunStatus,
+  type ReflexBindingInfo,
   type TriggerInfo,
 } from "../protocol/index.ts";
 import type { JsonStore } from "../store.ts";
@@ -24,14 +29,34 @@ const WHEN_TIMEOUT_MS = 100;
 
 export class TriggerInvalidError extends Error {}
 export class TriggerLimitError extends Error {}
+const HOLDERS = { action: "an action binding", reflex: "a reflex", code: "a trigger" };
+
+/** A name another kind holds: a trigger, a reflex, and an action binding share their names. */
+export class NameConflictError extends Error {
+  constructor(name: string, held: keyof typeof HOLDERS) {
+    super(`"${name}" is ${HOLDERS[held]}; triggers, reflexes, and action bindings share their names, so remove it or pick another name`);
+  }
+}
 export class TriggerNotFoundError extends Error {}
 
-const Stored = TriggerInput.extend({
+const StoredCode = TriggerInput.extend({
   updated: z.string(),
   disabledReason: z.string().optional(),
 });
-type Stored = z.output<typeof Stored>;
+type StoredCode = z.output<typeof StoredCode>;
+/** A reflex is stored as a trigger is, with `routine` where the trigger has `run`. */
+const StoredReflex = ReflexInput.extend({
+  updated: z.string(),
+  disabledReason: z.string().optional(),
+});
+export type StoredReflex = z.output<typeof StoredReflex>;
+type Stored = StoredCode | StoredReflex;
 export type StoredTrigger = Stored;
+
+/** Whether a stored definition is a reflex (its body is a routine) rather than a code trigger. */
+export function isReflex(def: Stored): def is StoredReflex {
+  return "routine" in def;
+}
 
 interface Stats {
   fired: number;
@@ -57,6 +82,8 @@ export interface TriggersDeps {
   connected: () => boolean;
   /** The bot a `when` expression sees. */
   bot: () => unknown;
+  /** Whether this body can run reflexes (it has routines). Without, a stored reflex is skipped and reported, and never written. */
+  reflexes: boolean;
   /**
    * Runs one firing through the body. Calls `started` right before the program starts, and throws
    * BusyError instead when a program is running.
@@ -74,7 +101,7 @@ export interface TriggersDeps {
    * Absent, such a firing's events are pushed.
    */
   counts?: (failures: Record<string, number>, ended?: { finished?: TriggerFinished; disabled?: TriggerDisabled }) => void;
-  /** Records the code of a trigger being saved, so the audit covers it before it ever runs. */
+  /** Records the source a trigger or reflex being saved will run (its routine's name, for a reflex), so the audit covers it before it ever runs. */
   register: (trigger: StoredTrigger) => Promise<void>;
   /** Each trigger's run of failures that the host this one replaces had counted. */
   failures?: Record<string, number>;
@@ -92,6 +119,8 @@ export class Triggers {
   readonly #lastFired = new Map<string, number>();
   readonly #predicates = vm.createContext({});
   readonly #unsubscribe: () => void;
+  /** Whether a name is an action binding: none is until the bindings say so. */
+  #isAction: (name: string) => boolean = () => false;
   #queue: Queued[] = [];
   /** The firing that runs now. Each firing has its own object, so a firing that ends late cannot clear a newer one. */
   #active: { priority: number } | null = null;
@@ -103,11 +132,14 @@ export class Triggers {
     this.#deps = deps;
     for (const name of deps.store.keys()) {
       // A bad entry on disk never stops the body: it is skipped, left in the file, and reported.
-      const parsed = Stored.safeParse({ ...(deps.store.get(name) as object), name });
+      const entry = { ...(deps.store.get(name) as object), name };
       try {
+        const reflex = "routine" in entry;
+        if (reflex && !deps.reflexes) throw new Error("a reflex needs routines, which this body does not offer");
+        const parsed = (reflex ? StoredReflex : StoredCode).safeParse(entry);
         if (!parsed.success) throw new Error(z.prettifyError(parsed.error));
         if (parsed.data.when) this.#when.set(name, compileWhen(parsed.data.when));
-        compileRun(parsed.data.run);
+        if (!isReflex(parsed.data)) compileRun(parsed.data.run);
         this.#defs.set(name, parsed.data);
       } catch (err) {
         this.#when.delete(name);
@@ -127,8 +159,31 @@ export class Triggers {
     this.#unsubscribe = deps.events.subscribe((event) => this.#onEvent(event));
   }
 
+  /** Lets the triggers ask whether a name is an action binding, which they may not take: the bindings call this once. */
+  shareNamesWith(isAction: (name: string) => boolean): void {
+    this.#isAction = isAction;
+  }
+
+  /** The code triggers, by name; reflexes are listed by `reflexes()`. */
   list(): TriggerInfo[] {
-    return [...this.#defs.values()].sort((a, b) => a.name.localeCompare(b.name)).map((def) => this.#info(def));
+    return [...this.#defs.values()]
+      .filter((def): def is StoredCode => !isReflex(def))
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .map((def) => this.#info(def));
+  }
+
+  /** The reflexes, by name. */
+  reflexes(): ReflexBindingInfo[] {
+    return [...this.#defs.values()]
+      .filter(isReflex)
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .map((def) => this.#reflexInfo(def));
+  }
+
+  /** The kind of definition that holds `name`, if one does. */
+  holds(name: string): "code" | "reflex" | undefined {
+    const def = this.#defs.get(name);
+    return def === undefined ? undefined : isReflex(def) ? "reflex" : "code";
   }
 
   /** Each trigger's current run of failures, for the triggers that have one. */
@@ -136,41 +191,48 @@ export class Triggers {
     return Object.fromEntries([...this.#stats].filter(([name, stats]) => stats.failures > 0 && this.#defs.has(name)).map(([name, stats]) => [name, stats.failures]));
   }
 
-  /** Validates and saves a trigger; one of the same name is replaced. Nothing is stored when validation fails. */
+  /** Validates and saves a code trigger; one of the same name is replaced. Nothing is stored when validation fails. */
   async add(input: unknown): Promise<AddTriggerResponse> {
     const parsed = TriggerInput.safeParse(input);
     if (!parsed.success) throw new TriggerInvalidError(z.prettifyError(parsed.error));
     const { data } = parsed;
-    const replaced = this.#defs.has(data.name);
-    if (!replaced && this.#defs.size >= MAX_TRIGGERS) {
-      throw new TriggerLimitError(`a body keeps at most ${MAX_TRIGGERS} triggers; remove some first`);
-    }
-    let when: vm.Script | undefined;
-    try {
-      if (data.when) when = compileWhen(data.when);
-    } catch (err) {
-      throw new TriggerInvalidError(`when does not compile: ${err instanceof Error ? err.message : String(err)}`);
-    }
+    this.#admit(data.name, "code");
+    const when = this.#compileWhenOf(data.when);
     try {
       compileRun(data.run);
     } catch (err) {
       throw new TriggerInvalidError(`run does not compile: ${err instanceof Error ? err.message : String(err)}`);
     }
-    const def: Stored = { ...data, updated: new Date().toISOString() };
-    await this.#deps.register(def);
-    this.#defs.set(def.name, def);
-    if (when) this.#when.set(def.name, when);
-    else this.#when.delete(def.name);
-    this.#stats.delete(def.name);
-    this.#lastFired.delete(def.name);
-    this.#dequeue(def.name);
-    this.#save(def);
-    this.#deps.counts?.(this.failures());
+    const def: StoredCode = { ...data, updated: new Date().toISOString() };
+    const replaced = await this.#install(def, when);
     return { trigger: this.#info(def), replaced };
   }
 
+  /** Validates and saves a reflex, a routine that fires like a trigger; one of the same name is replaced. Nothing is stored when validation fails. */
+  async addReflex(input: unknown): Promise<{ reflex: ReflexBindingInfo; replaced: boolean }> {
+    const parsed = ReflexInput.safeParse(input);
+    if (!parsed.success) throw new TriggerInvalidError(z.prettifyError(parsed.error));
+    const { data } = parsed;
+    this.#admit(data.name, "reflex");
+    const when = this.#compileWhenOf(data.when);
+    const def: StoredReflex = { ...data, updated: new Date().toISOString() };
+    const replaced = await this.#install(def, when);
+    return { reflex: this.#reflexInfo(def), replaced };
+  }
+
+  /** Removes the code trigger `name`; false when there is none (a reflex is not one). */
   remove(name: string): boolean {
-    if (!this.#defs.delete(name)) return false;
+    return this.#drop(name, "code");
+  }
+
+  /** Removes the reflex `name`; false when there is none. */
+  removeReflex(name: string): boolean {
+    return this.#drop(name, "reflex");
+  }
+
+  #drop(name: string, kind: "code" | "reflex"): boolean {
+    if (this.holds(name) !== kind) return false;
+    this.#defs.delete(name);
     this.#when.delete(name);
     this.#stats.delete(name);
     this.#lastFired.delete(name);
@@ -180,10 +242,48 @@ export class Triggers {
     return true;
   }
 
+  /**
+   * Checks that a definition of `kind` may take `name`: not an action's, not another kind's, and
+   * within the limit unless it replaces one. True when it replaces one.
+   */
+  #admit(name: string, kind: "code" | "reflex"): boolean {
+    if (this.#isAction(name)) throw new NameConflictError(name, "action");
+    const held = this.holds(name);
+    if (held !== undefined && held !== kind) throw new NameConflictError(name, held);
+    if (held === undefined && this.#defs.size >= MAX_TRIGGERS) {
+      throw new TriggerLimitError(`a body keeps at most ${MAX_TRIGGERS} triggers and reflexes together; remove some first`);
+    }
+    return held !== undefined;
+  }
+
+  #compileWhenOf(when: string | undefined): vm.Script | undefined {
+    try {
+      return when ? compileWhen(when) : undefined;
+    } catch (err) {
+      throw new TriggerInvalidError(`when does not compile: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  /** Records and stores a definition, replacing the one of its name and starting its numbers over; true when it replaced one. */
+  async #install(def: Stored, when: vm.Script | undefined): Promise<boolean> {
+    await this.#deps.register(def);
+    // The registration was awaited: another claim of the name may have been stored meanwhile.
+    const replaced = this.#admit(def.name, isReflex(def) ? "reflex" : "code");
+    this.#defs.set(def.name, def);
+    if (when) this.#when.set(def.name, when);
+    else this.#when.delete(def.name);
+    this.#stats.delete(def.name);
+    this.#lastFired.delete(def.name);
+    this.#dequeue(def.name);
+    this.#save(def);
+    this.#deps.counts?.(this.failures());
+    return replaced;
+  }
+
   /** Enabling clears the reason a trigger was disabled and its run of failures. */
   setEnabled(name: string, enabled: boolean): TriggerInfo {
     const def = this.#defs.get(name);
-    if (!def) throw new TriggerNotFoundError(`no trigger "${name}"`);
+    if (!def || isReflex(def)) throw new TriggerNotFoundError(`no trigger "${name}"`);
     def.enabled = enabled;
     delete def.disabledReason;
     if (enabled) this.#statsOf(name).failures = 0;
@@ -204,8 +304,7 @@ export class Triggers {
     this.#queue = [];
   }
 
-  #info(def: Stored): TriggerInfo {
-    const stats = this.#statsOf(def.name);
+  #info(def: StoredCode): TriggerInfo {
     const { name, on, from, match, when, run, cooldownMs, timeoutMs, enabled, preempt, priority, updated, disabledReason } = def;
     return {
       name,
@@ -221,6 +320,35 @@ export class Triggers {
       priority,
       updated,
       ...(disabledReason !== undefined && { disabledReason }),
+      ...this.#numbersOf(name),
+    };
+  }
+
+  #reflexInfo(def: StoredReflex): ReflexBindingInfo {
+    const { name, routine, on, from, match, when, cooldownMs, timeoutMs, enabled, preempt, priority, updated, disabledReason } = def;
+    return {
+      kind: "reflex",
+      name,
+      routine,
+      on,
+      ...(from !== undefined && { from }),
+      ...(match !== undefined && { match }),
+      ...(when !== undefined && { when }),
+      cooldownMs,
+      timeoutMs,
+      enabled,
+      preempt,
+      priority,
+      updated,
+      ...(disabledReason !== undefined && { disabledReason }),
+      ...this.#numbersOf(name),
+    };
+  }
+
+  /** What the body has counted for a definition since it started. */
+  #numbersOf(name: string) {
+    const stats = this.#statsOf(name);
+    return {
       fired: stats.fired,
       ...(stats.lastFired !== undefined && { lastFired: stats.lastFired }),
       ...(stats.lastStatus !== undefined && { lastStatus: stats.lastStatus }),
