@@ -47,7 +47,7 @@ build_timeout_sec = 300.0
 cpus = 1
 memory_mb = 512
 
-# Runs in the grader's container after each agent session ends: saves the server's world over RCON, which only the grader can reach,
+# Runs in the grader's container after each agent session ends: saves the server's world over RCON, which neither main nor the body can reach,
 # and writes the player's statistics and the world facts to /var/log/grading, where the artifacts entry above collects them.
 [[verifier.collect]]
 service = "grader"

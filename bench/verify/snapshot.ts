@@ -5,7 +5,7 @@
 //   stats.json  the player's statistics file
 //   world.json  the overworld clock, the player's position, and the containers in the saved chunks (see checks.ts),
 //               with the world.json of the step before as `previous` when the grader kept it
-// Only the grader holds RCON and the world volume: the agent's container, and the body, never see them.
+// The grader and the server (`minecraft`) hold RCON and the world volume: the agent's container, and the body, never see them.
 import { copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { WorldFacts } from "./checks.ts";

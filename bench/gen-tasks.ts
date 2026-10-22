@@ -417,7 +417,7 @@ build_timeout_sec = 300.0
 cpus = 1
 memory_mb = 512
 
-# Runs in the grader's container after each agent session ends: saves the server's world over RCON, which only the grader can reach,
+# Runs in the grader's container after each agent session ends: saves the server's world over RCON, which neither main nor the body can reach,
 # and writes the player's statistics and the world facts to /var/log/grading, where the artifacts entry above collects them.
 [[verifier.collect]]
 service = "grader"
@@ -531,9 +531,10 @@ const HEALTHCHECK = [
  *   Harbor's alternatives either run the verifier in `main`, where the agent can edit it, or give it a second compose project
  *   that cannot reach this one; the snapshot hook ([[verifier.collect]]) is the supported way to pass server state across.
  *   The hook runs after each agent session ends. Harbor stops `main` before it only for the last (or only) session of a task,
- *   so nothing relies on `main` being stopped: the hook reads and writes nothing that `main` can reach.
- * - The `grader` sidecar holds the RCON password and the read-only world volume (the statistics, and the saved chunks that hold the containers),
- *   and nothing else holds them: the body has neither. It shares the network namespace of `minecraft` (network_mode), where the server
+ *   so the hook does not depend on `main` being stopped: it reads and writes nothing that `main` can reach.
+ * - The `grader` sidecar holds the RCON password and the read-only world volume (the statistics, and the saved chunks that hold the containers).
+ *   Besides the grader, only the server holds them (`minecraft` has RCON_PASSWORD and mounts the world read-write); the body has neither.
+ *   The grader shares the network namespace of `minecraft` (network_mode), where the server
  *   accepts RCON on the loopback interface only (RCON_LOOPBACK_ONLY), so no other container reaches RCON even with the password.
  *   Its image is the body's (bench/images/minebot), which already holds the snapshot code and its dependencies; it runs nothing but the hook.
  *   Only the body API (with its token) is open to `main`.
