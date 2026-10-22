@@ -1,7 +1,7 @@
 ---
 title: Triggers run a program for you when an event arrives
 tags: [triggers, trigger, reflex, automatic, events, hurt, hunger, eat, flee, preempt, cooldown, restart]
-requires: [triggers]
+requires: [reflexes]
 mc_version: "26.1"
 verified_by: "triggers on hurt and low_food, the queue, preemption, a restart, and self-disable checked on the dev server, 2026-10-19"
 ---

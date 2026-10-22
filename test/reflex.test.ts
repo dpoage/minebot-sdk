@@ -1,8 +1,8 @@
-// Reflex bindings through the real bot host (real Connection, Body, world, routes, triggers, and
+// Reflex bindings through the real bot host (real Connection, Body, world, routes, reflexes, and
 // bindings over a fake player, see fixtures/host/fake-body.ts) under the real supervisor: a reflex
-// is a trigger whose body is a routine, so it fires, waits, preempts, times out, fails, and
-// survives a host's death as a trigger does, and its routine is called with (ctx, { event }).
-// The scheduler rules themselves are checked over both kinds in triggers.test.ts.
+// is a routine the body calls on an event, so it fires, waits, preempts, times out, fails, and
+// survives a host's death, and its routine is called with (ctx, { event }).
+// The scheduler rules themselves are checked over fakes in triggers.test.ts.
 import assert from "node:assert/strict";
 import { after, describe, it } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -57,8 +57,8 @@ const say = async (body: FakeBody, from: string, message: string): Promise<RunRe
 /** Resolves once `count` firings have ended. */
 async function finished(body: FakeBody, count: number): Promise<void> {
   const deadline = Date.now() + 10_000;
-  while (body.eventsOf("trigger_finished").length < count && Date.now() < deadline) await sleep(20);
-  assert.ok(body.eventsOf("trigger_finished").length >= count, `${body.eventsOf("trigger_finished").length} of ${count} firings ended`);
+  while (body.eventsOf("reflex_finished").length < count && Date.now() < deadline) await sleep(20);
+  assert.ok(body.eventsOf("reflex_finished").length >= count, `${body.eventsOf("reflex_finished").length} of ${count} firings ended`);
 }
 
 /** Resolves once the supervisor holds a run in flight and the host has had time to start its code. */
@@ -70,7 +70,7 @@ async function running(body: FakeBody): Promise<void> {
 }
 
 describe("a reflex's firing", () => {
-  it("calls the routine with (ctx, { event }), and records trigger_fired, trigger_finished, and one history line for the binding and one for the firing", async () => {
+  it("calls the routine with (ctx, { event }), and records reflex_fired, reflex_finished, and one history line for the binding and one for the firing", async () => {
     const body = await bodyWith({ echo: ECHO });
     await using(body, async () => {
       const bound = (await body.ok("POST", "/bind", { kind: "reflex", name: "greet", routine: "echo", on: ["chat"], when: "event.data.from === 'alice'", cooldownMs: 0 })) as { binding: ReflexBindingInfo; replaced: boolean };
@@ -89,13 +89,13 @@ describe("a reflex's firing", () => {
       await say(body, "alice", "hello");
       await finished(body, 1);
       await sleep(100);
-      assert.equal(body.eventsOf("trigger_finished").length, 1, "only the matching event fired it");
+      assert.equal(body.eventsOf("reflex_finished").length, 1, "only the matching event fired it");
 
       const chats = body.eventsOf("chat");
       const heard = chats.find((event) => event.data.from === "alice")!;
-      const [fired] = body.eventsOf("trigger_fired");
+      const [fired] = body.eventsOf("reflex_fired");
       assert.deepEqual(fired!.data, { name: "greet", event: { seq: heard.seq, type: "chat" } });
-      const [done] = body.eventsOf("trigger_finished");
+      const [done] = body.eventsOf("reflex_finished");
       assert.deepEqual([done!.data.name, done!.data.status], ["greet", "ok"]);
       // The routine saw the BodyEvent itself, in the args object.
       const note = runOf(await body.request("POST", "/run", { code: "return notes.get('seen')" })).result as string;
@@ -105,7 +105,7 @@ describe("a reflex's firing", () => {
       const firing = body.history().find((line) => line.status === "ok" && line.trigger === "greet")!;
       assert.deepEqual([firing.code, firing.routine, firing.event], ["", "echo", { seq: heard.seq, type: "chat" }]);
       assert.equal("call" in firing, false);
-      // A firing ends in trigger_finished, not program_finished: only the two /run programs did.
+      // A firing ends in reflex_finished, not program_finished: only the two /run programs did.
       assert.equal(body.eventsOf("program_finished").length, 3);
 
       const after = await reflexOf(body, "greet");
@@ -113,27 +113,24 @@ describe("a reflex's firing", () => {
     });
   });
 
-  for (const kind of ["code trigger", "reflex"] as const) {
-    it(`filters chat by sender and pattern, by a \`when\` over the event, and by cooldown: a ${kind}`, async () => {
-      const body = await bodyWith({ echo: ECHO });
-      await using(body, async () => {
-        const fields = { on: ["chat"], from: "Ana", match: "^come", when: "event.data.message.length < 12", cooldownMs: 60_000 };
-        if (kind === "reflex") await body.ok("POST", "/bind", { kind: "reflex", name: "react", routine: "echo", ...fields });
-        else await body.ok("POST", "/triggers", { name: "react", run: "return 1", ...fields });
-        await say(body, "ben", "come here");
-        await say(body, "ana", "go away");
-        await say(body, "ana", "come here please now");
-        await say(body, "ana", "come now");
-        await finished(body, 1);
-        await say(body, "ana", "come back");
-        await sleep(300);
-        // Exactly the one event that passes every filter fired it, and the cooldown kept the next out.
-        const wanted = body.eventsOf("chat").find((event) => event.data.message === "come now")!;
-        assert.deepEqual(body.eventsOf("trigger_fired").map((event) => event.data.event), [{ seq: wanted.seq, type: "chat" }]);
-        assert.equal(body.eventsOf("trigger_finished").length, 1);
-      });
+  it("filters chat by sender and pattern, by a `when` over the event, and by cooldown: a reflex", async () => {
+    const body = await bodyWith({ echo: ECHO });
+    await using(body, async () => {
+      const fields = { on: ["chat"], from: "Ana", match: "^come", when: "event.data.message.length < 12", cooldownMs: 60_000 };
+      await body.ok("POST", "/bind", { kind: "reflex", name: "react", routine: "echo", ...fields });
+      await say(body, "ben", "come here");
+      await say(body, "ana", "go away");
+      await say(body, "ana", "come here please now");
+      await say(body, "ana", "come now");
+      await finished(body, 1);
+      await say(body, "ana", "come back");
+      await sleep(300);
+      // Exactly the one event that passes every filter fired it, and the cooldown kept the next out.
+      const wanted = body.eventsOf("chat").find((event) => event.data.message === "come now")!;
+      assert.deepEqual(body.eventsOf("reflex_fired").map((event) => event.data.event), [{ seq: wanted.seq, type: "chat" }]);
+      assert.equal(body.eventsOf("reflex_finished").length, 1);
     });
-  }
+  });
 
   it("is ended by its own timeoutMs as a trigger's program is", async () => {
     const body = await bodyWith({ sleeper: SLEEPER });
@@ -143,7 +140,7 @@ describe("a reflex's firing", () => {
       await say(body, "ana", "go");
       await finished(body, 1);
       assert.ok(Date.now() - started < 5_000, `took ${Date.now() - started} ms`);
-      const [done] = body.eventsOf("trigger_finished");
+      const [done] = body.eventsOf("reflex_finished");
       assert.deepEqual([done!.data.name, done!.data.status], ["slow", "timeout"]);
       // The reflex's own timeout ended it: without one, the supervisor's deadline (the timeout plus the grace) kills the host and answers for it.
       assert.notEqual(done!.data.error, restartedError(hungCause(GRACE_MS)));
@@ -154,7 +151,7 @@ describe("a reflex's firing", () => {
     });
   });
 
-  it("disables itself after 3 failures in a row with a trigger_disabled, and binding it again enables it with its numbers reset", async () => {
+  it("disables itself after 3 failures in a row with a reflex_disabled, and binding it again enables it with its numbers reset", async () => {
     const body = await bodyWith({ throws: THROWS, echo: ECHO });
     await using(body, async () => {
       await body.ok("POST", "/bind", { kind: "reflex", name: "flaky", routine: "throws", on: ["chat"], cooldownMs: 0 });
@@ -164,8 +161,8 @@ describe("a reflex's firing", () => {
       }
       await finished(body, 3);
       await sleep(300);
-      assert.equal(body.eventsOf("trigger_fired").length, 3, "the fourth event did not fire it");
-      const disabled = body.eventsOf("trigger_disabled");
+      assert.equal(body.eventsOf("reflex_fired").length, 3, "the fourth event did not fire it");
+      const disabled = body.eventsOf("reflex_disabled");
       assert.deepEqual(disabled.map((event) => [event.data.name, event.data.failures]), [["flaky", 3]]);
       const flaky = await reflexOf(body, "flaky");
       assert.deepEqual([flaky.enabled, flaky.failures, flaky.lastStatus], [false, 3, "error"]);
@@ -180,15 +177,15 @@ describe("a reflex's firing", () => {
 });
 
 describe("a reflex that preempts", () => {
-  it("stops a program of the agent and runs next, with trigger_fired preempted", { timeout: 30_000 }, async () => {
+  it("stops a program of the agent and runs next, with reflex_fired preempted", { timeout: 30_000 }, async () => {
     const body = await bodyWith({ echo: ECHO });
     await using(body, async () => {
       await body.ok("POST", "/bind", { kind: "reflex", name: "urgent", routine: "echo", on: ["chat"], preempt: true, cooldownMs: 0 });
       const program = runOf(await body.request("POST", "/run", { code: `${chat("ana", "now")} await sleep(30000);` }));
       assert.equal(program.status, "stopped");
       await finished(body, 1);
-      assert.equal(body.eventsOf("trigger_fired")[0]!.data.preempted, true);
-      assert.equal(body.eventsOf("trigger_finished")[0]!.data.status, "ok");
+      assert.equal(body.eventsOf("reflex_fired")[0]!.data.preempted, true);
+      assert.equal(body.eventsOf("reflex_finished")[0]!.data.status, "ok");
     });
   });
 
@@ -199,7 +196,7 @@ describe("a reflex that preempts", () => {
       await body.ok("POST", "/bind", { kind: "reflex", name: "urgent", routine: "echo", on: ["chat"], preempt: true, cooldownMs: 0 });
       assert.equal(runOf(await body.request("POST", "/call", { name: "chatty" })).status, "stopped");
       await finished(body, 1);
-      assert.equal(body.eventsOf("trigger_fired")[0]!.data.preempted, true);
+      assert.equal(body.eventsOf("reflex_fired")[0]!.data.preempted, true);
     });
   });
 
@@ -232,23 +229,23 @@ describe("a reflex that preempts", () => {
       await say(body, "ana", "go");
       await finished(body, 2);
       assert.deepEqual(
-        body.eventsOf("trigger_finished").map((event) => [event.data.name, event.data.status]),
+        body.eventsOf("reflex_finished").map((event) => [event.data.name, event.data.status]),
         [
           ["starter", "stopped"],
           ["fast", "ok"],
         ],
       );
-      assert.equal(body.eventsOf("trigger_fired")[1]!.data.preempted, true);
+      assert.equal(body.eventsOf("reflex_fired")[1]!.data.preempted, true);
 
       await body.ok("POST", "/bind", { kind: "reflex", name: "starter2", routine: "slow-same", on: ["chat"], match: "^again", cooldownMs: 0, timeoutMs: 20_000 });
       await body.ok("POST", "/bind", { kind: "reflex", name: "same", routine: "echo", on: ["chat"], match: "^same", cooldownMs: 0, preempt: true });
       await say(body, "ana", "again");
       await sleep(800);
-      assert.equal(body.eventsOf("trigger_finished").length, 2, "an equal priority did not preempt the running reflex");
+      assert.equal(body.eventsOf("reflex_finished").length, 2, "an equal priority did not preempt the running reflex");
       assert.deepEqual(await body.host.stop(), { stopped: true });
       await finished(body, 4);
       assert.deepEqual(
-        body.eventsOf("trigger_finished").slice(2).map((event) => [event.data.name, event.data.status]),
+        body.eventsOf("reflex_finished").slice(2).map((event) => [event.data.name, event.data.status]),
         [
           ["starter2", "stopped"],
           ["same", "ok"],
@@ -277,7 +274,7 @@ describe("a reflex and a host's death", () => {
       await say(body, "ana", "three");
       await finished(body, 3);
       await sleep(200);
-      assert.deepEqual(body.eventsOf("trigger_disabled").map((event) => [event.data.name, event.data.failures]), [["flaky", 3]]);
+      assert.deepEqual(body.eventsOf("reflex_disabled").map((event) => [event.data.name, event.data.failures]), [["flaky", 3]]);
       assert.equal((await reflexOf(body, "flaky")).enabled, false);
     });
   });
@@ -289,12 +286,24 @@ describe("a reflex and a host's death", () => {
       const since = body.events.since(0, 1000).next;
       await say(body, "ana", "go");
       await finished(body, 1);
-      const [done] = body.eventsOf("trigger_finished");
+      const [done] = body.eventsOf("reflex_finished");
       assert.deepEqual([done!.data.name, done!.data.status, done!.data.error], ["hang", "timeout", restartedError(hungCause(GRACE_MS))]);
       await body.waitFor("connected", since);
       const hang = await reflexOf(body, "hang");
       assert.deepEqual([hang.failures, hang.enabled], [1, true]);
-      assert.equal(body.eventsOf("trigger_finished").length, 1, "the death's firing was reported once");
+      assert.equal(body.eventsOf("reflex_finished").length, 1, "the death's firing was reported once");
+    });
+  });
+});
+
+describe("a body offers no code triggers", () => {
+  it("has no triggers global in a program, and answers the code-trigger routes as unknown", async () => {
+    const body = await startFakeBody();
+    await using(body, async () => {
+      assert.equal(runOf(await body.request("POST", "/run", { code: "return typeof triggers" })).result, "undefined");
+      for (const [method, url] of [["GET", "/triggers"], ["POST", "/triggers"], ["POST", "/triggers/remove"], ["POST", "/triggers/enabled"]] as const) {
+        assert.deepEqual(await body.request(method, url, method === "POST" ? { name: "eat", on: ["hurt"], run: "return 1" } : undefined), { status: 404, body: { error: `no route for ${method} ${url}` } }, `${method} ${url}`);
+      }
     });
   });
 });

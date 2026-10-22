@@ -7,7 +7,7 @@ import path from "node:path";
 import { text } from "node:stream/consumers";
 import { parseArgs } from "node:util";
 import { BodyClient } from "./client/client.ts";
-import { formatBound, formatKitHits, formatKits, formatKitVersions, formatLibrary, formatRevertedRoutine, formatRoutineVersions, formatRun, formatSavedRoutine, formatStatus, formatTriggers } from "./client/render.ts";
+import { formatBound, formatKitHits, formatKits, formatKitVersions, formatLibrary, formatRevertedRoutine, formatRoutineVersions, formatRun, formatSavedRoutine, formatStatus } from "./client/render.ts";
 import { HAS_BODY, usageFor } from "./client/usage.ts";
 import { BODY_FLAG_OPTIONS, OPERATOR_FLAG_HELP } from "./client/body-flags.ts";
 import { ENV_FILE, initWorkspace } from "./client/init.ts";
@@ -50,8 +50,8 @@ function printRun(run: RunResult): number {
   return run.status === "ok" ? 0 : 2;
 }
 
-/** The trigger options of the command line, as the body takes them. `command` names who needs them, for the error. */
-function triggerOptions(command: string) {
+/** The reflex options of the command line, as the body takes them. `command` names who needs them, for the error. */
+function reflexOptions(command: string) {
   if (!opts.on) throw new Error(`${command} needs --on <event types>`);
   return {
     on: opts.on.split(",").map((t) => t.trim()).filter(Boolean),
@@ -79,7 +79,6 @@ const FEATURE_COMMANDS: Record<string, (features: BodyFeatures) => boolean> = {
   kits: CAPABILITY_GATES.kits,
   wiki: CAPABILITY_GATES.wiki,
   milestones: CAPABILITY_GATES.milestones,
-  triggers: CAPABILITY_GATES.triggers,
   routines: CAPABILITY_GATES.routines,
   bind: CAPABILITY_GATES.routines,
   unbind: CAPABILITY_GATES.routines,
@@ -166,38 +165,6 @@ async function main(): Promise<number> {
           throw new Error(`unknown notes action "${action}"; use list, get, set, or rm`);
       }
     }
-    case "triggers": {
-      const client = await BodyClient.connect(opts.bot);
-      const [action, name, file] = rest;
-      switch (action) {
-        case undefined:
-        case "list": {
-          const { triggers } = await client.triggers();
-          console.log(triggers.length === 0 ? "no triggers" : formatTriggers(triggers));
-          return 0;
-        }
-        case "add": {
-          if (!name) throw new Error("triggers add needs a name");
-          const options = triggerOptions("triggers add");
-          const run = !file || file === "-" ? await text(process.stdin) : await readFile(file, "utf8");
-          const { trigger, replaced } = await client.addTrigger({ name, run, ...options });
-          console.log(`${replaced ? "replaced" : "saved"} trigger\n${formatTriggers([trigger])}`);
-          return 0;
-        }
-        case "rm":
-          if (!name) throw new Error("triggers rm needs a name");
-          print(await client.removeTrigger(name));
-          return 0;
-        case "enable":
-        case "disable": {
-          if (!name) throw new Error(`triggers ${action} needs a name`);
-          console.log(formatTriggers([(await client.setTriggerEnabled(name, action === "enable")).trigger]));
-          return 0;
-        }
-        default:
-          throw new Error(`unknown triggers action "${action}"; use list, add, rm, enable, or disable`);
-      }
-    }
     case "run": {
       const file = rest[0];
       const source = !file || file === "-" ? await text(process.stdin) : await readFile(file, "utf8");
@@ -247,12 +214,12 @@ async function main(): Promise<number> {
     }
     case "bind": {
       const [kind, name, routine] = rest;
-      // Reflexes are triggers over routines: a body that offers no triggers answers as if the kind did not exist. Without an answer from the body, both kinds.
-      const kinds = features && !CAPABILITY_GATES.triggers(features) ? ["action"] : ["action", "reflex"];
+      // A body that offers no reflexes answers as if the kind did not exist. Without an answer from the body, both kinds.
+      const kinds = features && !CAPABILITY_GATES.reflexes(features) ? ["action"] : ["action", "reflex"];
       if (!kind || !kinds.includes(kind)) throw new Error(`bind needs a kind: ${kinds.join(" or ")}`);
       if (!name || !routine) throw new Error(`bind ${kind} needs a name and a routine: bind ${kind} <name> <routine>`);
       const client = await BodyClient.connect(opts.bot);
-      console.log(formatBound(await client.bind(kind === "reflex" ? { kind, name, routine, ...triggerOptions("bind reflex") } : { kind: "action", name, routine })));
+      console.log(formatBound(await client.bind(kind === "reflex" ? { kind, name, routine, ...reflexOptions("bind reflex") } : { kind: "action", name, routine })));
       return 0;
     }
     case "unbind": {

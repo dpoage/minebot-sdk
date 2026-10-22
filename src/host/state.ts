@@ -1,5 +1,5 @@
 // The body's state directory: the one owner of where persistent state lives. Notes, milestones,
-// triggers, action bindings, per-kit stores, agent kits, and routines survive body restarts here, and every file is written atomically.
+// reflexes, action bindings, per-kit stores, agent kits, and routines survive body restarts here, and every file is written atomically.
 import path from "node:path";
 import { JsonStore } from "../store.ts";
 import { Notes } from "../notes.ts";
@@ -21,7 +21,7 @@ export class BodyState {
     return new Notes(this.store(BODY_STORES.notes));
   }
 
-  /** The agent's triggers, one entry per trigger name. Apart from the kit stores, which are named by kit. */
+  /** The agent's reflexes, one entry per name (and the entries saved before reflexes, which stay until unbound). Apart from the kit stores, which are named by kit. */
   get triggers(): JsonStore {
     this.#triggers ??= new JsonStore(path.join(this.dir, "triggers.json"));
     return this.#triggers;

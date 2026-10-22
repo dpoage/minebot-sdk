@@ -78,11 +78,11 @@ describe("one event log", () => {
     try {
       await host.start();
       host.join();
-      await events.wait({ types: ["trigger_finished"], since: 0, timeoutMs: 10_000 });
+      await events.wait({ types: ["reflex_finished"], since: 0, timeoutMs: 10_000 });
       const logged = events.since(0).events;
       assert.deepEqual(
         logged.map((event) => event.type),
-        ["a", "b", "c", "ping", "trigger_fired", "trigger_finished"],
+        ["a", "b", "c", "ping", "reflex_fired", "reflex_finished"],
         "each host event is in the log once, in production order",
       );
       const ping = logged[3]!;
@@ -224,7 +224,7 @@ describe("the supervisor's reading of request bodies", () => {
   it("answers a body far past the cap with the 404 of a route the body does not serve", async () => {
     const large = Buffer.alloc(5 * 1024 * 1024, "x");
     assert.deepEqual(await post("/unknown", large), { status: 404, body: { error: "no route for POST /unknown" } });
-    // Triggers are off in this body, so their route is not served.
+    // No body serves /triggers (reflexes are bound through /bind), so its body is not read either.
     assert.deepEqual(await post("/triggers", large), { status: 404, body: { error: "no route for POST /triggers" } });
   });
 

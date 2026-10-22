@@ -1,6 +1,6 @@
 // Renderers for agent-facing output: program runs, status, notes, wiki hits and pages, routines and their bindings.
 // The CLI and the MCP server share them, so an agent sees the same text through both.
-import type { ActionStats, BindingInfo, BindResponse, KitInfo, KitSearchHit, KitTypeCheck, KitVersion, Note, RoutineInfo, RoutineVersion, RunResult, SaveRoutineResponse, SearchHit, StatusResponse, TriggerInfo } from "../protocol/index.ts";
+import type { ActionStats, BindingInfo, BindResponse, KitInfo, KitSearchHit, KitTypeCheck, KitVersion, Note, ReflexBindingInfo, RoutineInfo, RoutineVersion, RunResult, SaveRoutineResponse, SearchHit, StatusResponse } from "../protocol/index.ts";
 
 const json = (value: unknown) => JSON.stringify(value, null, 2);
 
@@ -68,21 +68,14 @@ export function formatKitVersions(name: string, versions: KitVersion[]): string 
     .join("\n");
 }
 
-/** What a trigger and a reflex share in their rendering: when it fires, its state, its limits, and what it has done since the body started. */
-type Firing = Pick<TriggerInfo, "on" | "from" | "match" | "when" | "preempt" | "priority" | "enabled" | "disabledReason" | "cooldownMs" | "timeoutMs" | "fired" | "lastStatus" | "lastError">;
-
-function formatFiring(head: string, t: Firing): string {
+/** Renders a reflex: when it fires, its state, its limits, and what it has done since the body started. */
+function formatFiring(head: string, t: ReflexBindingInfo): string {
   const filters = [t.from && `from ${t.from}`, t.match && `match /${t.match}/`, t.when && `when ${t.when}`, t.preempt && "preempts", t.priority !== 0 && `priority ${t.priority}`]
     .filter(Boolean)
     .join("; ");
   const state = t.enabled ? "on" : `off: ${t.disabledReason ?? "disabled"}`;
   const last = t.lastStatus ? `; last ${t.lastStatus}${t.lastError ? ` (${t.lastError.split("\n")[0]})` : ""}` : "";
   return `${head}  [${state}]  on ${t.on.join(", ")}${filters ? `; ${filters}` : ""}\n  cooldown ${t.cooldownMs} ms, timeout ${t.timeoutMs} ms; fired ${t.fired} times${last}`;
-}
-
-/** Renders a trigger listing: one header line per trigger, then what it did since the body started. */
-export function formatTriggers(triggers: TriggerInfo[]): string {
-  return triggers.map((t) => formatFiring(t.name, t)).join("\n");
 }
 
 /** `act  v3  2026-10-21T...`: a routine, its saved version, and when it was saved. */

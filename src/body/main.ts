@@ -36,7 +36,7 @@ export async function runBody({ name, token, flags }: BodyCommandInput): Promise
     milestonesEnabled: !parsed.noMilestones,
     agentKits: !parsed.noAgentKits,
     agentKitsDir: parsed.agentKits,
-    triggers: !parsed.noTriggers,
+    triggers: !parsed.noReflexes,
     routines: !parsed.noRoutines,
     routinesDir: parsed.routines,
   });

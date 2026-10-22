@@ -7,8 +7,8 @@ import { CAPABILITY_GATES, type BodyFeatures } from "../protocol/index.ts";
 export const HAS_BODY = existsSync(new URL(`../body/daemon${import.meta.url.slice(import.meta.url.lastIndexOf("."))}`, import.meta.url));
 
 /** What the usage text shows when no body can be asked: everything on an install that can start bodies, nothing optional otherwise. */
-const EVERYTHING: BodyFeatures = { kits: ["move"], kitsLocked: false, agentKits: true, wiki: "write", lessons: true, milestones: true, triggers: true, routines: true };
-const NOTHING: BodyFeatures = { kits: [], kitsLocked: true, agentKits: false, wiki: "off", lessons: false, milestones: false, triggers: false, routines: false };
+const EVERYTHING: BodyFeatures = { kits: ["move"], kitsLocked: false, agentKits: true, wiki: "write", lessons: true, milestones: true, reflexes: true, routines: true };
+const NOTHING: BodyFeatures = { kits: [], kitsLocked: true, agentKits: false, wiki: "off", lessons: false, milestones: false, reflexes: false, routines: false };
 
 /**
  * The usage text for a body that offers `features`, or for no body when `features` is null.
@@ -17,7 +17,7 @@ const NOTHING: BodyFeatures = { kits: [], kitsLocked: true, agentKits: false, wi
  */
 export function usageFor(features: BodyFeatures | null, hasBody = HAS_BODY, operatorFlags: readonly string[] = []): string {
   const f = features ?? (hasBody ? EVERYTHING : NOTHING);
-  const caps = { kits: CAPABILITY_GATES.kits(f), kitSwitching: CAPABILITY_GATES.kitSwitching(f), agentKits: CAPABILITY_GATES.agentKits(f), wiki: CAPABILITY_GATES.wiki(f), lessons: CAPABILITY_GATES.lessons(f), milestones: CAPABILITY_GATES.milestones(f), triggers: CAPABILITY_GATES.triggers(f), routines: CAPABILITY_GATES.routines(f) };
+  const caps = { kits: CAPABILITY_GATES.kits(f), kitSwitching: CAPABILITY_GATES.kitSwitching(f), agentKits: CAPABILITY_GATES.agentKits(f), wiki: CAPABILITY_GATES.wiki(f), lessons: CAPABILITY_GATES.lessons(f), milestones: CAPABILITY_GATES.milestones(f), reflexes: CAPABILITY_GATES.reflexes(f), routines: CAPABILITY_GATES.routines(f) };
   // Starting a body is for whoever runs it. A body that answers is already running, and its agent has no use for the flags.
   const operator = hasBody && features === null;
   const commands = [
@@ -30,26 +30,19 @@ export function usageFor(features: BodyFeatures | null, hasBody = HAS_BODY, oper
     `  notes                List the body's notes. "notes get <key>", "notes set <key> [text]" (text from stdin`,
     `                       when omitted), "notes rm <key>". Notes persist across body restarts.`,
     `  run [file]           Run a program from a file, or from stdin when file is omitted or "-". A .ts file has its types stripped first.`,
-    ...(caps.triggers
-      ? [
-          `  triggers             List the body's triggers: programs that run when an event arrives. "triggers add <name> --on <a,b> [file]"`,
-          `                       saves one (program from stdin when file is omitted; options --from, --match, --when, --cooldown, --timeout,`,
-          `                       --priority, --preempt), "triggers rm|enable|disable <name>".`,
-        ]
-      : []),
     ...(caps.routines
       ? [
           `  routines             List the saved routines (TypeScript modules the body runs by name) and what is bound to them. "routines save <file...>"`,
           `                       saves each .ts or .js file under its file name without the extension (a routine imports another as ./<name>.ts; list the`,
           `                       modules a routine imports first, so its type check finds them), "routines source|versions <name>", "routines revert <name> <n>".`,
           `  bind action <name> <routine>   Bind a name to a saved routine; "call" runs it.`,
-          ...(caps.triggers
+          ...(caps.reflexes
             ? [
                 `  bind reflex <name> <routine> --on <a,b>   Run a saved routine on its own when an event arrives, as (ctx, { event }); binding it again`,
                 `                       enables it (options --from, --match, --when, --cooldown, --timeout, --priority, --preempt).`,
               ]
             : []),
-          `  unbind <name>        Remove a binding.`,
+          `  unbind <name>        Remove a binding${caps.reflexes ? "; also a stored entry the body skipped at start and reported as reflex_error, if unbind accepts its name (otherwise its reflex_error names the file to edit)" : ""}.`,
           `  call <name>          Call the routine bound to name as an action; --args <json> are its arguments. Prints and exits like run.`,
         ]
       : []),

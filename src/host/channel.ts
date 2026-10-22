@@ -1,7 +1,7 @@
 // The host's side of the supervisor channel, over a `send` function so it runs without a fork:
 // the event sink that hands events to the supervisor's log and hears them back with the log's
 // seq, the reporter that has the supervisor record each program run before its code starts, and
-// the runner view through which the trigger scheduler's preemptions go to that reporter.
+// the runner view through which the reflex scheduler's preemptions go to that reporter.
 import { DEFAULT_TIMEOUT_MS, type BodyEvent, type RunResult } from "../protocol/index.ts";
 import type { EventSink, FiringOf, FromHost, TriggerDisabled, TriggerFinished } from "../protocol/host.ts";
 import type { RunOutcome } from "../program/runner.ts";
@@ -52,8 +52,8 @@ export interface RunReporterOptions {
 }
 
 /**
- * The runner as the trigger scheduler sees it: a preemption is the recorder's to carry out, so the
- * supervisor's deadline covers the abort. The body and the trigger fixture both wire their Triggers with this.
+ * The runner as the reflex scheduler sees it: a preemption is the recorder's to carry out, so the
+ * supervisor's deadline covers the abort. The body and the reflex fixture both wire their Triggers with this.
  */
 export function preemptingRunner(runner: { readonly running: unknown }, recorder: Pick<RunRecorder, "preempt">): { readonly running: unknown; stop(): boolean } {
   return {
@@ -71,7 +71,7 @@ export class RunReporter implements RunRecorder {
   readonly #open = new Set<Promise<unknown>>();
   /** Request id → the run whose end the supervisor holds (recorded or refused), until the answer is sent. */
   readonly #answering = new Map<number, number>();
-  /** A trigger run's returned or thrown end → its run, until `deliver`. */
+  /** A reflex run's returned or thrown end → its run, until `deliver`. */
   readonly #delivering = new WeakMap<object, number>();
   #nextId = 0;
   /** Runs reported whose code has not started yet. */

@@ -1,6 +1,6 @@
 // A bot host for host-process.test.ts: the real HostEvents and Triggers over the real channel,
 // with no world. After `start` it pushes one `ping` event; a reflex on `ping` fires when the
-// supervisor echoes it back, and reports the seq it fired on through `trigger_fired`. Its trigger
+// supervisor echoes it back, and reports the seq it fired on through `reflex_fired`. Its reflex
 // store lives in the init's state directory, which the test owns.
 import path from "node:path";
 import type { FromHost, ToHost } from "../../../src/protocol/host.ts";

@@ -143,24 +143,6 @@ describe("POST /call", () => {
     });
   });
 
-  it("starts a firing queued during the call when the call ends, though no event echo tells the triggers", { timeout: 30_000 }, async () => {
-    const chatter = "export default async (ctx: { bot: { emit(event: string, ...args: unknown[]): void }; sleep(ms: number): Promise<void> }) => {\n  ctx.bot.emit('chat', 'alice', 'go');\n  await ctx.sleep(400);\n  return 'done';\n};\n";
-    // The echo of program_finished would also wake the triggers; here only the call's own end can.
-    const body = await bodyWith({ chatter }, { dropEchoes: ["program_finished"] });
-    await using(body, async () => {
-      await body.ok("POST", "/triggers", { name: "reflex", on: ["chat"], run: "return 1", cooldownMs: 0 });
-      const run = runOf(await body.request("POST", "/call", { name: "chatter" }));
-      assert.equal(run.result, "done");
-      const finished = await body.waitFor("trigger_finished");
-      assert.equal(finished.data.name, "reflex");
-      assert.equal(finished.data.status, "ok");
-      const [fired] = body.eventsOf("trigger_fired");
-      assert.equal(body.eventsOf("trigger_fired").length, 1);
-      const [ended] = body.eventsOf("program_finished");
-      assert.ok(fired!.seq > ended!.seq, "the firing started after the call ended");
-    });
-  });
-
   it("ends in status error with the routine's frames when it throws, and loads imports: vec3, a saved helper", async () => {
     const body = await startFakeBody();
     await using(body, async () => {
@@ -244,10 +226,10 @@ describe("a reflex's run is a call's, fired by an event", () => {
       await body.ok("POST", "/bind", { kind: "reflex", name: "reflex", routine: "keys", on: ["chat"], cooldownMs: 0 });
       const run = runOf(await body.request("POST", "/call", { name: "chatter" }));
       assert.equal(run.result, "done");
-      const finished = await body.waitFor("trigger_finished");
+      const finished = await body.waitFor("reflex_finished");
       assert.deepEqual([finished.data.name, finished.data.status], ["reflex", "ok"]);
-      const [fired] = body.eventsOf("trigger_fired");
-      assert.equal(body.eventsOf("trigger_fired").length, 1);
+      const [fired] = body.eventsOf("reflex_fired");
+      assert.equal(body.eventsOf("reflex_fired").length, 1);
       const [ended] = body.eventsOf("program_finished");
       assert.ok(fired!.seq > ended!.seq, "the firing started after the call ended");
     });
@@ -260,7 +242,7 @@ describe("a reflex's run is a call's, fired by an event", () => {
       assert.deepEqual(called, ["bot", "kit", "log", "notes", "on", "signal", "sleep", "status", "store", "wiki"]);
       await body.ok("POST", "/bind", { kind: "reflex", name: "reflex", routine: "notes", on: ["chat"], cooldownMs: 0 });
       runOf(await body.request("POST", "/call", { name: "chatter" }));
-      assert.equal((await body.waitFor("trigger_finished")).data.status, "ok");
+      assert.equal((await body.waitFor("reflex_finished")).data.status, "ok");
       const given = runOf(await body.request("POST", "/call", { name: "reader" })).result;
       assert.deepEqual(JSON.parse(String(given)), { keys: called, args: ["event"], type: "chat" });
     });

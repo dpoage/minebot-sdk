@@ -149,10 +149,6 @@ const ROUTES = [
   "GET /kits/versions",
   "POST /kits/revert",
   "POST /kits/try",
-  "GET /triggers",
-  "POST /triggers",
-  "POST /triggers/remove",
-  "POST /triggers/enabled",
   "GET /wiki/search",
   "GET /wiki/page",
   "GET /wiki/list",
@@ -321,7 +317,7 @@ function referenceKits(names: readonly string[], locked = false): KitHost {
   return new KitHostClass({ kits, stores: () => JsonStore.memory(), locked, active: names });
 }
 
-const FEATURES_ALL: Features = { kits: ["move"], kitsLocked: false, agentKits: true, wiki: "write", lessons: true, milestones: true, triggers: true, routines: true };
+const FEATURES_ALL: Features = { kits: ["move"], kitsLocked: false, agentKits: true, wiki: "write", lessons: true, milestones: true, reflexes: true, routines: true };
 
 const NOT_CONNECTED = { error: "the body is not connected to a server" };
 const NO_ROUTE = (method: string, pathname: string) => ({ error: `no route for ${method} ${pathname}` });
@@ -389,8 +385,8 @@ describe("body API on a body with every feature on", () => {
     const missing = (field: string) => ({ status: 400, body: { error: `✖ Invalid input: expected string, received undefined\n  → at ${field}` } });
     await body.call("PUT", "/notes/empty-body", missing("text"));
     await body.call("PUT", "/notes/empty-body", missing("text"), { raw: "" });
-    await body.call("POST", "/triggers/remove", missing("name"));
-    await body.call("POST", "/triggers/remove", missing("name"), { raw: "" });
+    await body.call("POST", "/unbind", missing("name"));
+    await body.call("POST", "/unbind", missing("name"), { raw: "" });
     await body.call("POST", "/run", missing("code"));
   });
 
@@ -443,38 +439,10 @@ describe("body API on a body with every feature on", () => {
     await body.call("GET", "/notes", { body: { notes: [note("newest", "second"), note("oldest", "first")] } });
   });
 
-  it("triggers: add, replace, list, enable, disable, remove; refuse invalid ones and unknown names", async () => {
-    const definition = { name: "eat", on: ["hurt"], run: "log('eat')" };
-    const listed = (extra: object = {}) => ({
-      name: "eat",
-      on: ["hurt"],
-      run: "log('eat')",
-      cooldownMs: 1000,
-      timeoutMs: 30_000,
-      enabled: true,
-      preempt: false,
-      priority: 0,
-      updated: "<timestamp>",
-      fired: 0,
-      failures: 0,
-      ...extra,
-    });
-    await body.call("GET", "/triggers", { body: { triggers: [] } });
-    await body.call("POST", "/triggers", { body: { trigger: listed(), replaced: false } }, { json: definition });
-    await body.call("POST", "/triggers", { body: { trigger: listed({ priority: 5 }), replaced: true } }, { json: { ...definition, priority: 5 } });
-    await body.call("GET", "/triggers", { body: { triggers: [listed({ priority: 5 })] } });
-    await body.call("POST", "/triggers/enabled", { body: { trigger: listed({ priority: 5, enabled: false }) } }, { json: { name: "eat", enabled: false } });
-    await body.call("POST", "/triggers/enabled", { body: { trigger: listed({ priority: 5 }) } }, { json: { name: "eat", enabled: true } });
-    await body.call("POST", "/triggers/enabled", { status: 404, body: { error: 'no trigger "ghost"' } }, { json: { name: "ghost", enabled: true } });
-    await body.call("POST", "/triggers/enabled", { status: 400, body: { error: "✖ Invalid input: expected boolean, received undefined\n  → at enabled" } }, { json: { name: "eat" } });
-    await body.call("POST", "/triggers", { status: 400, body: { error: "✖ Invalid input: expected array, received undefined\n  → at on\n✖ Invalid input: expected string, received undefined\n  → at run" } }, { json: { name: "bad" } });
-    await body.call("POST", "/triggers", { status: 400, body: { error: "✖ a trigger cannot listen to trigger events\n  → at on" } }, { json: { ...definition, on: ["trigger_fired"] } });
-    await body.call("POST", "/triggers", { status: 400, body: { error: "run does not compile: Unexpected token '}'" } }, { json: { ...definition, name: "broken", run: "log(" } });
-    await body.call("POST", "/triggers", { status: 400, body: { error: "when does not compile: Unexpected token ')'" } }, { json: { ...definition, name: "broken", when: "1 +" } });
-    await body.call("POST", "/triggers/remove", { status: 404, body: { error: 'no trigger "ghost"' } }, { json: { name: "ghost" } });
-    await body.call("POST", "/triggers/remove", { status: 400, body: { error: "✖ Invalid input: expected string, received undefined\n  → at name" } }, { json: {} });
-    await body.call("POST", "/triggers/remove", { body: { removed: "eat" } }, { json: { name: "eat" } });
-    await body.call("GET", "/triggers", { body: { triggers: [] } });
+  it("answers the routes of the code triggers like any unknown route, whatever the body offers", async () => {
+    for (const [method, url] of [["GET", "/triggers"], ["POST", "/triggers"], ["POST", "/triggers/remove"], ["POST", "/triggers/enabled"]] as const) {
+      await body.call(method, url, { status: 404, body: NO_ROUTE(method, url) }, method === "POST" ? { json: { name: "eat", on: ["hurt"], run: "log('eat')", enabled: true } } : undefined);
+    }
   });
 
   it("milestones: read, set, replace, clear, refuse malformed ones", async () => {
@@ -586,7 +554,7 @@ describe("body API: agent kits", () => {
 
 describe("body API on a body with every optional feature off", () => {
   let body: Running;
-  const features: Features = { kits: [], kitsLocked: true, agentKits: false, wiki: "off", lessons: false, milestones: false, triggers: false, routines: false };
+  const features: Features = { kits: [], kitsLocked: true, agentKits: false, wiki: "off", lessons: false, milestones: false, reflexes: false, routines: false };
 
   before(async () => {
     body = await startBody({ kits: [], lockKits: true, wikiMode: "off", milestonesEnabled: false, agentKits: false, triggers: false, routines: false });
@@ -640,7 +608,7 @@ describe("body API on a body with every optional feature off", () => {
 describe("body API on a body with locked kits, agent kits off, and a read-only wiki that holds a lesson", () => {
   let body: Running;
   const ref = referenceKits(["move"], true);
-  const features: Features = { kits: ["move"], kitsLocked: true, agentKits: false, wiki: "read", lessons: true, milestones: true, triggers: true, routines: true };
+  const features: Features = { kits: ["move"], kitsLocked: true, agentKits: false, wiki: "read", lessons: true, milestones: true, reflexes: true, routines: true };
 
   before(async () => {
     body = await startBody({
@@ -696,7 +664,6 @@ interface GatedProbe {
 }
 
 const KIT_NAME_RULE = { status: 400, body: { error: "✖ use 1-32 lowercase letters, digits, and _; start with a letter\n  → at name" } };
-const NO_TRIGGER = { status: 404, body: { error: 'no trigger "ghost"' } };
 const ROUTINE_NAME_RULE = { status: 400, body: { error: "✖ use 1-48 lowercase letters, digits, _ and -; start with a letter\n  → at name" } };
 
 /** Every capability-gated route of the table, once, with a request whose answer does not depend on which other capabilities the body offers. */
@@ -714,10 +681,6 @@ const GATED: GatedProbe[] = [
   { capability: "agentKits", method: "GET", url: "/kits/versions?name=Bad", served: () => KIT_NAME_RULE },
   { capability: "agentKits", method: "POST", url: "/kits/revert", call: { json: { name: "Bad", version: 1 } }, served: () => KIT_NAME_RULE },
   { capability: "agentKits", method: "POST", url: "/kits/try", call: { json: { source: kitSource("try"), action: "hi" } }, served: () => ({ status: 503, body: NOT_CONNECTED }) },
-  { capability: "triggers", method: "GET", url: "/triggers", served: () => ({ body: { triggers: [] } }) },
-  { capability: "triggers", method: "POST", url: "/triggers", call: { json: { name: "bad" } }, served: () => ({ status: 400, body: { error: "✖ Invalid input: expected array, received undefined\n  → at on\n✖ Invalid input: expected string, received undefined\n  → at run" } }) },
-  { capability: "triggers", method: "POST", url: "/triggers/remove", call: { json: { name: "ghost" } }, served: () => NO_TRIGGER },
-  { capability: "triggers", method: "POST", url: "/triggers/enabled", call: { json: { name: "ghost", enabled: true } }, served: () => NO_TRIGGER },
   { capability: "wiki", method: "GET", url: "/wiki/search?q=zzzz", served: () => ({ body: { hits: [] } }) },
   {
     capability: "wiki",
@@ -764,7 +727,7 @@ const PROFILES: Profile[] = [
   { off: ["wiki", "lessons"], scenario: { wikiMode: "off" }, features: { ...FEATURES_ALL, wiki: "off", lessons: false } },
   { off: ["lessons"], scenario: { wikiMode: "read" }, features: { ...FEATURES_ALL, wiki: "read", lessons: false } },
   { off: ["milestones"], scenario: { milestonesEnabled: false }, features: { ...FEATURES_ALL, milestones: false } },
-  { off: ["triggers"], scenario: { triggers: false }, features: { ...FEATURES_ALL, triggers: false } },
+  { off: ["reflexes"], scenario: { triggers: false }, features: { ...FEATURES_ALL, reflexes: false } },
   { off: ["routines"], scenario: { routines: false }, features: { ...FEATURES_ALL, routines: false } },
 ];
 
@@ -794,7 +757,7 @@ describe("body API: limits", () => {
 
   before(async () => {
     const notes = Object.fromEntries(Array.from({ length: MAX_NOTES }, (_, i) => [`note-${String(i).padStart(3, "0")}`, { text: `text ${i}`, updated: "2020-01-01T00:00:00.000Z" }]));
-    body = await startBody({ stateFiles: { "stores/notes.json": notes } });
+    body = await startBody({ stateFiles: { "stores/notes.json": notes, "routines/r1.ts": "export default () => 1;\n" } });
   });
   after(() => body.close());
 
@@ -807,11 +770,12 @@ describe("body API: limits", () => {
     await body.call("PUT", "/notes/another", limit, { json: { text: "no room again" } });
   });
 
-  it("refuses a new trigger at 50 triggers with 409", async () => {
+  it("refuses a new reflex at 50 reflexes with 409", async () => {
+    const reflex = (name: string) => ({ kind: "reflex", name, routine: "r1", on: ["hurt"], cooldownMs: 1000, timeoutMs: 30_000, enabled: true, preempt: false, priority: 0, updated: "<timestamp>", fired: 0, failures: 0 });
     for (let i = 0; i < MAX_TRIGGERS; i++) {
-      await body.call("POST", "/triggers", { body: { trigger: { name: `t${i}`, on: ["hurt"], run: "log(1)", cooldownMs: 1000, timeoutMs: 30_000, enabled: true, preempt: false, priority: 0, updated: "<timestamp>", fired: 0, failures: 0 }, replaced: false } }, { json: { name: `t${i}`, on: ["hurt"], run: "log(1)" } });
+      await body.call("POST", "/bind", { body: { binding: reflex(`t${i}`), replaced: false } }, { json: { kind: "reflex", name: `t${i}`, routine: "r1", on: ["hurt"] } });
     }
-    await body.call("POST", "/triggers", { status: 409, body: { error: `a body keeps at most ${MAX_TRIGGERS} triggers and reflexes together; remove some first` } }, { json: { name: "one-too-many", on: ["hurt"], run: "log(1)" } });
+    await body.call("POST", "/bind", { status: 409, body: { error: `a body keeps at most ${MAX_TRIGGERS} reflexes, and stored entries it skipped at start count with them; unbind some first` } }, { json: { kind: "reflex", name: "one-too-many", routine: "r1", on: ["hurt"] } });
   });
 });
 
@@ -824,43 +788,31 @@ describe("body API: reflexes", () => {
   });
   after(() => body.close());
 
-  it("binds, lists, and unbinds a reflex among the bindings, and keeps it out of the triggers", async () => {
+  it("binds, lists, and unbinds a reflex among the bindings", async () => {
     await body.call("POST", "/bind", { body: { binding: reflex("rfx"), replaced: false } }, { json: { kind: "reflex", name: "rfx", routine: "r1", on: ["hurt"] } });
     await body.call("POST", "/bind", { body: { binding: reflex("rfx", ["chat"]), replaced: true } }, { json: { kind: "reflex", name: "rfx", routine: "r1", on: ["chat"] } });
     await body.call("GET", "/bindings", { body: { bindings: [reflex("rfx", ["chat"])] } });
-    await body.call("GET", "/triggers", { body: { triggers: [] } });
-    await body.call("POST", "/triggers/remove", { status: 404, body: { error: 'no trigger "rfx"' } }, { json: { name: "rfx" } });
-    await body.call("POST", "/triggers/enabled", { status: 404, body: { error: 'no trigger "rfx"' } }, { json: { name: "rfx", enabled: false } });
     await body.call("POST", "/unbind", { body: { unbound: "rfx" } }, { json: { name: "rfx" } });
     await body.call("GET", "/bindings", { body: { bindings: [] } });
   });
 
-  it("refuses a reflex that does not validate with 400, an unknown routine with 404, and a trigger's name with 409", async () => {
+  it("refuses a reflex that does not validate with 400 and an unknown routine with 404", async () => {
     await body.call("POST", "/bind", { status: 400, body: { error: "✖ Invalid input: expected array, received undefined\n  → at on" } }, { json: { kind: "reflex", name: "rfx", routine: "r1" } });
+    await body.call("POST", "/bind", { status: 400, body: { error: "✖ a reflex cannot listen to reflex events\n  → at on" } }, { json: { kind: "reflex", name: "rfx", routine: "r1", on: ["reflex_fired"] } });
     // The syntax error's own text is the JavaScript engine's.
     const syntax = await body.send("POST", "/bind", { json: { kind: "reflex", name: "rfx", routine: "r1", on: ["hurt"], when: "event.data <" } });
     assert.equal(syntax.status, 400);
     assert.match(JSON.stringify(syntax.body), /^\{"error":"when does not compile: /);
     await body.call("POST", "/bind", { status: 404, body: { error: 'no routine named "ghost"' } }, { json: { kind: "reflex", name: "rfx", routine: "ghost", on: ["hurt"] } });
-    await body.call("POST", "/triggers", { body: { trigger: { name: "tgr", on: ["hurt"], run: "log(1)", cooldownMs: 1000, timeoutMs: 30_000, enabled: true, preempt: false, priority: 0, updated: "<timestamp>", fired: 0, failures: 0 }, replaced: false } }, { json: { name: "tgr", on: ["hurt"], run: "log(1)" } });
-    await body.call(
-      "POST",
-      "/bind",
-      { status: 409, body: { error: '"tgr" is a trigger; triggers, reflexes, and action bindings share their names, so remove it or pick another name' } },
-      { json: { kind: "reflex", name: "tgr", routine: "r1", on: ["hurt"] } },
-    );
     await body.call("GET", "/bindings", { body: { bindings: [] } });
-    await body.call("POST", "/triggers/remove", { body: { removed: "tgr" } }, { json: { name: "tgr" } });
   });
 
-  it("counts reflexes and triggers toward one limit of 50", async () => {
+  it("counts reflexes toward a limit of 50, and a reflex bound again is not a new one", async () => {
     for (let i = 0; i < MAX_TRIGGERS; i++) {
-      if (i % 2) await body.call("POST", "/bind", { body: { binding: reflex(`t${i}`), replaced: false } }, { json: { kind: "reflex", name: `t${i}`, routine: "r1", on: ["hurt"] } });
-      else await body.call("POST", "/triggers", { body: { trigger: { name: `t${i}`, on: ["hurt"], run: "log(1)", cooldownMs: 1000, timeoutMs: 30_000, enabled: true, preempt: false, priority: 0, updated: "<timestamp>", fired: 0, failures: 0 }, replaced: false } }, { json: { name: `t${i}`, on: ["hurt"], run: "log(1)" } });
+      await body.call("POST", "/bind", { body: { binding: reflex(`t${i}`), replaced: false } }, { json: { kind: "reflex", name: `t${i}`, routine: "r1", on: ["hurt"] } });
     }
-    const full = { status: 409, body: { error: `a body keeps at most ${MAX_TRIGGERS} triggers and reflexes together; remove some first` } };
+    const full = { status: 409, body: { error: `a body keeps at most ${MAX_TRIGGERS} reflexes, and stored entries it skipped at start count with them; unbind some first` } };
     await body.call("POST", "/bind", full, { json: { kind: "reflex", name: "one-too-many", routine: "r1", on: ["hurt"] } });
-    await body.call("POST", "/triggers", full, { json: { name: "one-too-many", on: ["hurt"], run: "log(1)" } });
     await body.call("POST", "/bind", { body: { binding: reflex("t1", ["chat"]), replaced: true } }, { json: { kind: "reflex", name: "t1", routine: "r1", on: ["chat"] } });
   });
 });
@@ -872,7 +824,7 @@ describe("body API: events and waits", () => {
   before(async () => {
     body = await startBody({
       kits: ["move"],
-      stateFiles: { "triggers.json": { broken: { on: "chat", run: "log(1)" } } },
+      stateFiles: { "triggers.json": { broken: { on: "chat", routine: "r1" } } },
       agentKitFiles: {
         "orphan.ts":
           `import { defineKit, action, z } from "minebot-sdk/kit";\n` +
@@ -884,7 +836,7 @@ describe("body API: events and waits", () => {
 
   // What the body produced from start to its first failed connection attempt, in order, as the normalizer shows it.
   const events = [
-    event(1, "trigger_error", { name: "broken", error: "✖ Invalid input: expected array, received string\n  → at on\n✖ Invalid input: expected string, received undefined\n  → at updated" }),
+    event(1, "reflex_error", { name: "broken", error: "✖ Invalid input: expected array, received string\n  → at on\n✖ Invalid input: expected string, received undefined\n  → at updated" }),
     event(2, "kit_error", { file: "orphan.ts", error: "it uses kits this body does not offer: dig" }),
     event(3, "error", { message: "connect ECONNREFUSED 127.0.0.1:<port>" }),
     event(4, "disconnected", { reason: "socketClosed" }),
@@ -937,7 +889,7 @@ describe("body API: the program history file", () => {
       .map((line) => normalize(JSON.parse(line), { token: body.token, ports: body.ports }));
 
   before(async () => {
-    body = await startBody({ kits: ["move"], history: true, stateFiles: { "bindings.json": { act: { kind: "action", routine: "act" } } } });
+    body = await startBody({ kits: ["move"], history: true, stateFiles: { "bindings.json": { act: { kind: "action", routine: "act" } }, "routines/r1.ts": "export default () => 1;\n" } });
   });
   after(() => body.close());
 
@@ -971,27 +923,11 @@ describe("body API: the program history file", () => {
     });
   });
 
-  it("writes one registered line, with the next seq, for a trigger added after it", async () => {
-    const trigger = { name: "flagged", on: ["chat"], run: flagged, when: "event.data.from !== 'x'" };
-    await body.call("POST", "/triggers", { body: { trigger: { ...trigger, cooldownMs: 1000, timeoutMs: 30_000, enabled: true, preempt: false, priority: 0, updated: "<timestamp>", fired: 0, failures: 0 }, replaced: false } }, { json: trigger });
-    assert.deepStrictEqual(lines(), [
-      { seq: 2, startedAt: "<timestamp>", kits: ["move"], code: flagged, escapeAttempts: ["process"], status: "started" },
-      { seq: 3, startedAt: "<timestamp>", kits: ["move"], code: `${flagged}\n${trigger.when}`, escapeAttempts: ["process"], trigger: "flagged", on: ["chat"], when: trigger.when, status: "registered" },
-    ]);
-  });
-
-  it("numbers every later program too, flagged or not: an unflagged run leaves no line but takes a seq", async () => {
-    await body.call("POST", "/run", { status: 503, body: NOT_CONNECTED }, { json: { code: "return 2" } });
-    const trigger = { name: "plain", on: ["chat"], run: "log('hi')" };
-    await body.call("POST", "/triggers", { body: { trigger: { ...trigger, cooldownMs: 1000, timeoutMs: 30_000, enabled: true, preempt: false, priority: 0, updated: "<timestamp>", fired: 0, failures: 0 }, replaced: false } }, { json: trigger });
-    assert.deepStrictEqual(lines().slice(2), [{ seq: 5, startedAt: "<timestamp>", kits: ["move"], code: "log('hi')\n", escapeAttempts: [], trigger: "plain", on: ["chat"], status: "registered" }]);
-  });
-
-  it("writes no line and takes no seq for a trigger that does not compile", async () => {
-    const written = lines();
-    await body.call("POST", "/triggers", { status: 400, body: { error: "run does not compile: Unexpected token '}'" } }, { json: { name: "broken", on: ["chat"], run: "return process.pid(" } });
-    await body.call("POST", "/triggers", { status: 400, body: { error: "when does not compile: Unexpected token ')'" } }, { json: { name: "broken", on: ["chat"], run: flagged, when: "process.pid +" } });
-    assert.deepStrictEqual(lines(), written);
+  it("numbers every later program too, flagged or not: an unflagged run leaves no line but takes a seq, and a reflex's `when` is registered with the next one", async () => {
+    await body.call("POST", "/call", { status: 503, body: NOT_CONNECTED }, { json: { name: "act" } });
+    const reflex = { kind: "reflex", name: "plain", routine: "r1", on: ["chat"], when: "process.pid > 0" };
+    await body.call("POST", "/bind", { body: { binding: { ...reflex, cooldownMs: 1000, timeoutMs: 30_000, enabled: true, preempt: false, priority: 0, updated: "<timestamp>", fired: 0, failures: 0 }, replaced: false } }, { json: reflex });
+    assert.deepStrictEqual(lines().slice(1), [{ seq: 4, startedAt: "<timestamp>", kits: ["move"], code: reflex.when, escapeAttempts: ["process"], trigger: "plain", routine: "r1", on: ["chat"], status: "registered" }]);
   });
 
   it("records a /kits/try as a program: its code, flagged by what it carries", async () => {
@@ -999,7 +935,7 @@ describe("body API: the program history file", () => {
     const code = `return await kits.try(${JSON.stringify(source)}, ${JSON.stringify({ action: "hi" })});`;
     assert.deepStrictEqual(findEscapeAttempts(code), ["require("]);
     await body.call("POST", "/kits/try", { status: 503, body: NOT_CONNECTED }, { json: { source, action: "hi" } });
-    assert.deepStrictEqual(lines().slice(3), [{ seq: 6, startedAt: "<timestamp>", kits: ["move"], code, escapeAttempts: ["require("], status: "started" }]);
+    assert.deepStrictEqual(lines().slice(2), [{ seq: 5, startedAt: "<timestamp>", kits: ["move"], code, escapeAttempts: ["require("], status: "started" }]);
   });
 });
 

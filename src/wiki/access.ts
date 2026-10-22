@@ -9,17 +9,17 @@ import { WikiDisabledError, Wiki, formatPage } from "./wiki.ts";
 /**
  * What a body sees of the wiki. A body without kits must not read about kits, so pages that
  * need a missing feature are hidden, and blocks marked `<!-- kits -->...<!-- /kits -->`
- * (or `milestones`, `agentKits`, `triggers`, `routines`) are cut from the pages that stay.
+ * (or `milestones`, `agentKits`, `reflexes`, `routines`) are cut from the pages that stay.
  */
 export type WikiView = Record<WikiFeature, boolean>;
 
 /** The view that shows every page whole. */
-export const FULL_VIEW: WikiView = { kits: true, milestones: true, agentKits: true, triggers: true, routines: true };
+export const FULL_VIEW: WikiView = { kits: true, milestones: true, agentKits: true, reflexes: true, routines: true };
 
 /** Derives the wiki view from the body's features: the capability table is the only source. */
 export function wikiView(features: BodyFeatures): WikiView {
   const caps = capabilities(features);
-  return { kits: caps.kits, milestones: caps.milestones, agentKits: caps.agentKits, triggers: caps.triggers, routines: caps.routines };
+  return { kits: caps.kits, milestones: caps.milestones, agentKits: caps.agentKits, reflexes: caps.reflexes, routines: caps.routines };
 }
 
 /** A body's view of the wiki: enforces the access mode, hides content for features the body lacks, and names lessons after the body. */

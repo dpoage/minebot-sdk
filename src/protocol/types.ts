@@ -293,44 +293,6 @@ export interface RoutineVersion {
   revertedFrom?: number;
 }
 
-/** A trigger as the body keeps it: its definition, and what it has done since the body started. */
-export interface TriggerInfo {
-  name: string;
-  on: string[];
-  from?: string;
-  match?: string;
-  when?: string;
-  run: string;
-  cooldownMs: number;
-  timeoutMs: number;
-  enabled: boolean;
-  preempt: boolean;
-  priority: number;
-  /** ISO time the trigger was saved. */
-  updated: string;
-  /** Why the body disabled it, when it did. */
-  disabledReason?: string;
-  /** Times it has run since the body started. */
-  fired: number;
-  /** ISO time of the latest firing since the body started. */
-  lastFired?: string;
-  /** How the latest run ended. */
-  lastStatus?: RunStatus;
-  lastError?: string;
-  /** Runs in a row that failed. */
-  failures: number;
-}
-
-export interface TriggersResponse {
-  triggers: TriggerInfo[];
-}
-
-/** What saving a trigger returns: the trigger as stored, and whether it replaced one of the same name. */
-export interface AddTriggerResponse {
-  trigger: TriggerInfo;
-  replaced: boolean;
-}
-
 /** What listing the routine library returns. */
 export interface RoutinesResponse {
   routines: RoutineInfo[];
@@ -366,8 +328,8 @@ export interface ActionBindingInfo {
 }
 
 /**
- * A reflex: the saved routine `routine` runs when the events in `on` arrive, as a trigger's program
- * does, and has a trigger's fields and what the body has counted for it since it started.
+ * A reflex: the saved routine `routine` runs when the events in `on` arrive, called with
+ * `(ctx, { event })`, with the fields it was bound with and what the body has counted for it since it started.
  */
 export interface ReflexBindingInfo {
   kind: "reflex";

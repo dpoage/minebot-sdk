@@ -17,7 +17,7 @@ import { Notes } from "../notes.ts";
 import { StallTracker } from "./progress.ts";
 import { requestStats } from "./stats.ts";
 import { BodyState } from "./state.ts";
-import { isReflex, Triggers, type StoredReflex, type StoredTrigger } from "./triggers.ts";
+import { Triggers, type StoredReflex } from "./triggers.ts";
 import { preemptingRunner } from "./channel.ts";
 
 export interface BodyOptions {
@@ -43,20 +43,20 @@ export interface BodyOptions {
   syncKits?: () => void;
   /** Authoring hooks for the program globals; wired to the kit library by the daemon. */
   kitAuthoring?: GlobalsDeps["kitAuthoring"];
-  /** Let the agent register triggers. Default: true. A body without them neither mentions nor serves them. */
+  /** Let the agent bind reflexes. Default: true. A body without them neither mentions nor serves them. */
   triggersEnabled?: boolean;
   /** Loads the routines a call runs; undefined for a body without routines. */
   routines?: RoutineLoader;
   /** Where the body's events go; the supervisor's log numbers them and echoes them back. */
   events: EventSink;
-  /** Where trigger runs and registrations are reported, as programs are. */
+  /** Where reflex runs and registrations are reported, as calls are. */
   recorder: RunRecorder;
   /** When the supervisor started; /status reports it. */
   startedAt: string;
   /** Deaths and reconnects the previous host counted, when this host replaces one. */
   deaths?: number;
   reconnects?: number;
-  /** Each trigger's run of failures, and the firing the replaced host ended in, when this host replaces one. */
+  /** Each reflex's run of failures, and the firing the replaced host ended in, when this host replaces one. */
   triggerFailures?: Record<string, number>;
   lostFiring?: LostFiring;
 }
@@ -70,15 +70,15 @@ export interface RunRecorder {
    */
   record(run: { code: string; timeoutMs?: number; extra?: object; requestId?: number; trigger?: FiringOf }, execute: () => Promise<RunOutcome>): Promise<RunResult>;
   /**
-   * Ends a trigger's run: `end` is what `record` returned or threw for it. The trigger_finished, the
-   * trigger_disabled it caused, and the failures with the firing counted go to the supervisor as
+   * Ends a reflex's run: `end` is what `record` returned or threw for it. The reflex_finished, the
+   * reflex_disabled it caused, and the failures with the firing counted go to the supervisor as
    * that run's delivery. Returns false, sending nothing, for an end with no recorded run (its start
    * was refused, or it never ran): the caller hands it to `counts`.
    */
   deliver(end: unknown, finished: TriggerFinished, disabled: TriggerDisabled | undefined, triggerFailures: Record<string, number>): boolean;
   /**
-   * Hands over the triggers' failures after a change no run's delivery carries; the trigger_finished
-   * of a firing that ended with no recorded run, and a trigger_disabled, go in the same message.
+   * Hands over the reflexes' failures after a change no run's delivery carries; the reflex_finished
+   * of a firing that ended with no recorded run, and a reflex_disabled, go in the same message.
    */
   counts(triggerFailures: Record<string, number>, ended?: { finished?: TriggerFinished; disabled?: TriggerDisabled }): void;
   /**
@@ -101,7 +101,7 @@ export class Body {
   readonly kits: KitHost;
   readonly wiki: WikiAccess;
   readonly notes: Notes;
-  /** The agent's triggers; null on a body without them. */
+  /** The agent's reflexes; null on a body that has them turned off. */
   readonly triggers: Triggers | null;
   readonly state: BodyState;
   readonly #options: BodyOptions;
@@ -141,10 +141,10 @@ export class Body {
             connected: () => this.#connection.spawned,
             bot: () => this.#connection.bot ?? undefined,
             reflexes: options.routines !== undefined,
-            run: (trigger, event, started) => this.#runTrigger(trigger, event, started),
+            run: (reflex, event, started) => this.#runTrigger(reflex, event, started),
             deliver: (end, finished, disabled, failures) => options.recorder.deliver(end, finished, disabled, failures),
             counts: (failures, ended) => options.recorder.counts(failures, ended),
-            register: (trigger) => this.#register(trigger),
+            register: (reflex) => this.#register(reflex),
             failures: options.triggerFailures,
             lost: options.lostFiring,
           });
@@ -160,7 +160,6 @@ export class Body {
       store: (namespace) => this.#options.state.routineStore(namespace),
       features: () => this.features,
       status: () => this.status(),
-      ...(this.triggers && { triggers: this.triggers }),
       ...(capabilities(this.features).agentKits && this.#options.kitAuthoring && { kitAuthoring: this.#options.kitAuthoring }),
     };
   }
@@ -174,7 +173,7 @@ export class Body {
       wiki: this.wiki.mode,
       lessons: this.wiki.lessons,
       milestones: this.#options.milestonesEnabled ?? true,
-      triggers: this.triggers !== null,
+      reflexes: this.triggers !== null,
       routines: this.#options.routines !== undefined,
     };
   }
@@ -212,7 +211,7 @@ export class Body {
     return this.#ended(result);
   }
 
-  /** What a program's or a call's end does for the body: the event, the triggers waiting for an idle runner, the stall record. */
+  /** What a program's or a call's end does for the body: the event, the reflexes waiting for an idle runner, the stall record. */
   #ended(result: RunOutcome): RunOutcome {
     // A hung run ends with its host: the supervisor, which kills it, logs the end of the program.
     if (result.hung) return result;
@@ -226,29 +225,28 @@ export class Body {
     return result;
   }
 
-  /** Records what a trigger or reflex being saved will run: a trigger's code, and for a reflex its `when` (the routine's source is the library's). */
-  #register(trigger: StoredTrigger): Promise<void> {
-    if (isReflex(trigger)) return this.#options.recorder.register(trigger.when ?? "", { trigger: trigger.name, routine: trigger.routine, on: trigger.on });
-    return this.#options.recorder.register(`${trigger.run}\n${trigger.when ?? ""}`, { trigger: trigger.name, on: trigger.on, ...(trigger.when !== undefined && { when: trigger.when }) });
+  /** Records what a reflex being bound will run: its `when` expression (the routine's source is the library's). */
+  #register(reflex: StoredReflex): Promise<void> {
+    return this.#options.recorder.register(reflex.when ?? "", { trigger: reflex.name, routine: reflex.routine, on: reflex.on });
   }
 
   /**
-   * Runs one firing of a trigger or reflex through the same runner and history as programs. Its end is a
-   * `trigger_finished` event, not `program_finished`, so an agent waiting on its own programs is not woken by reflexes.
+   * Runs one firing of a reflex through the same runner and history as calls. Its end is a
+   * `reflex_finished` event, not `program_finished`, so an agent waiting on its own programs is not woken by reflexes.
    */
-  async #runTrigger(trigger: StoredTrigger, event: BodyEvent, started: () => void): Promise<RunResult> {
+  async #runTrigger(reflex: StoredReflex, event: BodyEvent, started: () => void): Promise<RunResult> {
     this.#options.syncKits?.();
     const run = () => {
       if (this.runner.running) throw new BusyError();
       started();
-      return isReflex(trigger) ? this.#callReflex(trigger, event) : this.runner.run(trigger.run, trigger.timeoutMs, { event: structuredClone(event) });
+      return this.#callReflex(reflex, event);
     };
     return this.#options.recorder.record(
       {
-        code: isReflex(trigger) ? "" : trigger.run,
-        timeoutMs: trigger.timeoutMs,
-        extra: { trigger: trigger.name, ...(isReflex(trigger) && { routine: trigger.routine }), event: { seq: event.seq, type: event.type } },
-        trigger: { name: trigger.name, updated: trigger.updated },
+        code: "",
+        timeoutMs: reflex.timeoutMs,
+        extra: { trigger: reflex.name, routine: reflex.routine, event: { seq: event.seq, type: event.type } },
+        trigger: { name: reflex.name, updated: reflex.updated },
       },
       run,
     );

@@ -11,7 +11,6 @@ import type { ProgramScope } from "../program/scope.ts";
 import type { WikiAccess } from "../wiki/access.ts";
 import type { Connection } from "./connection.ts";
 import type { Notes } from "../notes.ts";
-import type { Triggers } from "./triggers.ts";
 
 const { goals, Movements } = pathfinderPkg;
 
@@ -24,8 +23,6 @@ export interface GlobalsDeps {
   store: (namespace: string) => ReturnType<RoutineContext["store"]>;
   features: () => BodyFeatures;
   status: () => Promise<StatusResponse>;
-  /** Present only when the body offers triggers. */
-  triggers?: Triggers;
   /** Authoring hooks, present only when the body offers agent kits. `try` runs inside the calling program, so it takes that program's scope and bot. */
   kitAuthoring?: {
     save: (source: string) => Promise<unknown>;
@@ -75,22 +72,12 @@ export function programGlobals(scope: ProgramScope, deps: GlobalsDeps): Record<s
       ...(authoring && { ...authoring, try: (source: string, run: { action: string; args?: unknown }) => authoring.try(source, run, scope, bot) }),
     });
   }
-  if (caps.triggers && deps.triggers) {
-    const { triggers } = deps;
-    globals.triggers = {
-      add: (trigger: unknown) => triggers.add(trigger),
-      remove: (name: string) => triggers.remove(name),
-      list: () => triggers.list(),
-      enable: (name: string) => triggers.setEnabled(name, true),
-      disable: (name: string) => triggers.setEnabled(name, false),
-    };
-  }
   return globals;
 }
 
 /**
  * What a routine's default export receives for one call: the run's scope, the live bot, and the
- * facilities the body offers programs, plus `store`, which programs have no global for. Nothing else: the kit controller and the triggers stay program globals.
+ * facilities the body offers programs, plus `store`, which programs have no global for. Nothing else: the kit controller stays a program global.
  */
 export function routineContext(scope: ProgramScope, deps: GlobalsDeps): RoutineContext {
   const bot = deps.connection.requireBot();
