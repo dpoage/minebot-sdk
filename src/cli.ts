@@ -218,7 +218,7 @@ async function main(): Promise<number> {
         }
         case "save": {
           if (names.length === 0) throw new Error("routines save needs at least one .ts or .js file");
-          // Every file is checked before the first is sent: a typo in the last name saves nothing.
+          // Every file's extension is checked before the first is sent; a missing file is only found as its turn comes, after the earlier ones are saved.
           const modules = names.map((file) => {
             const extension = path.extname(file);
             if (extension !== ".ts" && extension !== ".js") throw new Error(`routines save takes .ts or .js files, not ${file}`);

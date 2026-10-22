@@ -4,7 +4,7 @@ import type { RoutineContext } from "./context.ts";
 /** Registered (not local) so a second copy of the package, such as the harness's, still reads the metadata a routine's own copy attached. */
 const META = Symbol.for("minebot-sdk.routine");
 
-/** What a routine says about itself: shown to whoever calls it, and enforced when it is called. */
+/** What a routine says about itself: enforced when the routine is called. */
 export interface RoutineMeta<A extends z.ZodType = z.ZodType, R extends z.ZodType = z.ZodType> {
   description?: string;
   /** The arguments a call may pass; a call that does not match fails before the routine runs, and the routine receives the parsed value, defaults applied. */
