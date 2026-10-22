@@ -31,6 +31,6 @@ Close the window when you are done.
 
 Furnaces use `bot.openFurnace` (`mechanics/smelting`), enchanting tables `bot.openEnchantmentTable` (`mechanics/enchanting-basics`), villagers `bot.openVillager` (`mechanics/villagers-and-trading`).
 
-<!-- kits -->
+<!-- builtins -->
 `kit.container.list({ at })` lists a container. `kit.container.deposit({ at, items: "cobblestone", count: 40 })` and `kit.container.withdraw({ at, items: "iron_ingot", count: 3 })` move items.
-<!-- /kits -->
+<!-- /builtins -->

@@ -43,6 +43,6 @@ if (creeper && creeper.position.distanceTo(bot.entity.position) < 8) {
 
 A sprinting bot outruns a creeper: starting 4 blocks away, it was 9, 12, and 14 blocks away after 1, 2, and 3 seconds.
 
-<!-- kits -->
+<!-- builtins -->
 `kit.combat.retreat({ from: creeperId, distance: 8 })` runs away from it.
-<!-- /kits -->
+<!-- /builtins -->

@@ -167,33 +167,27 @@ describe("POST /call", () => {
 describe("a routine's ctx", () => {
   const KEYS = "export default (ctx: object) => Object.keys(ctx).sort();\n";
   const BASE = ["bot", "log", "notes", "on", "signal", "sleep", "status", "store"];
-  const kitsOptions: [string, FakeBodyOptions["init"], string[]][] = [
-    ["with kits", {}, ["kit"]],
-    ["without kits", { kits: [], lockKits: true }, []],
-  ];
   const wikiOptions: [string, FakeBodyOptions["init"], string[]][] = [
     ["wiki off", { wikiMode: "off" }, []],
     ["wiki read", { wikiMode: "read" }, ["wiki"]],
     ["wiki write", { wikiMode: "write" }, ["wiki"]],
   ];
-  for (const [kitsName, kits, kitKeys] of kitsOptions) {
-    for (const [wikiName, wiki, wikiKeys] of wikiOptions) {
-      it(`has exactly bot, log, sleep, signal, on, notes, status${kitKeys.length ? ", kit" : ""}${wikiKeys.length ? ", wiki" : ""} on a body ${kitsName}, ${wikiName}`, async () => {
-        const body = await bodyWith({ keys: KEYS }, { init: { ...kits, ...wiki } });
-        await using(body, async () => {
-          const keys = runOf(await body.request("POST", "/call", { name: "keys" })).result;
-          assert.deepEqual(keys, [...BASE, ...kitKeys, ...wikiKeys].sort());
-        });
+  for (const [wikiName, wiki, wikiKeys] of wikiOptions) {
+    it(`has exactly bot, log, sleep, signal, on, notes, status, store${wikiKeys.length ? ", wiki" : ""} on a body with ${wikiName}`, async () => {
+      const body = await bodyWith({ keys: KEYS }, { init: wiki });
+      await using(body, async () => {
+        const keys = runOf(await body.request("POST", "/call", { name: "keys" })).result;
+        assert.deepEqual(keys, [...BASE, ...wikiKeys].sort());
       });
-    }
+    });
   }
 
-  it("shares the body's notes and status with programs, and offers the kits' actions as ctx.kit", async () => {
-    const probe = "export default async (ctx: { notes: { get(key: string): string | undefined }; status(): Promise<{ connected: boolean }>; kit?: Record<string, unknown> }) => ({ note: ctx.notes.get('shared'), connected: (await ctx.status()).connected, kits: Object.keys(ctx.kit ?? {}).includes('move') });\n";
+  it("shares the body's notes and status with programs", async () => {
+    const probe = "export default async (ctx: { notes: { get(key: string): string | undefined }; status(): Promise<{ connected: boolean }> }) => ({ note: ctx.notes.get('shared'), connected: (await ctx.status()).connected });\n";
     const body = await bodyWith({ probe });
     await using(body, async () => {
       assert.equal(runOf(await body.request("POST", "/run", { code: "notes.set('shared', 'from a program')" })).status, "ok");
-      assert.deepEqual(runOf(await body.request("POST", "/call", { name: "probe" })).result, { note: "from a program", connected: true, kits: true });
+      assert.deepEqual(runOf(await body.request("POST", "/call", { name: "probe" })).result, { note: "from a program", connected: true });
     });
   });
 });
@@ -239,7 +233,7 @@ describe("a reflex's run is a call's, fired by an event", () => {
     const body = await bodyWith({ keys: KEYS, notes: NOTES, chatter, reader: READER });
     await using(body, async () => {
       const called = runOf(await body.request("POST", "/call", { name: "keys" })).result;
-      assert.deepEqual(called, ["bot", "kit", "log", "notes", "on", "signal", "sleep", "status", "store", "wiki"]);
+      assert.deepEqual(called, ["bot", "log", "notes", "on", "signal", "sleep", "status", "store", "wiki"]);
       await body.ok("POST", "/bind", { kind: "reflex", name: "reflex", routine: "notes", on: ["chat"], cooldownMs: 0 });
       runOf(await body.request("POST", "/call", { name: "chatter" }));
       assert.equal((await body.waitFor("reflex_finished")).data.status, "ok");

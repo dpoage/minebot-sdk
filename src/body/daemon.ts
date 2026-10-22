@@ -3,8 +3,10 @@
 // the host), keeps the program history, and publishes the endpoint file. The body's player and
 // programs live in the host process; this process outlives them.
 import { randomBytes } from "node:crypto";
+import { type Dirent, readdirSync } from "node:fs";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { type AddressInfo, isIPv6 } from "node:net";
+import path from "node:path";
 import type { ServerAuth } from "../host/connection.ts";
 import type { MilestoneSet } from "../milestones/milestones.ts";
 import { MC_VERSION } from "../mc/version.ts";
@@ -14,6 +16,22 @@ import { EventLog } from "./events.ts";
 import { HostProcess } from "./host-process.ts";
 import { ProgramHistory } from "./history.ts";
 import { type Route, serveBodyApi } from "./http.ts";
+
+/**
+ * Earlier bodies kept the kits agents saved in `<state>/agent-kits/`. Nothing reads, writes, or deletes that directory now; when it holds
+ * kit files, this says so once on stderr, so an operator who still has them knows they are not loaded.
+ */
+function noteLeftoverAgentKits(stateDir: string): void {
+  const dir = path.join(stateDir, "agent-kits");
+  let entries: Dirent[];
+  try {
+    entries = readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return;
+  }
+  const files = entries.filter((entry) => entry.isFile() && entry.name.endsWith(".ts"));
+  if (files.length > 0) console.error(`[minebot] ${dir} holds ${files.length} agent kit file${files.length === 1 ? "" : "s"}: agent kits are no longer loaded`);
+}
 
 export interface DaemonOptions {
   name: string;
@@ -30,26 +48,18 @@ export interface DaemonOptions {
   token?: string;
   /** Appends one JSON line per program run (code, status, logs, result) to this file. */
   historyFile?: string;
-  /** Built-in kits the body offers, by name; undefined offers every built-in kit. */
-  kits?: readonly string[];
-  /** Forbid changing the active kits while the body runs. */
-  lockKits: boolean;
   /** Wiki access for the agent. */
   wikiMode: WikiMode;
   /** Curated wiki pages. Default: the repository's wiki/. */
   wikiDir?: string;
   /** Where agents' lessons are written and read. */
   lessonsDir?: string;
-  /** Directory for notes, milestones, kit stores, and agent kits. */
+  /** Directory for notes, milestones, routine stores, reflexes, bindings, and routines. */
   stateDir: string;
   /** Milestones to set at start, replacing stored ones. Without them, the body keeps what its state directory holds. */
   milestones?: MilestoneSet;
   /** Let the agent read, set, and grade milestones. */
   milestonesEnabled: boolean;
-  /** Let agents save and remove their own kits. */
-  agentKits: boolean;
-  /** Where agents' kits are written; default: the state directory's agent-kits/. */
-  agentKitsDir?: string;
   /** Let agents bind reflexes: routines the body runs when an event arrives. Default: true. A body without routines offers none either way. */
   triggers?: boolean;
   /** Let agents keep routines: modules they save, bind to names, and call. Default: true. */
@@ -68,6 +78,7 @@ export async function startDaemon(options: DaemonOptions): Promise<{ endpoint: E
   }
   if (options.milestones && !options.milestonesEnabled) throw new Error("milestones were given to a body that has milestones disabled");
 
+  noteLeftoverAgentKits(options.stateDir);
   const { apiHost, apiPort, token: given, historyFile, ...world } = options;
   const events = new EventLog();
   const history = new ProgramHistory({ file: historyFile });

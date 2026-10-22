@@ -44,6 +44,6 @@ Test: a zombie took no damage from a second swing 0.1 s after the first, and ful
 
 Armor reduces the hits you take (`mechanics/armor-tiers`). Hostile mobs and their special rules: `mechanics/creeper-fuse`, `mechanics/daylight-burning`, `mechanics/hostile-mobs-and-night`.
 
-<!-- kits -->
+<!-- builtins -->
 `kit.combat.attack({ target: "zombie" })` fights one mob. `kit.combat.fight({ radius: 12, timeoutMs: 30000 })` fights every hostile in range until none is left. `kit.survival.eat()` and `kit.survival.armor()` prepare for it.
-<!-- /kits -->
+<!-- /builtins -->

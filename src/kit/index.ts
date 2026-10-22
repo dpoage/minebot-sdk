@@ -1,31 +1,6 @@
-// Every built-in kit. One file per kit in kits/, all written against `minebot-sdk/kit` exactly
-// as an agent writes a kit; `minebot kits source <kit>` prints the file unchanged, and an agent
-// can save that source under a new name as it is (compileKit takes `export const <name> = defineKit(...)`).
-// A kit added here also joins `KitRegistry` in registry.ts, which types `ctx.kits` and programs' `kit`.
-import path from "node:path";
-import { PACKAGE_ROOT } from "../package.ts";
-import type { Kit } from "./kit.ts";
-import { bucket } from "./kits/bucket.ts";
-import { builder } from "./kits/builder.ts";
-import { combat } from "./kits/combat.ts";
-import { container } from "./kits/container.ts";
-import { craft } from "./kits/craft.ts";
-import { crafter } from "./kits/crafter.ts";
-import { dig } from "./kits/dig.ts";
-import { explorer } from "./kits/explorer.ts";
-import { farm } from "./kits/farm.ts";
-import { furnace } from "./kits/furnace.ts";
-import { gatherer } from "./kits/gatherer.ts";
-import { inventory } from "./kits/inventory.ts";
-import { items } from "./kits/items.ts";
-import { move } from "./kits/move.ts";
-import { place } from "./kits/place.ts";
-import { sense } from "./kits/sense.ts";
-import { social } from "./kits/social.ts";
-import { survival } from "./kits/survival.ts";
+// The one kit-era module that remains: the built-in modules' names and `uses`, in the shape the benchmark's
+// task generator (bench/gen-tasks.ts) reads them. Round D2 deletes it with src/audit.ts.
+import { BUILTIN_MODULES } from "../routines/index.ts";
 
-/** Every built-in kit a body can offer, primitives first. */
-export const BUILTIN_KITS: readonly Kit[] = [move, sense, dig, place, inventory, craft, items, furnace, container, survival, combat, farm, bucket, gatherer, crafter, builder, explorer, social];
-
-/** Where the built-in kits' sources live, for `kits source`. */
-export const BUILTIN_KIT_DIR = path.join(PACKAGE_ROOT, "src/kit/kits");
+/** Every built-in module a body can offer, primitives first, with the modules each one uses. */
+export const BUILTIN_KITS: readonly { name: string; uses: readonly string[] }[] = BUILTIN_MODULES.map(({ name, uses }) => ({ name, uses }));

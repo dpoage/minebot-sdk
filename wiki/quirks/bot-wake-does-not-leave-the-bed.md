@@ -27,6 +27,6 @@ return bot.isSleeping;
 
 `bot.sleep(bed)` itself is fine. It throws `it's not night and it's not a thunderstorm` in daylight (night is `timeOfDay` 12541 to 23458), and `there are monsters nearby` when a hostile mob is within about 8 blocks of the bed.
 
-<!-- kits -->
+<!-- builtins -->
 `kit.survival.sleep()` walks to the nearest bed within 16 blocks and sleeps. `kit.survival.wake()` sends the right packet.
-<!-- /kits -->
+<!-- /builtins -->

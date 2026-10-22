@@ -129,8 +129,6 @@ export type Observation =
       sky: { open: boolean; cover?: string; solidAbove: number; waterAbove: number };
       /** Programs in a row that ended with the same position and inventory. */
       programsWithoutChange: number;
-      /** Active kits. Present only when the body offers kits. */
-      kits?: string[];
     };
 
 export interface StatusResponse {
@@ -183,7 +181,7 @@ export interface SearchHit extends PageSummary {
   snippet: string;
 }
 
-/** How often one kit action ran on this body, counted by the kit framework. */
+/** How often one built-in routine ran on this body. */
 export interface ActionStats {
   ok: number;
   failed: number;
@@ -191,72 +189,8 @@ export interface ActionStats {
   lastError?: string;
 }
 
-export interface KitInfo {
-  name: string;
-  description: string;
-  /** Kits whose actions this kit calls; activated together with this kit. */
-  uses: string[];
-  active: boolean;
-  /** True for kits agents saved on this body. */
-  agent: boolean;
-  /** Action names, e.g. `to`. Programs call `kit.<kit>.<action>({ ... })`. */
-  actions: string[];
-  /** Calls so far, by action name; actions that never ran are absent. Counted per body, and kept across restarts. */
-  stats: Record<string, ActionStats>;
-}
-
-export interface KitsResponse {
-  kits: KitInfo[];
-  active: string[];
-  locked: boolean;
-}
-
-/** One action's shape for typing: JSON Schema (draft 2020-12) of what a call takes and, when the action declares it, what it returns. */
-export interface ActionSchema {
-  doc: string;
-  /** The argument as callers write it (zod input). */
-  args: Record<string, unknown>;
-  /** The result as callers read it (zod output); absent when the action declares no `returns`. */
-  returns?: Record<string, unknown>;
-}
-
-/** One kit's actions with their schemas: what `minebot types` generates declarations from. */
-export interface KitSchema {
-  name: string;
-  description: string;
-  uses: string[];
-  active: boolean;
-  /** True for kits agents saved on this body; the rest ship with the package and are typed there. */
-  agent: boolean;
-  actions: Record<string, ActionSchema>;
-}
-
-export interface KitSchemasResponse {
-  kits: KitSchema[];
-}
-
-/**
- * The type check of kit source against `minebot-sdk/kit` and the body's other kits. It never
- * blocks a save or a try: `failed` lists the errors (`<kit>.ts(line,col): error TSxxxx: ...`) and
- * the kit is saved anyway; `skipped` says why no check ran (TypeScript is an optional peer dependency).
- */
-export type KitTypeCheck = { status: "passed" } | { status: "failed"; errors: string[] } | { status: "skipped"; reason: string };
-
-/** What saving a kit returns: the kit as the body now offers it, and the type check of its source. */
-export type SaveKitResponse = KitInfo & { typeCheck: KitTypeCheck };
-
-/** One ranked answer of a kit search: a kit, or one of its actions. */
-export interface KitSearchHit {
-  kit: string;
-  /** Absent when the hit is the kit as a whole. */
-  action?: string;
-  score: number;
-  /** The kit's description, or the first line of the action's doc. */
-  text: string;
-  active: boolean;
-  /** Calls of the action so far, when it has run. */
-  stats?: ActionStats;
-}
+/** The type check of a routine's source against the packages the body ships. It never blocks a save: `failed` lists the errors (`<name>.ts(line,col): error TSxxxx: ...`) and the routine is saved anyway; `skipped` says why no check ran (TypeScript is an optional peer dependency). */
+export type TypeCheck = { status: "passed" } | { status: "failed"; errors: string[] } | { status: "skipped"; reason: string };
 
 /** A built-in routine module a body offers: `import * as <name> from "minebot-sdk/routines/<name>"`, and each routine callable as `<name>.<routine>`. */
 export interface BuiltinInfo {
@@ -284,19 +218,6 @@ export interface BuiltinSearchHit {
   text: string;
   /** Calls of the routine so far, when it has run. */
   stats?: ActionStats;
-}
-
-/** One saved version of an agent kit. */
-export interface KitVersion {
-  version: number;
-  /** ISO time of the save. */
-  savedAt: string;
-  /** The body that saved it. */
-  savedBy: string;
-  /** The version the agent kit has now. */
-  current: boolean;
-  /** Set when the version came from `kits.revert`: the version it restored. */
-  revertedFrom?: number;
 }
 
 /** A routine in the library: a module `<name>.ts`. */
@@ -335,7 +256,7 @@ export interface RoutineSourceResponse {
 /** What saving a routine returns: the routine as the library now has it, and the type check of its source (which never blocks a save). */
 export interface SaveRoutineResponse {
   routine: RoutineInfo;
-  typeCheck: KitTypeCheck;
+  typeCheck: TypeCheck;
 }
 
 export interface RoutineVersionsResponse {

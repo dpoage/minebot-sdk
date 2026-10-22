@@ -58,6 +58,6 @@ furnace.close();
 
 A furnace keeps smelting while you walk away, so you can start it and do other work. Come back and take the output.
 
-<!-- kits -->
+<!-- builtins -->
 `kit.furnace.smelt({ item: "raw_iron", count: 3 })` finds a furnace, loads fuel and input, waits, and takes the output. `kit.furnace.take()` collects what a furnace finished while you were away.
-<!-- /kits -->
+<!-- /builtins -->

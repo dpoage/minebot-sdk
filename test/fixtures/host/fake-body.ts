@@ -30,7 +30,7 @@ export interface FakeBodyOptions {
   stateDir?: string;
   /** Files written before the body starts: path relative to the state directory → text (objects become JSON). */
   stateFiles?: Record<string, unknown>;
-  /** Overrides of the body's options (kits, wikiMode, routines, triggers, ...). */
+  /** Overrides of the body's options (wikiMode, routines, triggers, ...). */
   init?: Partial<HostInit>;
   /** Event types whose echo from the event log never reaches the host's triggers. */
   dropEchoes?: string[];
@@ -116,12 +116,10 @@ export async function startFakeBody(options: FakeBodyOptions = {}): Promise<Fake
     auth: "offline",
     host: "127.0.0.1",
     port: 1,
-    lockKits: false,
     wikiMode: "read",
     stateDir,
     lessonsDir: path.join(ROOT, `${name}-lessons`),
     milestonesEnabled: true,
-    agentKits: true,
     ...options.init,
     startedAt: new Date().toISOString(),
     deaths: 0,

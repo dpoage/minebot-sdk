@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
 import { describe, it, mock } from "node:test";
-import { action, defineKit, goals, Vec3, z } from "minebot-sdk/kit";
-import { defineRoutine, z as routineZ } from "minebot-sdk/routine";
-import { createKitHarness, UnsupportedApiError } from "minebot-sdk/testing";
+import { defineRoutine, goals, Vec3, within, z } from "minebot-sdk/routine";
+import { createHarness, UnsupportedApiError } from "minebot-sdk/testing";
 import { Notes } from "../src/notes.ts";
 import { ProgramRunner } from "../src/program/runner.ts";
 import { invokeRoutine } from "../src/routine/invoke.ts";
 import * as combat from "../src/routines/combat.ts";
+import * as container from "../src/routines/container.ts";
 import * as craft from "../src/routines/craft.ts";
 import * as crafter from "../src/routines/crafter.ts";
 import * as dig from "../src/routines/dig.ts";
@@ -20,28 +20,23 @@ import * as sense from "../src/routines/sense.ts";
 import * as survival from "../src/routines/survival.ts";
 import { JsonStore } from "../src/store.ts";
 
-/** A kit whose actions reach for Mineflayer APIs the harness does not implement. */
-const brawler = defineKit(
-  { name: "brawler", description: "Reaches for APIs the harness lacks." },
-  {
-    hit: action({ doc: "Attacks the nearest entity.", args: z.object({}), run: (ctx) => ctx.bot.attack(Object.values(ctx.bot.entities)[0]!) }),
-    look: action({ doc: "Raycasts.", args: z.object({}), run: (ctx) => ctx.bot.world.raycast(ctx.bot.entity.position, ctx.bot.entity.position, 4) }),
-    chatty: action({
-      doc: "Talks, then reports the held item.",
-      args: z.object({ message: z.string() }),
-      returns: z.object({ held: z.string().nullable() }),
-      run: (ctx, { message }) => {
-        ctx.bot.chat(message);
-        return { held: ctx.bot.heldItem?.name ?? null };
-      },
-    }),
-    bad: action({ doc: "Returns the wrong shape.", args: z.object({}), returns: z.object({ n: z.number() }), run: () => ({ n: "one" }) as never }),
-  },
-);
+/** Routines that reach for Mineflayer APIs the harness does not implement, and ones that break their schemas. */
+const brawler = {
+  hit: defineRoutine({ name: "brawler.hit", description: "Attacks the nearest entity.", args: z.object({}) }, (ctx) => ctx.bot.attack(Object.values(ctx.bot.entities)[0]!)),
+  look: defineRoutine({ name: "brawler.look", description: "Raycasts.", args: z.object({}) }, (ctx) => ctx.bot.world.raycast(ctx.bot.entity.position, ctx.bot.entity.position, 4)),
+  chatty: defineRoutine(
+    { name: "brawler.chatty", description: "Talks, then reports the held item.", args: z.object({ message: z.string() }), returns: z.object({ held: z.string().nullable() }) },
+    (ctx, { message }) => {
+      ctx.bot.chat(message);
+      return { held: ctx.bot.heldItem?.name ?? null };
+    },
+  ),
+  bad: defineRoutine({ name: "brawler.bad", description: "Returns the wrong shape.", args: z.object({}), returns: z.object({ n: z.number() }) }, () => ({ n: "one" }) as never),
+};
 
 describe("minebot-sdk/testing crafting and gathering", () => {
   it("crafts a wooden pickaxe from 7 logs: the table's planks come first, and the table gets placed", async () => {
-    const h = createKitHarness({ inventory: { oak_log: 7 } });
+    const h = createHarness({ inventory: { oak_log: 7 } });
     assert.equal(await h.run(crafter.make, { item: "wooden_pickaxe" }), 1);
     assert.equal(h.count("wooden_pickaxe"), 1);
     assert.equal(h.count("crafting_table"), 0);
@@ -50,12 +45,12 @@ describe("minebot-sdk/testing crafting and gathering", () => {
   });
 
   it("refuses to craft at a table that is not there", async () => {
-    const h = createKitHarness({ inventory: { oak_planks: 4, stick: 2 } });
+    const h = createHarness({ inventory: { oak_planks: 4, stick: 2 } });
     await assert.rejects(h.run(craft.craft, { item: "wooden_pickaxe" }), /needs a crafting table within 4 blocks/);
   });
 
   it("gathers logs by walking to them, digging them, and picking up the drops", async () => {
-    const h = createKitHarness({ blocks: [{ name: "oak_log", from: [8, 64, 0], to: [8, 67, 0] }] });
+    const h = createHarness({ blocks: [{ name: "oak_log", from: [8, 64, 0], to: [8, 67, 0] }] });
     const result = await h.run(gatherer.gather, { blocks: "*_log", count: 2 });
     assert.deepEqual(result, { dug: 2, gained: { oak_log: 2 }, skipped: 0 });
     assert.equal(h.count("oak_log"), 2);
@@ -66,9 +61,9 @@ describe("minebot-sdk/testing crafting and gathering", () => {
 
   it("gathers stone only with a pickaxe, and the tool is chosen from the inventory", async () => {
     const blocks = [{ name: "stone", at: [3, 64, 0] as const }];
-    const bare = createKitHarness({ blocks });
+    const bare = createHarness({ blocks });
     await assert.rejects(bare.run(gatherer.gather, { blocks: "stone", count: 1 }), /needs one of: .*wooden_pickaxe/);
-    const tooled = createKitHarness({ blocks, inventory: { wooden_pickaxe: 1 } });
+    const tooled = createHarness({ blocks, inventory: { wooden_pickaxe: 1 } });
     const result = await tooled.run(gatherer.gather, { blocks: "stone", count: 1 });
     assert.equal(result.dug, 1);
     assert.equal(tooled.count("cobblestone"), 1);
@@ -76,14 +71,14 @@ describe("minebot-sdk/testing crafting and gathering", () => {
   });
 
   it("fails a gather when nothing matches in reach, naming the pattern", async () => {
-    const h = createKitHarness();
+    const h = createHarness();
     await assert.rejects(h.run(gatherer.gather, { blocks: "*_log", count: 1, radius: 16 }), /no reachable "\*_log" within 16 blocks/);
   });
 });
 
 describe("minebot-sdk/testing world and inventory", () => {
   it("digs, drops, and places: the placed block spends the held item and takes the dug block's place", async () => {
-    const h = createKitHarness({ blocks: [{ name: "dirt", at: [1, 64, 0] }], inventory: { cobblestone: 2 } });
+    const h = createHarness({ blocks: [{ name: "dirt", at: [1, 64, 0] }], inventory: { cobblestone: 2 } });
     await h.run(dig.dig, { at: [1, 64, 0] });
     assert.equal(h.blockAt([1, 64, 0]).name, "air");
     assert.equal(h.count("dirt"), 1, "the bot stands within pickup range of the drop");
@@ -94,12 +89,12 @@ describe("minebot-sdk/testing world and inventory", () => {
   });
 
   it("limits digging to the player's reach", async () => {
-    const h = createKitHarness({ blocks: [{ name: "dirt", at: [9, 64, 0] }] });
+    const h = createHarness({ blocks: [{ name: "dirt", at: [9, 64, 0] }] });
     await assert.rejects(h.run(dig.dig, { at: [9, 64, 0] }), /dirt at .* is out of reach/);
   });
 
   it("finds blocks nearest first and walks within range of a position", async () => {
-    const h = createKitHarness({ blocks: [{ name: "coal_ore", at: [10, 64, 0] }, { name: "coal_ore", at: [3, 64, 3] }] });
+    const h = createHarness({ blocks: [{ name: "coal_ore", at: [10, 64, 0] }, { name: "coal_ore", at: [3, 64, 3] }] });
     assert.deepEqual(await h.run(sense.find, { blocks: "coal_ore" }), [{ x: 3, y: 64, z: 3 }, { x: 10, y: 64, z: 0 }]);
     const stood = await h.run(move.to, { position: [10, 64, 0], range: 2 });
     assert.ok(Math.hypot(stood.x - 10, stood.z) <= 2);
@@ -107,7 +102,7 @@ describe("minebot-sdk/testing world and inventory", () => {
   });
 
   it("holds, wears, and tosses items", async () => {
-    const h = createKitHarness({ inventory: { stick: 3, iron_helmet: 1, diamond_helmet: 1 }, equipment: { head: "iron_helmet" } });
+    const h = createHarness({ inventory: { stick: 3, iron_helmet: 1, diamond_helmet: 1 }, equipment: { head: "iron_helmet" } });
     assert.deepEqual(await h.run(survival.armor), { equipped: { head: "diamond_helmet" }, wearing: { head: "diamond_helmet", torso: null, legs: null, feet: null } });
     assert.equal(h.inventory.iron_helmet, 1, "the displaced helmet is back in the inventory");
     await h.run(inventory.equip, { item: "stick" });
@@ -118,14 +113,14 @@ describe("minebot-sdk/testing world and inventory", () => {
   });
 
   it("reports recipes from the real registry, and drops lying on the ground", async () => {
-    const h = createKitHarness({ entities: [{ name: "item", item: "stick", at: [2.5, 64, 0.5] }] });
+    const h = createHarness({ entities: [{ name: "item", item: "stick", at: [2.5, 64, 0.5] }] });
     const [recipe] = await h.run(items.recipes, { item: "stick" });
     assert.equal(recipe?.makes, 4);
     assert.deepEqual(await h.run(items.drops, { radius: 4 }), [{ x: 2, y: 64, z: 0 }]);
   });
 
   it("cooks at a furnace on the clock: fuel burns for its real time and the output appears", async () => {
-    const h = createKitHarness({ blocks: [{ name: "furnace", at: [1, 64, 0], properties: { lit: false } }], inventory: { raw_iron: 2, coal: 1 } });
+    const h = createHarness({ blocks: [{ name: "furnace", at: [1, 64, 0], properties: { lit: false } }], inventory: { raw_iron: 2, coal: 1 } });
     const smelted = await h.run(furnace.smelt, { item: "raw_iron", count: 2 });
     assert.deepEqual({ output: smelted.output, count: smelted.count, fuel: smelted.fuel }, { output: "iron_ingot", count: 2, fuel: { coal: 1 } });
     assert.equal(h.count("iron_ingot"), 2);
@@ -137,110 +132,68 @@ describe("minebot-sdk/testing world and inventory", () => {
 
 describe("minebot-sdk/testing framework", () => {
   it("validates arguments and results, and names the call that failed", async () => {
-    const h = createKitHarness({ kits: [brawler] });
-    await assert.rejects(h.call("brawler.chatty", {}), /kit\.brawler\.chatty arguments:[\s\S]*message/);
-    assert.deepEqual(await h.call("brawler.chatty", { message: "hi" }), { held: null });
+    const h = createHarness();
+    await assert.rejects(h.run((ctx) => brawler.chatty(ctx, {} as never)), /routine "brawler\.chatty" arguments:[\s\S]*message/);
+    assert.deepEqual(await h.run(brawler.chatty, { message: "hi" }), { held: null });
     assert.deepEqual(h.chat, ["hi"]);
-    await assert.rejects(h.call("brawler.bad"), /kit\.brawler\.bad returned a value that does not match its returns schema/);
+    await assert.rejects(h.run((ctx) => brawler.bad(ctx)), /routine "brawler\.bad" returned a value that does not match its returns schema/);
   });
 
-  it("fails an action that calls an unsupported Mineflayer API with a clear error", async () => {
-    const h = createKitHarness({ kits: [brawler], entities: [{ name: "cow", at: [3, 64, 0] }], blocks: [{ name: "red_bed", at: [1, 64, 0] }], time: 13000 });
-    await assert.rejects(h.call("brawler.hit"), (err: unknown) => {
+  it("fails a routine that calls an unsupported Mineflayer API with a clear error", async () => {
+    const h = createHarness({ entities: [{ name: "cow", at: [3, 64, 0] }], blocks: [{ name: "red_bed", at: [1, 64, 0] }], time: 13000 });
+    await assert.rejects(h.run(brawler.hit), (err: unknown) => {
       assert.ok(err instanceof UnsupportedApiError);
       assert.equal(err.message, "not supported by minebot-sdk/testing: bot.attack");
       return true;
     });
-    await assert.rejects(h.call("brawler.look"), /not supported by minebot-sdk\/testing: bot\.world\.raycast/);
-    await assert.rejects(h.call("survival.sleep", {}), /not supported by minebot-sdk\/testing: bot\.sleep/);
-    await assert.rejects(h.call("container.list", { at: [1, 64, 0] }), /no container at|not supported by minebot-sdk\/testing: bot\.openContainer/);
+    await assert.rejects(h.run(brawler.look), /not supported by minebot-sdk\/testing: bot\.world\.raycast/);
+    await assert.rejects(h.run(survival.sleep, {}), /not supported by minebot-sdk\/testing: bot\.sleep/);
+    await assert.rejects(h.run(container.list, { at: [1, 64, 0] }), /no container at|not supported by minebot-sdk\/testing: bot\.openContainer/);
   });
 
-  it("runs the real kit host: unknown kits, inactive kits, uses, and the signal", async () => {
-    const h = createKitHarness({ kits: [brawler], active: ["move"] });
-    await assert.rejects(h.call("nope.act"), /no kit "nope" is offered/);
-    await assert.rejects(h.call("brawler.chatty", { message: "x" }), /"brawler" kit is not active/);
-    h.host.use(["brawler"]);
-    await h.call("brawler.chatty", { message: "x" });
-    h.host.use(["gatherer"]);
-    h.abort(new Error("stop now"));
-    await assert.rejects(h.call("gatherer.collectDrops", {}), /stop now/);
-  });
-
-  it("records every action call, nested ones with the arguments the caller passed", async () => {
-    const h = createKitHarness({ inventory: { oak_planks: 4 } });
-    await h.call("crafter.make", { item: "crafting_table" });
+  it("records every routine call, nested ones with the arguments the caller passed", async () => {
+    const h = createHarness({ inventory: { oak_planks: 4 } });
+    await h.run(crafter.make, { item: "crafting_table" });
     assert.deepEqual(h.calls[0], { kit: "crafter", action: "make", args: { item: "crafting_table" } });
     assert.ok(h.calls.some((c) => c.kit === "craft" && c.action === "craft" && c.args instanceof Object && "item" in c.args && c.args.item === "crafting_table"));
     assert.deepEqual(new Set(h.calls.map((c) => c.kit)), new Set(["crafter", "inventory", "craft"]));
   });
-
-  it("keeps each kit's store in memory, per harness", async () => {
-    const keeper = defineKit(
-      { name: "keeper", description: "Counts calls in its store." },
-      { bump: action({ doc: "Adds one.", args: z.object({}), returns: z.number(), run: (ctx) => {
-          const n = Number(ctx.store.get("n") ?? 0) + 1;
-          ctx.store.set("n", n);
-          return n;
-        },
-      }),
-    },
-    );
-    const a = createKitHarness({ kits: [keeper], builtins: false });
-    await a.call("keeper.bump");
-    assert.equal(await a.call("keeper.bump"), 2);
-    assert.equal(await createKitHarness({ kits: [keeper], builtins: false }).call("keeper.bump"), 1);
-  });
 });
 
-/** A kit whose actions wait on the clock or reach for a table, the way polling and crafting kits do. */
-const waiter = defineKit(
-  { name: "waiter", description: "Polls with ctx.sleep and crafts at a table it finds." },
-  {
-    hungry: action({
-      doc: "Waits for food that never comes, under a 50 ms limit.",
-      args: z.object({}),
-      run: (ctx) =>
-        ctx.within(
-          50,
-          "waiting for food",
-          (async () => {
-            while (ctx.bot.food < 20) await ctx.sleep(1000);
-          })(),
-          () => {},
-        ),
-    }),
-    forever: action({
-      doc: "Sleeps until it is aborted.",
-      args: z.object({}),
-      run: async (ctx) => {
-        for (;;) await ctx.sleep(100);
-      },
-    }),
-    craftFar: action({
-      doc: "Finds a crafting table within 32 blocks and crafts a wooden pickaxe there without walking.",
-      args: z.object({}),
-      run: async (ctx) => {
-        const recipe = ctx.bot.recipesFor(ctx.bot.registry.itemsByName.wooden_pickaxe!.id, null, 1, true)[0]!;
-        const table = ctx.bot.findBlock({ matching: ctx.bot.registry.blocksByName.crafting_table!.id, maxDistance: 32 });
-        await ctx.bot.craft(recipe, 1, table ?? undefined);
-      },
-    }),
-  },
-);
+/** Routines that wait on the clock or reach for a table, the way polling and crafting routines do. */
+const waiter = {
+  hungry: defineRoutine({ name: "waiter.hungry", description: "Waits for food that never comes, under a 50 ms limit.", args: z.object({}) }, (ctx) =>
+    within(
+      50,
+      "waiting for food",
+      (async () => {
+        while (ctx.bot.food < 20) await ctx.sleep(1000);
+      })(),
+      () => {},
+    ),
+  ),
+  forever: defineRoutine({ name: "waiter.forever", description: "Sleeps until it is aborted.", args: z.object({}) }, async (ctx) => {
+    for (;;) await ctx.sleep(100);
+  }),
+  craftFar: defineRoutine({ name: "waiter.craftFar", description: "Finds a crafting table within 32 blocks and crafts a wooden pickaxe there without walking.", args: z.object({}) }, async (ctx) => {
+    const recipe = ctx.bot.recipesFor(ctx.bot.registry.itemsByName.wooden_pickaxe!.id, null, 1, true)[0]!;
+    const table = ctx.bot.findBlock({ matching: ctx.bot.registry.blocksByName.crafting_table!.id, maxDistance: 32 });
+    await ctx.bot.craft(recipe, 1, table ?? undefined);
+  }),
+};
 
-describe("minebot-sdk/testing matches Mineflayer where kits can tell", () => {
+describe("minebot-sdk/testing matches Mineflayer where routines can tell", () => {
   // The real timers here are the point: `within` and the abort timer can only fire if ctx.sleep yields a macrotask, which no fake clock shows.
-  it("lets timers fire while a kit polls with ctx.sleep, so within and a timed abort work", { timeout: 5_000 }, async () => {
-    const h = createKitHarness({ kits: [waiter], food: 10 });
-    await assert.rejects(h.call("waiter.hungry"), /waiting for food took longer than 50 ms/);
-    const pending = assert.rejects(h.call("waiter.forever"), /stop now/);
+  it("lets timers fire while a routine polls with ctx.sleep, so within and a timed abort work", { timeout: 5_000 }, async () => {
+    const h = createHarness({ food: 10 });
+    await assert.rejects(h.run(waiter.hungry), /waiting for food took longer than 50 ms/);
+    const pending = assert.rejects(h.run(waiter.forever), /stop now/);
     setTimeout(() => h.abort(new Error("stop now")), 20);
     await pending;
   });
 
   it("finds a stand spot beyond 12 blocks for a GoalInvert, so combat.retreat works at any distance", async () => {
-    const h = createKitHarness();
+    const h = createHarness();
     const far = await h.run(combat.retreat, { from: [0, 64, 0], distance: 20 });
     assert.ok(far.distance > 20, `stopped ${far.distance} blocks away`);
     assert.ok(Math.hypot(h.position.x, h.position.z) > 20);
@@ -248,23 +201,23 @@ describe("minebot-sdk/testing matches Mineflayer where kits can tell", () => {
 
   it("requires the crafting table to be within reach, as the server does", async () => {
     const supplies = { oak_planks: 3, stick: 2 };
-    const far = createKitHarness({ kits: [waiter], inventory: supplies, blocks: [{ name: "crafting_table", at: [12, 64, 0] }] });
-    await assert.rejects(far.call("waiter.craftFar"), /crafting_table at .* is out of reach/);
+    const far = createHarness({ inventory: supplies, blocks: [{ name: "crafting_table", at: [12, 64, 0] }] });
+    await assert.rejects(far.run(waiter.craftFar), /crafting_table at .* is out of reach/);
     assert.equal(far.count("wooden_pickaxe"), 0);
-    const near = createKitHarness({ kits: [waiter], inventory: supplies, blocks: [{ name: "crafting_table", at: [2, 64, 0] }] });
-    await near.call("waiter.craftFar");
+    const near = createHarness({ inventory: supplies, blocks: [{ name: "crafting_table", at: [2, 64, 0] }] });
+    await near.run(waiter.craftFar);
     assert.equal(near.count("wooden_pickaxe"), 1);
   });
 
   it("tosses one item for a null count, as Mineflayer does", async () => {
-    const h = createKitHarness({ inventory: { stick: 5 } });
+    const h = createHarness({ inventory: { stick: 5 } });
     await h.bot.toss(h.bot.registry.itemsByName.stick!.id, null, null);
     assert.equal(h.count("stick"), 4);
     assert.equal(h.entities.filter((e) => e.name === "item").length, 1);
   });
 
   it("drops the crop item for ripe wheat and beetroots, a bed's head, and nothing for a dead bush", async () => {
-    const h = createKitHarness({
+    const h = createHarness({
       blocks: [
         { name: "wheat", at: [1, 64, 0], properties: { age: 7 } },
         { name: "wheat", at: [0, 64, 1], properties: { age: 3 } },
@@ -273,7 +226,7 @@ describe("minebot-sdk/testing matches Mineflayer where kits can tell", () => {
     });
     for (const at of [[1, 64, 0], [0, 64, 1], [-1, 64, 0]] as const) await h.bot.dig(h.blockAt(at));
     assert.deepEqual(h.inventory, { wheat: 1, wheat_seeds: 2, beetroot: 1, beetroot_seeds: 1 });
-    const bed = createKitHarness({
+    const bed = createHarness({
       blocks: [
         { name: "red_bed", at: [1, 64, 0], properties: { part: "head" } },
         { name: "red_bed", at: [-1, 64, 0], properties: { part: "foot" } },
@@ -285,7 +238,7 @@ describe("minebot-sdk/testing matches Mineflayer where kits can tell", () => {
   });
 
   it("reports setGoal's arrival on a later turn and drops a reached goal", { timeout: 2_000 }, async () => {
-    const h = createKitHarness();
+    const h = createHarness();
     h.bot.pathfinder.setGoal(new goals.GoalNear(5, 64, 0, 1));
     await new Promise<void>((resolve) => h.bot.once("goal_reached", () => resolve()));
     assert.equal(h.bot.pathfinder.goal, null);
@@ -293,8 +246,8 @@ describe("minebot-sdk/testing matches Mineflayer where kits can tell", () => {
   });
 
   it("searches blocks like findBlocks: floored point, || defaults, extra-info filter, palette check", () => {
-    const id = (name: string) => createKitHarness().bot.registry.blocksByName[name]!.id;
-    const h = createKitHarness({
+    const id = (name: string) => createHarness().bot.registry.blocksByName[name]!.id;
+    const h = createHarness({
       blocks: [
         { name: "diamond_ore", at: [16, 64, 0] },
         { name: "diamond_ore", at: [-16, 64, 0] },
@@ -313,7 +266,7 @@ describe("minebot-sdk/testing matches Mineflayer where kits can tell", () => {
   });
 
   it("gives data members their idle values and makes the rest of the inventory strict", () => {
-    const h = createKitHarness({ inventory: { stick: 2 } });
+    const h = createHarness({ inventory: { stick: 2 } });
     assert.equal(h.bot.quickBarSlot, 0);
     assert.equal(h.bot.currentWindow, null);
     assert.equal(h.bot.targetDigBlock, null);
@@ -330,14 +283,14 @@ describe("minebot-sdk/testing matches Mineflayer where kits can tell", () => {
   });
 
   it("puts the bot on the ground layer it was given", () => {
-    const h = createKitHarness({ ground: { y: 70, name: "dirt" } });
+    const h = createHarness({ ground: { y: 70, name: "dirt" } });
     assert.equal(h.position.y, 71);
     assert.equal(h.blockAt([0, 70, 0]).name, "dirt");
-    assert.equal(createKitHarness().position.y, 64);
+    assert.equal(createHarness().position.y, 64);
   });
 
-  it("refuses to place a block into the bot's own cell, and the place kit steps out first", async () => {
-    const h = createKitHarness({ inventory: { cobblestone: 2 } });
+  it("refuses to place a block into the bot's own cell, and the place routine steps out first", async () => {
+    const h = createHarness({ inventory: { cobblestone: 2 } });
     await h.run(inventory.equip, { item: "cobblestone" });
     await assert.rejects(h.bot.placeBlock(h.blockAt([0, 63, 0]), new Vec3(0, 1, 0)), /cannot place cobblestone at .*stands there/);
     assert.equal(h.blockAt([0, 64, 0]).name, "air");
@@ -347,7 +300,7 @@ describe("minebot-sdk/testing matches Mineflayer where kits can tell", () => {
   });
 
   it("updates an open furnace window as it burns, with fuel as a fraction of the fuel item", async () => {
-    const h = createKitHarness({ blocks: [{ name: "furnace", at: [1, 64, 0], properties: { lit: false } }], inventory: { raw_iron: 1, coal: 1 } });
+    const h = createHarness({ blocks: [{ name: "furnace", at: [1, 64, 0], properties: { lit: false } }], inventory: { raw_iron: 1, coal: 1 } });
     const window = await h.bot.openFurnace(h.blockAt([1, 64, 0]));
     await window.putInput(h.bot.registry.itemsByName.raw_iron!.id, null, 1);
     await window.putFuel(h.bot.registry.itemsByName.coal!.id, null, 1);
@@ -371,11 +324,11 @@ async function outcome(promise: Promise<unknown>): Promise<{ value: unknown } | 
 }
 
 describe("minebot-sdk/testing routines", () => {
-  const labelled = defineRoutine({ args: routineZ.object({ n: routineZ.number().default(3), label: routineZ.string() }), returns: routineZ.string() }, (_ctx, args) => `${args.label}:${args.n}`);
-  const strict = defineRoutine({ returns: routineZ.object({ ok: routineZ.boolean() }) }, (() => ({ ok: "yes" })) as never);
-  const parsed = defineRoutine({ returns: routineZ.object({ n: routineZ.string().transform(Number) }) }, () => ({ n: "42" }));
+  const labelled = defineRoutine({ args: z.object({ n: z.number().default(3), label: z.string() }), returns: z.string() }, (_ctx, args) => `${args.label}:${args.n}`);
+  const strict = defineRoutine({ returns: z.object({ ok: z.boolean() }) }, (() => ({ ok: "yes" })) as never);
+  const parsed = defineRoutine({ returns: z.object({ n: z.string().transform(Number) }) }, () => ({ n: "42" }));
   const echo = (_ctx: unknown, args: unknown) => args;
-  const defaulted = defineRoutine({ args: routineZ.object({ n: routineZ.number().default(3) }) }, (_ctx, args) => args.n);
+  const defaulted = defineRoutine({ args: z.object({ n: z.number().default(3) }) }, (_ctx, args) => args.n);
 
   // The reference the harness has to match: the body's own `invokeRoutine`, over the same module and arguments.
   const cases: [string, unknown, unknown, RegExp | unknown][] = [
@@ -397,7 +350,7 @@ describe("minebot-sdk/testing routines", () => {
 
   for (const [name, routine, args, expected] of cases) {
     it(`resolves and rejects as invokeRoutine does: ${name}`, async () => {
-      const h = createKitHarness();
+      const h = createHarness();
       const ran = await outcome(h.run(routine as never, args as never));
       const reference = await outcome(invokeRoutine(typeof routine === "function" ? { default: routine } : routine, "under test", { bot: h.bot } as never, args));
       assert.deepEqual(ran, reference);
@@ -410,25 +363,25 @@ describe("minebot-sdk/testing routines", () => {
     });
   }
 
-  it("gives a routine exactly the context members, and kits that run with the run's scope", async () => {
+  it("gives a routine exactly the context members, and the routines it calls run with the run's scope", async () => {
     const signals: AbortSignal[] = [];
-    const probe = defineKit({ name: "probe", description: "Sees its scope." }, { look: action({ doc: "Records the signal.", args: z.object({}), run: (ctx) => void signals.push(ctx.signal) }) });
-    const h = createKitHarness({ inventory: { oak_log: 1 }, kits: [probe] });
+    const probe = defineRoutine({ name: "probe.look", description: "Records the signal.", args: z.object({}) }, (ctx) => void signals.push(ctx.signal));
+    const h = createHarness({ inventory: { oak_log: 1 } });
     const seen = await h.run(async (ctx) => {
-      await (ctx.kit as unknown as Record<string, Record<string, (args: unknown) => Promise<void>>>).probe!.look!({});
-      return { keys: Object.keys(ctx).sort(), bot: ctx.bot === h.bot, kitSignal: signals[0] === ctx.signal, signal: ctx.signal.aborted };
+      await probe(ctx);
+      return { keys: Object.keys(ctx).sort(), bot: ctx.bot === h.bot, nestedSignal: signals[0] === ctx.signal, signal: ctx.signal.aborted };
     });
-    assert.deepEqual(seen, { keys: ["bot", "kit", "log", "notes", "on", "signal", "sleep", "status", "store", "wiki"], bot: true, kitSignal: true, signal: false });
-    // The kit ran with that run's signal, which ended with the run.
+    assert.deepEqual(seen, { keys: ["bot", "log", "notes", "on", "signal", "sleep", "status", "store", "wiki"], bot: true, nestedSignal: true, signal: false });
+    // The nested routine ran with that run's signal, which ended with the run.
     assert.deepEqual([signals[0]!.aborted, String(signals[0]!.reason)], [true, "Error: finished"]);
-    assert.equal(await h.run((ctx) => ctx.kit!.crafter.make({ item: "oak_planks" })), 4);
+    assert.equal(await h.run((ctx) => crafter.make(ctx, { item: "oak_planks" })), 4);
     assert.deepEqual(h.calls[1], { kit: "crafter", action: "make", args: { item: "oak_planks" } });
     assert.equal(h.count("oak_planks"), 4);
   });
 
-  it("lands a routine's log lines in h.logs as the body's run log writes them, with its kits' own", async () => {
-    const announcer = defineKit({ name: "announcer", description: "Logs." }, { shout: action({ doc: "Logs a line.", args: z.object({}), run: (ctx) => ctx.log("kit says", { from: "kit" }) }) });
-    const h = createKitHarness({ kits: [announcer] });
+  it("lands a routine's log lines in h.logs as the body's run log writes them, with those of the routines it calls", async () => {
+    const announcer = defineRoutine({ name: "announcer.shout", description: "Logs a line.", args: z.object({}) }, (ctx) => ctx.log("nested says", { from: "announcer" }));
+    const h = createHarness();
     const talk = (ctx: { log(...args: unknown[]): void }) => {
       ctx.log("routine says", 1, { a: 2 });
       ctx.log({ deep: { er: { than: { three: { levels: [1, 2] } } } }, list: ["x"] });
@@ -439,14 +392,14 @@ describe("minebot-sdk/testing routines", () => {
     assert.equal(body.status, "ok");
     await h.run(async (ctx) => {
       talk(ctx);
-      await (ctx.kit as unknown as Record<string, Record<string, (args: unknown) => Promise<void>>>).announcer!.shout!({});
+      await announcer(ctx);
     });
     assert.deepEqual(h.logs.slice(0, 3), body.logs.split("\n"));
-    assert.deepEqual(h.logs, ["routine says 1 { a: 2 }", "{ deep: { er: { than: { three: [Object] } } }, list: [ 'x' ] }", "plain null undefined 3n", "kit says { from: 'kit' }"]);
+    assert.deepEqual(h.logs, ["routine says 1 { a: 2 }", "{ deep: { er: { than: { three: [Object] } } }, list: [ 'x' ] }", "plain null undefined 3n", "nested says { from: 'announcer' }"]);
   });
 
   it("passes the clock when a routine sleeps, rejects its sleep once the harness aborts, and starts the next run unaborted", async () => {
-    const h = createKitHarness({ time: 1000 });
+    const h = createHarness({ time: 1000 });
     await h.run((ctx) => ctx.sleep(1000));
     assert.equal(h.bot.time.timeOfDay, 1020);
     const stopping = new Error("stop now");
@@ -462,13 +415,13 @@ describe("minebot-sdk/testing routines", () => {
       /stop now/,
     );
     assert.equal(sleeps, 3);
-    // The abort stopped that run only: the next one has a signal and a clock of its own, and kits still run.
+    // The abort stopped that run only: the next one has a signal and a clock of its own, and built-in routines still run.
     assert.deepEqual(await h.run(async (ctx) => [ctx.signal.aborted, await ctx.sleep(50), ctx.signal.aborted]), [false, undefined, false]);
-    await h.call("move.to", { position: [3, 64, 0], range: 2 });
+    await h.run(move.to, { position: [3, 64, 0], range: 2 });
   });
 
   it("ends a run's signal and sleep when the call settles, as the body's runner does", async () => {
-    const h = createKitHarness();
+    const h = createHarness();
     const ended = await h.run((ctx) => ctx);
     const scopes: { sleep: (ms: number) => Promise<void>; signal: AbortSignal }[] = [];
     await new ProgramRunner({ globals: () => ({}) }).call(async (scope) => void scopes.push(scope), { sourceDir: "/" });
@@ -479,7 +432,7 @@ describe("minebot-sdk/testing routines", () => {
   });
 
   it("keeps notes in memory, newest change first, per harness, under the body's key and text rules", async () => {
-    const h = createKitHarness();
+    const h = createHarness();
     const listed = await h.run((ctx) => {
       assert.equal(ctx.notes.get("plan"), undefined);
       const a = ctx.notes.set("plan", "mine");
@@ -494,7 +447,7 @@ describe("minebot-sdk/testing routines", () => {
     assert.deepEqual(listed, [["plan", "mine, then smelt"], ["base", "at 0 0"]]);
     // Notes belong to the harness, not to one run; deleting reports whether the note existed.
     assert.deepEqual(await h.run((ctx) => [ctx.notes.get("base"), ctx.notes.delete("base"), ctx.notes.delete("base"), ctx.notes.list().length]), ["at 0 0", true, false, 1]);
-    assert.equal(await createKitHarness().run((ctx) => ctx.notes.get("plan")), undefined);
+    assert.equal(await createHarness().run((ctx) => ctx.notes.get("plan")), undefined);
     await assert.rejects(
       h.run((ctx) => {
         for (let i = 0; i < 201; i++) ctx.notes.set(`n${i}`, "x");
@@ -504,7 +457,7 @@ describe("minebot-sdk/testing routines", () => {
   });
 
   it("delivers the bot's events to a run's ctx.on handlers during the run only", async () => {
-    const h = createKitHarness();
+    const h = createHarness();
     const heard: string[] = [];
     const listening = h.bot.listenerCount("chat");
     await h.run(async (ctx) => {
@@ -568,7 +521,7 @@ describe("minebot-sdk/testing routines", () => {
       };
       const host = new Notes(JsonStore.memory());
       const body = script({ list: () => host.list(), get: (key) => host.get(key)?.text, set: (key, text) => host.set(key, text), delete: (key) => host.delete(key) });
-      const harness = await createKitHarness().run((ctx) => script(ctx.notes));
+      const harness = await createHarness().run((ctx) => script(ctx.notes));
       assert.deepEqual(harness, body);
       assert.deepEqual(body[12], { error: "NoteLimitError: a body keeps at most 200 notes; delete or merge some first" });
     } finally {
@@ -577,7 +530,7 @@ describe("minebot-sdk/testing routines", () => {
   });
 
   it("makes status and wiki unsupported, naming the member", async () => {
-    const h = createKitHarness();
+    const h = createHarness();
     const reasons = await h.run((ctx) => {
       const reached: unknown[] = [];
       for (const use of [() => ctx.status(), () => ctx.wiki!.search("iron"), () => ctx.wiki!.read("x"), () => ctx.wiki!.list()]) {
@@ -594,7 +547,7 @@ describe("minebot-sdk/testing routines", () => {
   });
 
   it("types a defineRoutine value's arguments and result through h.run", async () => {
-    const h = createKitHarness();
+    const h = createHarness();
     const text: string = await h.run(labelled, { label: "a" });
     assert.equal(text, "a:3");
     const n: number = (await h.run(parsed)).n;

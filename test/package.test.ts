@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, it } from "node:test";
-import { BUILTIN_KIT_DIR } from "../src/kit/index.ts";
 import { PACKAGE_ROOT } from "../src/package.ts";
 import { WIKI_DIR } from "../src/wiki/wiki.ts";
 
@@ -18,7 +17,7 @@ const manifest = JSON.parse(readFileSync(path.join(ROOT, "package.json"), "utf8"
 describe("package layout", () => {
   it("publishes an entry for each public specifier, as source, types, and build", () => {
     assert.equal(manifest.private, undefined);
-    assert.deepEqual(Object.keys(manifest.exports).sort(), ["./client", "./kit", "./package.json", "./routine", "./routines/*", "./routines/index", "./testing"]);
+    assert.deepEqual(Object.keys(manifest.exports).sort(), ["./client", "./package.json", "./routine", "./routines/*", "./routines/index", "./testing"]);
     // The catalog is internal: its null entry has to come before the wildcard that would otherwise export it.
     assert.equal(manifest.exports["./routines/index"], null);
     assert.ok(Object.keys(manifest.exports).indexOf("./routines/index") < Object.keys(manifest.exports).indexOf("./routines/*"));
@@ -34,10 +33,10 @@ describe("package layout", () => {
 
   it("runs the built CLI and ships the assets that the runtime reads", () => {
     assert.equal(manifest.bin.minebot, "dist/cli.js");
-    assert.ok(manifest.files.includes("dist") && manifest.files.includes("src/kit/kits") && manifest.files.includes("src/routines") && manifest.files.includes("wiki"));
+    assert.ok(manifest.files.includes("dist") && manifest.files.includes("src/routines") && manifest.files.includes("wiki"));
+    assert.deepEqual(manifest.files.filter((file) => file.includes("kit")), []);
     assert.equal(PACKAGE_ROOT, ROOT + path.sep);
-    assert.equal(BUILTIN_KIT_DIR, path.join(ROOT, "src/kit/kits"));
-    assert.ok(existsSync(path.join(BUILTIN_KIT_DIR, "move.ts")));
+    assert.ok(existsSync(path.join(ROOT, "src/routines", "move.ts")));
     assert.ok(existsSync(path.join(WIKI_DIR, "README.md")));
   });
 });

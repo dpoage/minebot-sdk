@@ -44,7 +44,7 @@ export class World {
   readonly #Block: BlockClass;
   readonly #registry: Registry;
   readonly ground: Ground | null;
-  /** Blocks tests and kits set: they win over the ground layer and over air. */
+  /** Blocks tests set: they win over the ground layer and over air. */
   readonly #set = new Map<string, Block>();
   /** Ground and air blocks made on first look, so the same position gives the same block object. */
   readonly #implicit = new Map<string, Block>();

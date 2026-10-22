@@ -35,6 +35,6 @@ await bot.sleep(bed);
 
 A mob that burns in daylight (`mechanics/daylight-burning`) is gone by morning, but you can only sleep at night. Rules of beds: `mechanics/beds-and-spawn`.
 
-<!-- kits -->
+<!-- builtins -->
 `kit.combat.fight()` clears hostile mobs near you before `kit.survival.sleep()`.
-<!-- /kits -->
+<!-- /builtins -->

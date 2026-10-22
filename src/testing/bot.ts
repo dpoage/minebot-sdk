@@ -1,4 +1,4 @@
-// The fake bot: the slice of Mineflayer that kits' decision logic leans on, over the harness
+// The fake bot: the slice of Mineflayer that routines' decision logic leans on, over the harness
 // world and inventory. Scope is decisions, not physics: digging is instant (the clock advances by
 // the dig time), pathfinding teleports to the nearest spot that satisfies the goal, items fall
 // straight down. Anything outside the slice throws `not supported by minebot-sdk/testing`.

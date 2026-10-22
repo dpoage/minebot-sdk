@@ -22,6 +22,6 @@ const adults = Object.values(bot.entities).filter((e) => e.name === "cow" && !is
 
 To find the calf that a breeding produced, poll for a cow with the flag that was not in the world before.
 
-<!-- kits -->
+<!-- builtins -->
 `kit.farm.breed({ animal: "cow" })` picks adults only and reports the baby it sees.
-<!-- /kits -->
+<!-- /builtins -->

@@ -22,6 +22,6 @@ Use the wiki: the `reference/recipes-*` pages list the furnace, blast furnace, s
 const smelts = { raw_iron: "iron_ingot", raw_copper: "copper_ingot", raw_gold: "gold_ingot", beef: "cooked_beef", porkchop: "cooked_porkchop" };
 ```
 
-<!-- kits -->
+<!-- builtins -->
 `kit.furnace.smelt({ item: "raw_iron", count: 3 })` knows the recipes. `kit.crafter.make({ item: "iron_ingot" })` smelts when it must.
-<!-- /kits -->
+<!-- /builtins -->

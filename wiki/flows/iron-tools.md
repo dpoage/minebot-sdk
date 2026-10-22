@@ -14,6 +14,6 @@ Prerequisites: a stone pickaxe, a crafting table, sticks.
 
 Underground is dark: hostile mobs spawn there at any time of day.
 
-<!-- kits -->
+<!-- builtins -->
 With kits active: `kit.crafter.make({ item: "furnace" })` crafts the furnace, `kit.sense.find({ blocks: "*coal_ore" })` and `kit.sense.find({ blocks: "*iron_ore", radius: 32 })` give positions, and `kit.explorer.scan({ radius: 24 })` lists the ores near you. `kit.furnace.smelt({ item: "raw_iron", count: 3 })` smelts at a furnace within reach: it loads coal, charcoal, planks, or logs as fuel, waits 10 seconds per item, and takes the ingots. `kit.crafter.make({ item: "iron_ingot", count: 3 })` does the same from anywhere: it finds a furnace within 32 blocks, or places or crafts one (8 cobblestone). `kit.crafter.make({ item: "iron_pickaxe" })` smelts the ingots it lacks from the `raw_iron` you hold, then crafts the pickaxe.
-<!-- /kits -->
+<!-- /builtins -->

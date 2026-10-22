@@ -30,6 +30,6 @@ else burnLeft = 0;
 
 Remove the listener when you close the furnace. The `lit` block property is `false` when the furnace is cold, and then no packet comes.
 
-<!-- kits -->
+<!-- builtins -->
 `kit.furnace.smelt` counts the burning fuel left before it adds any, so a second `smelt` right after the first needs no new fuel item.
-<!-- /kits -->
+<!-- /builtins -->

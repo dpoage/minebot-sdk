@@ -28,6 +28,6 @@ bot.deactivateItem();
 
 Check the ray before you try: `bot.world.raycast(eyes, direction, distance)` returns a block when something solid lies between your eyes and the point.
 
-<!-- kits -->
+<!-- builtins -->
 `await kit.bucket.fill({ fluid: "lava" })` tries several points of the source and uses the first one that the eyes can see.
-<!-- /kits -->
+<!-- /builtins -->

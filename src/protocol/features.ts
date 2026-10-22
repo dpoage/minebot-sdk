@@ -6,12 +6,6 @@ import type { WikiMode } from "./types.ts";
 
 /** The optional parts of a body. Everything an agent can see derives from this, so it never learns about a feature its body does not offer. */
 export interface BodyFeatures {
-  /** Kits that are active. */
-  kits: string[];
-  /** Whether the active kits are fixed. */
-  kitsLocked: boolean;
-  /** Whether agents may save and remove their own kits. */
-  agentKits: boolean;
   wiki: WikiMode;
   /** Agents' lessons are part of the wiki: the body can write them, or some exist. */
   lessons: boolean;
@@ -26,7 +20,7 @@ export interface BodyFeatures {
 }
 
 /** Every optional capability a body can offer. */
-export const CAPABILITIES = ["kits", "kitSwitching", "agentKits", "wiki", "lessons", "milestones", "reflexes", "routines", "builtins", "call"] as const;
+export const CAPABILITIES = ["wiki", "lessons", "milestones", "reflexes", "routines", "builtins", "call"] as const;
 export type Capability = (typeof CAPABILITIES)[number];
 
 /**
@@ -34,9 +28,6 @@ export type Capability = (typeof CAPABILITIES)[number];
  * BodyFeatures; every surface asks this table instead of re-deriving the answer.
  */
 export const CAPABILITY_GATES: Record<Capability, (features: BodyFeatures) => boolean> = {
-  kits: kitsOffered,
-  kitSwitching: (f) => kitsOffered(f) && !f.kitsLocked,
-  agentKits: (f) => f.agentKits && kitsOffered(f),
   wiki: (f) => f.wiki !== "off",
   lessons: (f) => f.wiki === "write",
   milestones: (f) => f.milestones,
@@ -50,11 +41,6 @@ export const CAPABILITY_GATES: Record<Capability, (features: BodyFeatures) => bo
 /** Which capabilities a body offers, in CAPABILITIES order. */
 export function capabilities(features: BodyFeatures): Record<Capability, boolean> {
   return Object.fromEntries(CAPABILITIES.map((capability) => [capability, CAPABILITY_GATES[capability](features)])) as Record<Capability, boolean>;
-}
-
-/** Kits are part of the body: some are active, or the active set can change. */
-export function kitsOffered(features: Pick<BodyFeatures, "kits" | "kitsLocked">): boolean {
-  return features.kits.length > 0 || !features.kitsLocked;
 }
 
 /**
@@ -78,21 +64,6 @@ export function programApiDoc(features: BodyFeatures): string {
       ? "- status(): resolves to { deaths, reconnects, milestones }; milestones is progress toward this body's milestones, graded from the server's statistics, or null."
       : "- status(): resolves to { deaths, reconnects }.",
   ];
-  if (caps.kits) {
-    const example = features.kits.includes("move") ? ', e.g. await kit.move.to({ position: [x, y, z] })' : "";
-    globals.push(
-      `- kit: the active kits' actions, namespaced by kit (${features.kits.join(", ")})${example}. Every action takes one object argument and validates it.`,
-    );
-    const switching = caps.kitSwitching ? ', kits.use("gatherer") to swap the active kits' : "";
-    globals.push(
-      `- kits: kits.active, kits.available() (each kit lists how often its actions succeeded and failed on this body), kits.search(query, limit?) to find kits and actions by what they do, kits.docs(...names) for the action reference${switching}.`,
-    );
-  }
-  if (caps.agentKits) {
-    globals.push(
-      "- kits.save(source), kits.remove(name), kits.source(name): write, delete, and read agent kits — TypeScript files in the same shape as the built-ins: `import { defineKit, action, z } from \"minebot-sdk/kit\";` (the only import allowed; it also exports the helpers the built-ins use, such as nameMatcher, Position, goals) then one `export default defineKit({ name, description, uses }, { actionName: action({ doc, args, returns, run }) })` (or `export const <name> = defineKit(...)`, as the built-ins are written; other exports are ignored); run `kits.source(\"move\")` and read `minebot api` for an example. kits.save returns the kit with `typeCheck`: the type errors of the source, which do not stop the save. kits.try(source, { action, args }) compiles and audits the source like a save, runs that one action once, and returns its result or throws its error; type errors go to the log; nothing is saved. Saving over a kit keeps the old source: kits.versions(name) lists the versions, kits.revert(name, version) saves one again.",
-    );
-  }
   if (caps.wiki) {
     const lessons = caps.lessons ? ", and lessons that agents wrote" : "";
     const write = caps.lessons ? ", wiki.addLesson({ title, tags, body }) to record what you learned" : "";
@@ -111,7 +82,7 @@ The value you return is sent back as the result. On timeout or stop, the body ha
 /** The routines section of the program reference, for a body that offers them. */
 function routinesDoc(features: BodyFeatures): string {
   const caps = capabilities(features);
-  const members = ["bot", "log", "sleep", "signal", "on", "notes", "status", ...(caps.kits ? ["kit"] : []), ...(caps.wiki ? ["wiki"] : [])];
+  const members = ["bot", "log", "sleep", "signal", "on", "notes", "status", ...(caps.wiki ? ["wiki"] : [])];
   const reflexes = caps.reflexes
     ? `\n- Reflexes: POST /bind { kind: "reflex", name, routine, on: ["hurt"], when?, from?, match?, cooldownMs?, timeoutMs?, preempt?, priority?, enabled? } binds a routine to events. The routine's default export is called as (ctx, { event }) with the event { seq, type, time, data }; \`when\` is a JavaScript expression over \`event\` and \`bot\` that must be truthy; \`from\` and \`match\` filter chat as waits do; a reflex cannot listen to reflex_* events. Defaults: cooldownMs 1000, timeoutMs 30000, enabled true, preempt false, priority 0. A firing waits until no run is active; with preempt: true it stops the running run first (a higher priority wins, and a reflex never stops a running reflex of equal or higher priority). The body records reflex_fired and reflex_finished events for it, and a reflex that fails 3 times in a row disables itself (reflex_disabled; bind it again to re-enable it). A name belongs to one binding at a time (409 otherwise), and a body keeps at most 50 reflexes. A stored entry that cannot be loaded as a reflex (one saved before reflexes, say) is reported as a reflex_error event each time the bot host starts, keeps its name and counts toward the limit until POST /unbind removes it; an entry under a name POST /unbind does not accept cannot be unbound, and its reflex_error names the file to edit instead. GET /bindings lists a reflex with what it has done since the body started; POST /unbind removes it.`
     : "";

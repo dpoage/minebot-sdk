@@ -142,7 +142,7 @@ export class HostProcess {
   #consecutive = 0;
   #restartTimer: NodeJS.Timeout | undefined;
   /** What the host last reported of what a replacement carries over. */
-  #carried: { deaths: number; reconnects: number; active?: string[]; triggerFailures?: Record<string, number> };
+  #carried: { deaths: number; reconnects: number; triggerFailures?: Record<string, number> };
   /** The reflex firing the last host ended in, until a replacement has counted it: its first trigger_counts, or its ready. */
   #lostFiring: LostFiring | undefined;
   /** The host's messages are handled one at a time, in order: a history line is on disk before the response that follows it is relayed. */
@@ -154,7 +154,7 @@ export class HostProcess {
     this.#history = o.history;
     this.#entry = o.entry ?? DEFAULT_ENTRY;
     this.#graceMs = o.graceMs ?? STOP_GRACE_MS;
-    this.#carried = { deaths: o.init.deaths, reconnects: o.init.reconnects, active: o.init.active, triggerFailures: o.init.triggerFailures };
+    this.#carried = { deaths: o.init.deaths, reconnects: o.init.reconnects, triggerFailures: o.init.triggerFailures };
     // The host's own copy of the log: its triggers hear events with the seq the log gave them.
     this.#unsubscribe = o.events.subscribe((event) => {
       if (this.#attempt?.child.connected) this.#send(this.#attempt, { kind: "event", event });
@@ -254,14 +254,13 @@ export class HostProcess {
   /** Forks the replacement host, carrying over what the old one last reported. */
   async #restart(): Promise<void> {
     if (this.#ending) return;
-    const { deaths, reconnects, active, triggerFailures } = this.#carried;
+    const { deaths, reconnects, triggerFailures } = this.#carried;
     // A restart is a reconnect of the same player; milestones the agent may have changed since the first start are kept.
     // Its triggers go on counting failures, the firing the old host ended in included.
     const init: HostInit = {
       ...this.#init,
       deaths,
       reconnects: reconnects + 1,
-      ...(active && { active }),
       ...(triggerFailures && { triggerFailures }),
       ...(this.#lostFiring && { lostFiring: this.#lostFiring }),
       applyMilestones: false,
@@ -376,11 +375,11 @@ export class HostProcess {
       case "state":
         this.#connected = message.connected;
         // Failure counts come only with a delivery or trigger_counts, in order with the ends they follow.
-        this.#carried = { ...this.#carried, deaths: message.deaths, reconnects: message.reconnects, active: message.active };
+        this.#carried = { ...this.#carried, deaths: message.deaths, reconnects: message.reconnects };
         return;
       case "run_started":
         try {
-          const end = await this.#history.begin(message.code, message.kits, message.extra);
+          const end = await this.#history.begin(message.code, message.extra);
           const now = Date.now();
           const flight: InFlight = { kind: "in-flight" };
           const run: Run = {
@@ -450,7 +449,7 @@ export class HostProcess {
       }
       case "register":
         try {
-          await this.#history.register(message.code, message.kits, message.extra);
+          await this.#history.register(message.code, message.extra);
           this.#sendIfOpen(attempt, { kind: "run_ack", runId: message.runId });
         } catch (err) {
           this.#sendIfOpen(attempt, { kind: "run_ack", runId: message.runId, error: errorText(err) });

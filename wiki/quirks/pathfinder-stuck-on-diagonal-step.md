@@ -24,6 +24,6 @@ bot.pathfinder.setMovements(straight);
 // ...goto again, then restore: bot.pathfinder.setMovements(new Movements(bot))
 ```
 
-<!-- kits -->
+<!-- builtins -->
 `kit.move.to` does this automatically, and so does every kit action built on it.
-<!-- /kits -->
+<!-- /builtins -->

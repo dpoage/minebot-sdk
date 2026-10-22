@@ -23,6 +23,6 @@ const id = bot.registry.itemsByName.wooden_pickaxe.id;
 const recipe = bot.recipesFor(id, null, 1, craftingTableBlock)[0]; // undefined if you lack ingredients
 ```
 
-<!-- kits -->
+<!-- builtins -->
 `kit.crafter.make({ item })` picks a recipe that matches your inventory and crafts missing planks and sticks first.
-<!-- /kits -->
+<!-- /builtins -->

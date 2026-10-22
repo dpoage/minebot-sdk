@@ -13,11 +13,7 @@ import {
   type BuiltinsResponse,
   type BodyFeatures,
   type Endpoint,
-  type KitSearchHit,
-  type KitVersion,
   type EventsResponse,
-  type KitSchemasResponse,
-  type KitsResponse,
   type MilestoneSet,
   type Note,
   type Observation,
@@ -28,8 +24,6 @@ import {
   type RoutineVersionsResponse,
   type RunResult,
   type SaveRoutineResponse,
-  type SaveKitResponse,
-  type KitInfo,
   type SearchHit,
   type StatusResponse,
   type UnbindResponse,
@@ -133,16 +127,7 @@ export class BodyClient {
     return this.#request("POST", "/chat", { message });
   }
 
-  kits(): Promise<KitsResponse> {
-    return this.#request("GET", "/kits");
-  }
-
-  /** Replaces the active kits; used kits are added automatically. */
-  useKits(names: string[]): Promise<KitsResponse> {
-    return this.#request("POST", "/kits", { use: names });
-  }
-
-  /** The optional parts this body offers: kits, the wiki, lessons, milestones. */
+  /** The optional parts this body offers: the wiki, lessons, milestones, routines, built-ins. */
   features(): Promise<BodyFeatures> {
     return this.#request("GET", "/features");
   }
@@ -150,51 +135,6 @@ export class BodyClient {
   /** The program reference for this body: only the features it offers. */
   apiDoc(): Promise<{ doc: string }> {
     return this.#request("GET", "/api");
-  }
-
-  /** The action reference for the named kits, or for the active kits when `names` is empty. */
-  kitDocs(names: string[] = []): Promise<{ docs: string }> {
-    return this.#request("GET", `/kits/docs?names=${encodeURIComponent(names.join(","))}`);
-  }
-
-  /** Every listed kit's actions as JSON Schemas; the input of `minebot types`. */
-  kitSchemas(): Promise<KitSchemasResponse> {
-    return this.#request("GET", "/kits/schemas");
-  }
-
-  /** A kit's source: a built-in kit's file, or an agent's saved one. */
-  kitSource(name: string): Promise<{ name: string; source: string }> {
-    return this.#request("GET", `/kits/source?name=${encodeURIComponent(name)}`);
-  }
-
-  /** Validates and saves an agent kit; nothing is written when the source is rejected. */
-  saveKit(source: string): Promise<SaveKitResponse> {
-    return this.#request("POST", "/kits/save", { source });
-  }
-
-  /** Deletes a saved agent kit. */
-  removeKit(name: string): Promise<{ removed: string }> {
-    return this.#request("POST", "/kits/remove", { name });
-  }
-
-  /** Ranks the kits and actions the body lists against a query. */
-  searchKits(query: string, limit = 5): Promise<{ hits: KitSearchHit[] }> {
-    return this.#request("GET", `/kits/search?q=${encodeURIComponent(query)}&limit=${limit}`);
-  }
-
-  /** The saved versions of an agent kit, oldest first. */
-  kitVersions(name: string): Promise<{ name: string; versions: KitVersion[] }> {
-    return this.#request("GET", `/kits/versions?name=${encodeURIComponent(name)}`);
-  }
-
-  /** Saves an earlier version of an agent kit again, as a new version. */
-  revertKit(name: string, version: number): Promise<KitInfo> {
-    return this.#request("POST", "/kits/revert", { name, version });
-  }
-
-  /** Runs one action of unsaved kit source once, as a program: the result or the error comes back like any run's. Nothing is saved. */
-  tryKit(source: string, action: string, args?: Record<string, unknown>, timeoutMs?: number): Promise<RunResult> {
-    return this.#request("POST", "/kits/try", { source, action, args, timeoutMs });
   }
 
   wikiSearch(query: string, limit = 5): Promise<{ hits: SearchHit[] }> {

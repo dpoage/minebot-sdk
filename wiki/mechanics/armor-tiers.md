@@ -51,6 +51,6 @@ for (const [piece, [slot, index]] of Object.entries(slots)) {
 
 Observed: with an iron helmet and copper boots worn and a diamond helmet and golden boots in the pack, this swapped both, and a second run kept everything. An iron set plus a diamond helmet added up to 16 points (3 + 6 + 5 + 2).
 
-<!-- kits -->
+<!-- builtins -->
 `kit.survival.armor()` equips the best armor in the inventory.
-<!-- /kits -->
+<!-- /builtins -->

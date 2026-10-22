@@ -7,7 +7,7 @@ import path from "node:path";
 import { text } from "node:stream/consumers";
 import { parseArgs } from "node:util";
 import { BodyClient } from "./client/client.ts";
-import { formatBound, formatBuiltinHits, formatBuiltins, formatKitHits, formatKits, formatKitVersions, formatLibrary, formatRevertedRoutine, formatRoutineVersions, formatRun, formatSavedRoutine, formatStatus } from "./client/render.ts";
+import { formatBound, formatBuiltinHits, formatBuiltins, formatLibrary, formatRevertedRoutine, formatRoutineVersions, formatRun, formatSavedRoutine, formatStatus } from "./client/render.ts";
 import { HAS_BODY, usageFor } from "./client/usage.ts";
 import { BODY_FLAG_OPTIONS, OPERATOR_FLAG_HELP } from "./client/body-flags.ts";
 import { ENV_FILE, initWorkspace } from "./client/init.ts";
@@ -27,7 +27,6 @@ const { values: opts, positionals } = parseArgs({
     types: { type: "string" },
     from: { type: "string" },
     match: { type: "string" },
-    action: { type: "string" },
     args: { type: "string" },
     out: { type: "string" },
     on: { type: "string" },
@@ -76,7 +75,6 @@ async function probeFeatures(): Promise<BodyFeatures | null> {
 
 /** Commands that belong to an optional feature; a body without the feature answers as if the command did not exist. */
 const FEATURE_COMMANDS: Record<string, (features: BodyFeatures) => boolean> = {
-  kits: CAPABILITY_GATES.kits,
   wiki: CAPABILITY_GATES.wiki,
   milestones: CAPABILITY_GATES.milestones,
   routines: CAPABILITY_GATES.routines,
@@ -293,83 +291,19 @@ async function main(): Promise<number> {
       const written = await initWorkspace(dir);
       for (const file of written) console.log(`wrote ${path.join(dir, file)}`);
       if (written.length === 0) console.log(`${dir} already has every workspace file`);
-      console.log(`\nNext: cd ${dir} && npm install, run a body with --agent-kits ./kits, then \`minebot types --out ${ENV_FILE}\` and \`npx tsc\`.`);
+      console.log(`\nNext: cd ${dir} && npm install, then \`minebot types --out ${ENV_FILE}\` and \`npx tsc\`.`);
       return 0;
     }
     case "types": {
       const client = await BodyClient.connect(opts.bot);
       const bodyFeatures = await client.features();
-      // Kits are an optional capability: a body without them has no schemas route, and the globals are typed without them.
-      const kits = CAPABILITY_GATES.kits(bodyFeatures) ? (await client.kitSchemas()).kits : [];
-      const env = generateEnv(bodyFeatures, kits);
+      const env = generateEnv(bodyFeatures);
       if (opts.out === undefined) process.stdout.write(env);
       else {
         await mkdir(path.dirname(path.resolve(opts.out)), { recursive: true });
         await writeFile(opts.out, env);
         console.error(`wrote ${opts.out}`);
       }
-      return 0;
-    }
-    case "kits": {
-      const client = await BodyClient.connect(opts.bot);
-      const [action, ...names] = rest;
-      // The verbs this body offers: the same gates as its routes. Without an answer from the body, all of them.
-      const verbs = [
-        ...(features && !CAPABILITY_GATES.kitSwitching(features) ? [] : ["use"]),
-        "docs",
-        "search",
-        ...(features && !CAPABILITY_GATES.agentKits(features) ? [] : ["save", "try", "rm", "source", "versions", "revert"]),
-      ];
-      if (action && !verbs.includes(action)) {
-        throw new Error(`unknown kits action "${action}"; use ${verbs.slice(0, -1).map((v) => `"${v}"`).join(", ")}, or "${verbs.at(-1)}"`);
-      }
-      if (action === "docs") {
-        console.log((await client.kitDocs(names)).docs);
-        return 0;
-      }
-      if (action === "save") {
-        const file = names[0];
-        const source = !file || file === "-" ? await text(process.stdin) : await readFile(file, "utf8");
-        print(await client.saveKit(source));
-        return 0;
-      }
-      if (action === "rm") {
-        if (!names[0]) throw new Error("kits rm needs a kit name");
-        print(await client.removeKit(names[0]));
-        return 0;
-      }
-      if (action === "source") {
-        if (!names[0]) throw new Error("kits source needs a kit name");
-        console.log((await client.kitSource(names[0])).source);
-        return 0;
-      }
-      if (action === "search") {
-        if (names.length === 0) throw new Error("kits search needs a query");
-        const { hits } = await client.searchKits(names.join(" "), Number(opts.limit));
-        console.log(hits.length === 0 ? "no matching kits" : formatKitHits(hits));
-        return 0;
-      }
-      if (action === "try") {
-        if (!opts.action) throw new Error("kits try needs --action <name>; pass the action's arguments as JSON with --args");
-        const file = names[0];
-        const source = !file || file === "-" ? await text(process.stdin) : await readFile(file, "utf8");
-        const run = await client.tryKit(source, opts.action, opts.args === undefined ? undefined : JSON.parse(opts.args), opts.timeout === undefined ? undefined : Number(opts.timeout));
-        return printRun(run);
-      }
-      if (action === "versions") {
-        if (!names[0]) throw new Error("kits versions needs a kit name");
-        console.log(formatKitVersions(names[0], (await client.kitVersions(names[0])).versions));
-        return 0;
-      }
-      if (action === "revert") {
-        const version = Number(names[1]);
-        if (!names[0] || !Number.isInteger(version)) throw new Error("kits revert needs a kit name and a version number");
-        print(await client.revertKit(names[0], version));
-        return 0;
-      }
-      if (action === "use") await client.useKits(names);
-      const { kits, locked } = await client.kits();
-      console.log(formatKits(kits, locked));
       return 0;
     }
     case "wiki": {

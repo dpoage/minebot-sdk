@@ -16,7 +16,7 @@ import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { formatBound, formatBuiltinHits, formatBuiltins, formatLibrary, formatRevertedRoutine, formatRoutineVersions, formatRun, formatSavedRoutine } from "../src/client/render.ts";
-import type { BindingInfo, BodyFeatures, BuiltinInfo, BuiltinSearchHit, KitTypeCheck, RoutineInfo, RoutineVersion, RunResult } from "../src/protocol/index.ts";
+import type { BindingInfo, BodyFeatures, BuiltinInfo, BuiltinSearchHit, TypeCheck, RoutineInfo, RoutineVersion, RunResult } from "../src/protocol/index.ts";
 import { type FakeBody, removeScratch, startFakeBody } from "./fixtures/host/fake-body.ts";
 
 const exec = promisify(execFile);
@@ -27,7 +27,7 @@ after(() => {
   removeScratch();
 });
 
-const FEATURES: BodyFeatures = { kits: [], kitsLocked: true, agentKits: false, wiki: "off", lessons: false, milestones: false, reflexes: true, routines: true, builtins: [] };
+const FEATURES: BodyFeatures = { wiki: "off", lessons: false, milestones: false, reflexes: true, routines: true, builtins: [] };
 
 interface Seen {
   method: string;
@@ -113,7 +113,7 @@ const VERSIONS: RoutineVersion[] = [
   { version: 2, savedAt: T, savedBy: "bot", current: true },
   { version: 3, savedAt: T, savedBy: "bot", current: false, revertedFrom: 1 },
 ];
-const FAILED: KitTypeCheck = { status: "failed", errors: ["act.ts(2,24): error TS2307: Cannot find module './helper.ts'."] };
+const FAILED: TypeCheck = { status: "failed", errors: ["act.ts(2,24): error TS2307: Cannot find module './helper.ts'."] };
 const OK_RUN: RunResult = { status: "ok", durationMs: 12, logs: "hello", result: { sum: 3 } };
 
 describe("the routine commands of the CLI, against the HTTP contract", () => {
@@ -434,7 +434,7 @@ describe("the built-in commands of the CLI and tools of the MCP server, against 
 });
 
 describe("the routine tools of the MCP server, against a recording body", () => {
-  const SAVED = { routine: ACT, typeCheck: { status: "passed" } as KitTypeCheck };
+  const SAVED = { routine: ACT, typeCheck: { status: "passed" } as TypeCheck };
   const BOUND = { binding: ACTION, replaced: false };
   const requests = (stub: { seen: Seen[] }) => stub.seen.map((request) => `${request.method} ${request.url}`);
 

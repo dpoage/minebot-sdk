@@ -1,7 +1,7 @@
 ---
 title: Try, save, and revert your own kit
 tags: [kits, agent kits, defineKit, action, try, save, revert, versions, search, stats, authoring]
-requires: [agentKits]
+requires: [routines]
 verified_by: "smoke-tested on the 26.1 dev server, 2026-10-19"
 mc_version: "26.1"
 ---

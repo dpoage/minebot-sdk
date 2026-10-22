@@ -15,7 +15,6 @@ import path from "node:path";
 import { after, before, describe, it } from "node:test";
 import { z } from "zod";
 import type { DaemonOptions } from "../src/body/daemon.ts";
-import type { KitHost } from "../src/kit/kit.ts";
 import type { BodyFeatures, Capability } from "../src/protocol/index.ts";
 
 // Everything the suite writes lives under ROOT, the typechecker's scratch directories included.
@@ -27,9 +26,7 @@ process.env.TMPDIR = ROOT;
 const { startDaemon } = await import("../src/body/daemon.ts");
 const { endpointFile, programApiDoc } = await import("../src/protocol/index.ts");
 const { MC_VERSION } = await import("../src/mc/version.ts");
-const { BUILTIN_KITS } = await import("../src/kit/index.ts");
 const { BUILTIN_MODULES } = await import("../src/routines/index.ts");
-const { KitHost: KitHostClass } = await import("../src/kit/kit.ts");
 const { JsonStore } = await import("../src/store.ts");
 const { Builtins } = await import("../src/host/routines/builtins.ts");
 const { KitStats } = await import("../src/host/routines/stats.ts");
@@ -141,17 +138,6 @@ const ROUTES = [
   "POST /chat",
   "GET /api",
   "GET /features",
-  "GET /kits",
-  "POST /kits",
-  "GET /kits/docs",
-  "GET /kits/schemas",
-  "GET /kits/source",
-  "POST /kits/save",
-  "POST /kits/remove",
-  "GET /kits/search",
-  "GET /kits/versions",
-  "POST /kits/revert",
-  "POST /kits/try",
   "GET /wiki/search",
   "GET /wiki/page",
   "GET /wiki/list",
@@ -197,7 +183,7 @@ interface Running {
   name: string;
   token: string;
   url: string;
-  dirs: { state: string; history: string; lessons: string; wiki: string; agentKits: string };
+  dirs: { state: string; history: string; lessons: string; wiki: string };
   ports: number[];
   /** Sends one request. */
   send(method: string, url: string, call?: Call): Promise<{ status: number; body: unknown }>;
@@ -211,8 +197,6 @@ let sequence = 0;
 interface Scenario extends Partial<Omit<DaemonOptions, "name" | "port" | "apiHost" | "apiPort" | "token" | "stateDir" | "historyFile" | "lessonsDir" | "wikiDir">> {
   /** Written into the state directory (relative path to JSON value) before the body starts. */
   stateFiles?: Record<string, unknown>;
-  /** Written verbatim into the agent-kits directory before the body starts. */
-  agentKitFiles?: Record<string, string>;
   /** Written into the lessons directory before the body starts. */
   lessonFiles?: Record<string, string>;
   /** The body writes a program history. */
@@ -236,8 +220,8 @@ function writeFixtureWiki(dir: string): void {
   writeTree(dir, {
     "quirks/drops.md": page(`title: Drops fall out of reach\ntags: [items, drops]\nmc_version: "${MC_VERSION}"\nverified_by: body-api test`, "Walk over the drop to pick it up.\nDrops despawn after five minutes."),
     "mechanics/smelting.md": page("title: Smelting\ntags: [furnace]\nverified_by: body-api test", "A furnace smelts raw iron into ingots."),
-    "mechanics/kit-use.md": page("title: Using kits\ntags: [kits]\nverified_by: body-api test\nrequires: [kits]", "Call kit actions with one object argument."),
-    "mechanics/saved-kits.md": page("title: Saving your own kits\ntags: [kits]\nverified_by: body-api test\nrequires: [agentKits]", "Save a kit and it joins the active set."),
+    "mechanics/kit-use.md": page("title: Using kits\ntags: [kits]\nverified_by: body-api test\nrequires: [builtins]", "Call kit actions with one object argument."),
+    "mechanics/saved-kits.md": page("title: Saving your own kits\ntags: [kits]\nverified_by: body-api test\nrequires: [routines]", "Save a kit and it joins the active set."),
   });
 }
 
@@ -250,21 +234,17 @@ async function startBody(scenario: Scenario = {}): Promise<Running> {
     history: path.join(base, "history", "programs.jsonl"),
     lessons: path.join(base, "lessons"),
     wiki: path.join(base, "wiki"),
-    agentKits: path.join(base, "state", "agent-kits"),
   };
   writeFixtureWiki(dirs.wiki);
   if (scenario.stateFiles) writeTree(dirs.state, scenario.stateFiles);
-  if (scenario.agentKitFiles) writeTree(dirs.agentKits, scenario.agentKitFiles);
   if (scenario.lessonFiles) writeTree(dirs.lessons, scenario.lessonFiles);
-  const { stateFiles: _state, agentKitFiles: _agentKits, lessonFiles: _lessons, history, repositoryWiki, ...options } = scenario;
+  const { stateFiles: _state, lessonFiles: _lessons, history, repositoryWiki, ...options } = scenario;
   const mcPort = await refusedPort();
   const daemon = await startDaemon({
     username: name,
     auth: "offline",
-    lockKits: false,
     wikiMode: "read",
     milestonesEnabled: true,
-    agentKits: true,
     ...options,
     name,
     host: "127.0.0.1",
@@ -318,31 +298,18 @@ async function startBody(scenario: Scenario = {}): Promise<Running> {
   return running;
 }
 
-/** What a kit host over `kits` lists, searches, documents, and describes: the reference for the kit routes. */
-function referenceKits(names: readonly string[], locked = false): KitHost {
-  const kits = BUILTIN_KITS.filter((kit) => names.includes(kit.name));
-  return new KitHostClass({ kits, stores: () => JsonStore.memory(), locked, active: names });
-}
-
 const ALL_BUILTINS = BUILTIN_MODULES.map((module) => module.name);
-const FEATURES_ALL: Features = { kits: ["move"], kitsLocked: false, agentKits: true, wiki: "write", lessons: true, milestones: true, reflexes: true, routines: true, builtins: ALL_BUILTINS };
+const FEATURES_ALL: Features = { wiki: "write", lessons: true, milestones: true, reflexes: true, routines: true, builtins: ALL_BUILTINS };
 
 const NOT_CONNECTED = { error: "the body is not connected to a server" };
 const NO_ROUTE = (method: string, pathname: string) => ({ error: `no route for ${method} ${pathname}` });
 const MILESTONES = { milestones: [{ id: "sticks", description: "Craft a stick", obtained: ["stick"], via: "crafted", count: 4 }] };
 
-/** A tiny valid agent kit; `description` tells versions apart. */
-const kitSource = (description: string) =>
-  `import { defineKit, action, z } from "minebot-sdk/kit";\n` +
-  `export default defineKit({ name: "greeter", description: "${description}", uses: ["move"] }, { hi: action({ doc: "Returns a greeting.", args: z.object({}), run: () => "hello" }) });\n`;
-
 describe("body API on a body with every feature on", () => {
   let body: Running;
-  const ref = referenceKits(["move"]);
 
   before(async () => {
     body = await startBody({
-      kits: ["move"],
       wikiMode: "write",
       stateFiles: {
         "stores/notes.json": {
@@ -417,15 +384,13 @@ describe("body API on a body with every feature on", () => {
     await body.call("GET", "/api", { body: { doc: programApiDoc(FEATURES_ALL) } });
   });
 
-  it("answers programs, /chat, and /kits/try with 503 while disconnected, and /stop with stopped false", async () => {
+  it("answers programs and /chat with 503 while disconnected, and /stop with stopped false", async () => {
     await body.call("POST", "/run", { status: 503, body: NOT_CONNECTED }, { json: { code: "return 1" } });
     await body.call("POST", "/run", { status: 503, body: NOT_CONNECTED }, { json: { code: "return 1", timeoutMs: 1000 } });
     await body.call("POST", "/run", { status: 400, body: { error: "✖ Invalid input: expected string, received undefined\n  → at code" } }, { json: {} });
     await body.call("POST", "/run", { status: 400, body: { error: "✖ Too big: expected number to be <=1800000\n  → at timeoutMs" } }, { json: { code: "x", timeoutMs: 1_800_001 } });
     await body.call("POST", "/chat", { status: 503, body: NOT_CONNECTED }, { json: { message: "hello" } });
     await body.call("POST", "/chat", { status: 400, body: { error: "✖ Too small: expected string to have >=1 characters\n  → at message" } }, { json: { message: "" } });
-    await body.call("POST", "/kits/try", { status: 503, body: NOT_CONNECTED }, { json: { source: kitSource("try"), action: "hi" } });
-    await body.call("POST", "/kits/try", { status: 400, body: { error: "✖ Invalid input: expected string, received undefined\n  → at action" } }, { json: { source: kitSource("try") } });
     await body.call("POST", "/stop", { body: { stopped: false } });
   });
 
@@ -453,6 +418,24 @@ describe("body API on a body with every feature on", () => {
     }
   });
 
+  it("answers the routes of the kits like any unknown route, whatever the body offers", async () => {
+    for (const [method, url] of [
+      ["GET", "/kits"],
+      ["POST", "/kits"],
+      ["GET", "/kits/docs"],
+      ["GET", "/kits/schemas"],
+      ["GET", "/kits/source?name=greeter"],
+      ["POST", "/kits/save"],
+      ["POST", "/kits/remove"],
+      ["GET", "/kits/search?q=walk"],
+      ["GET", "/kits/versions?name=greeter"],
+      ["POST", "/kits/revert"],
+      ["POST", "/kits/try"],
+    ] as const) {
+      await body.call(method, url, { status: 404, body: NO_ROUTE(method, new URL(url, "http://x").pathname) }, method === "POST" ? { json: { use: ["move"] } } : undefined);
+    }
+  });
+
   it("milestones: read, set, replace, clear, refuse malformed ones", async () => {
     const stored = { milestones: [{ id: "sticks", description: "Craft a stick", obtained: ["stick"], via: "crafted", count: 4 }] };
     await body.call("GET", "/milestones", { body: { milestones: null } });
@@ -461,22 +444,6 @@ describe("body API on a body with every feature on", () => {
     await body.call("PUT", "/milestones", { status: 400, body: { error: "✖ Invalid input: expected object, received number\n  → at milestones" } }, { json: { milestones: 1 } });
     await body.call("PUT", "/milestones", { body: { milestones: null } }, { json: { milestones: null } });
     await body.call("GET", "/milestones", { body: { milestones: null } });
-  });
-
-  it("kits: list, switch, documentation, search, schemas", async () => {
-    const listing = { kits: ref.info(), active: ["move"], locked: false };
-    await body.call("GET", "/kits", { body: wire(listing) });
-    await body.call("POST", "/kits", { body: wire(listing) }, { json: { use: ["move"] } });
-    await body.call("POST", "/kits", { status: 400, body: { error: 'unknown kit "nope"; available: move' } }, { json: { use: ["nope"] } });
-    await body.call("POST", "/kits", { status: 400, body: { error: "✖ Too small: expected array to have >=1 items\n  → at use" } }, { json: { use: [] } });
-    await body.call("GET", "/kits/docs", { body: { docs: ref.docs([]) } });
-    await body.call("GET", "/kits/docs?names=move", { body: { docs: ref.docs(["move"]) } });
-    await body.call("GET", "/kits/docs?names=move,", { body: { docs: ref.docs(["move"]) } });
-    await body.call("GET", "/kits/docs?names=nope", { status: 400, body: { error: 'unknown kit "nope"; available: move' } });
-    await body.call("GET", "/kits/search?q=walk", { body: wire({ hits: ref.search("walk", 5) }) });
-    await body.call("GET", "/kits/search?q=walk&limit=1", { body: wire({ hits: ref.search("walk", 1) }) });
-    await body.call("GET", "/kits/search", { status: 400, body: { error: "✖ Invalid input: expected string, received undefined\n  → at q" } });
-    await body.call("GET", "/kits/schemas", { body: wire({ kits: ref.schemas() }) });
   });
 
   it("wiki: list, search, page, lessons", async () => {
@@ -552,44 +519,12 @@ describe("body API on a body with every feature on", () => {
   });
 });
 
-describe("body API: agent kits", () => {
-  let body: Running;
-
-  before(async () => {
-    body = await startBody({ kits: ["move"] });
-  });
-  after(() => body.close());
-
-  it("saves, reads, versions, reverts, and removes a kit; refuses what does not validate", async () => {
-    const info = (description: string) => ({ name: "greeter", description, uses: ["move"], active: true, agent: true, actions: ["hi"], stats: {} });
-    const version = (n: number, extra: object = {}, current = false) => ({ version: n, savedAt: "<timestamp>", savedBy: body.name, ...extra, current });
-    await body.call("GET", "/kits/source?name=greeter", { status: 404, body: { error: 'no kit "greeter"' } });
-    await body.call("POST", "/kits/save", { body: { ...info("first"), typeCheck: { status: "passed" } } }, { json: { source: kitSource("first") } });
-    await body.call("POST", "/kits/save", { body: { ...info("second"), typeCheck: { status: "passed" } } }, { json: { source: kitSource("second") } });
-    await body.call("GET", "/kits/source?name=greeter", { body: { name: "greeter", source: kitSource("second") } });
-    await body.call("GET", "/kits/versions?name=greeter", { body: { name: "greeter", versions: [version(1), version(2, {}, true)] } });
-    await body.call("POST", "/kits/revert", { body: info("first") }, { json: { name: "greeter", version: 1 } });
-    await body.call("GET", "/kits/versions?name=greeter", { body: { name: "greeter", versions: [version(1), version(2), version(3, { revertedFrom: 1 }, true)] } });
-    await body.call("POST", "/kits/revert", { status: 400, body: { error: 'kit "greeter" has no version 9; saved versions: 1, 2, 3' } }, { json: { name: "greeter", version: 9 } });
-    await body.call("GET", "/kits/versions?name=Bad", { status: 400, body: { error: "✖ use 1-32 lowercase letters, digits, and _; start with a letter\n  → at name" } });
-    await body.call("POST", "/kits/save", { status: 400, body: { error: 'kit source must import defineKit from "minebot-sdk/kit" (defineKit, action, and z are no longer globals): import { defineKit, action, z } from "minebot-sdk/kit";' } }, { json: { source: "export default 1" } });
-    await body.call("POST", "/kits/save", { status: 400, body: { error: "✖ Too small: expected string to have >=1 characters\n  → at source" } }, { json: { source: "" } });
-    await body.call("POST", "/kits/save", { status: 400, body: { error: "kit source matches the escape audit (process); write it without those names" } }, { json: { source: `${kitSource("audited")}// process\n` } });
-    await body.call("POST", "/kits/remove", { body: { removed: "greeter" } }, { json: { name: "greeter" } });
-    await body.call("GET", "/kits/source?name=greeter", { status: 404, body: { error: 'no kit "greeter"' } });
-    // Base behavior, pinned as observed: the library forgets a removed kit at once, but the host keeps offering it (listed, no longer marked as an agent kit, still active) until the body restarts.
-    const lingering = { name: "greeter", description: "first", uses: ["move"], active: true, agent: false, actions: ["hi"], stats: {} };
-    await body.call("GET", "/kits", { body: { kits: [...wire(referenceKits(["move"]).info()), lingering], active: ["move", "greeter"], locked: false } });
-    await body.call("POST", "/kits/remove", { status: 400, body: { error: "✖ use 1-32 lowercase letters, digits, and _; start with a letter\n  → at name" } }, { json: { name: "Bad" } });
-  });
-});
-
 describe("body API on a body with every optional feature off", () => {
   let body: Running;
-  const features: Features = { kits: [], kitsLocked: true, agentKits: false, wiki: "off", lessons: false, milestones: false, reflexes: false, routines: false, builtins: [] };
+  const features: Features = { wiki: "off", lessons: false, milestones: false, reflexes: false, routines: false, builtins: [] };
 
   before(async () => {
-    body = await startBody({ kits: [], lockKits: true, wikiMode: "off", milestonesEnabled: false, agentKits: false, triggers: false, routines: false, builtins: [] });
+    body = await startBody({ wikiMode: "off", milestonesEnabled: false, triggers: false, routines: false, builtins: [] });
   });
   after(() => body.close());
 
@@ -597,17 +532,6 @@ describe("body API on a body with every optional feature off", () => {
     const absent = (method: string, url: string, call?: Call) => body.call(method, url, { status: 404, body: NO_ROUTE(method, new URL(url, "http://x").pathname) }, call);
     await absent("GET", "/milestones");
     await absent("PUT", "/milestones", { raw: "{ not json" });
-    await absent("GET", "/kits");
-    await absent("POST", "/kits", { raw: "{ not json" });
-    await absent("GET", "/kits/docs?names=move");
-    await absent("GET", "/kits/schemas");
-    await absent("GET", "/kits/search?q=walk");
-    await absent("GET", "/kits/source?name=greeter");
-    await absent("POST", "/kits/save", { raw: "{ not json" });
-    await absent("POST", "/kits/remove", { json: { name: "greeter" } });
-    await absent("GET", "/kits/versions?name=greeter");
-    await absent("POST", "/kits/revert", { json: { name: "greeter", version: 1 } });
-    await absent("POST", "/kits/try", { raw: "{ not json" });
     await absent("GET", "/triggers");
     await absent("POST", "/triggers", { raw: "{ not json" });
     await absent("POST", "/triggers/remove", { json: { name: "eat" } });
@@ -641,38 +565,25 @@ describe("body API on a body with every optional feature off", () => {
   });
 });
 
-describe("body API on a body with locked kits, agent kits off, and a read-only wiki that holds a lesson", () => {
+describe("body API on a body without routines and with a read-only wiki that holds a lesson", () => {
   let body: Running;
-  const ref = referenceKits(["move"], true);
-  const features: Features = { kits: ["move"], kitsLocked: true, agentKits: false, wiki: "read", lessons: true, milestones: true, reflexes: true, routines: true, builtins: ALL_BUILTINS };
+  const features: Features = { wiki: "read", lessons: true, milestones: true, reflexes: true, routines: false, builtins: ALL_BUILTINS };
 
   before(async () => {
     body = await startBody({
-      kits: ["move"],
-      lockKits: true,
       wikiMode: "read",
-      agentKits: false,
+      routines: false,
       lessonFiles: { "dig-down.md": page("title: Dig down carefully\nverified_by: unreviewed lesson from earlier\nauthor: earlier", "Check the block below before digging.") },
     });
   });
   after(() => body.close());
 
-  it("answers the gated routes: kit switching, agent kits, and lessons are 404; the kits it offers are listed", async () => {
+  it("answers the gated routes: the lessons of a read-only wiki and the routine library are 404", async () => {
     const absent = (method: string, url: string, call?: Call) => body.call(method, url, { status: 404, body: NO_ROUTE(method, new URL(url, "http://x").pathname) }, call);
     await body.call("GET", "/features", { body: features });
     await body.call("GET", "/api", { body: { doc: programApiDoc(features) } });
-    await absent("POST", "/kits", { json: { use: ["move"] } });
-    await absent("GET", "/kits/source?name=greeter");
-    await absent("POST", "/kits/save", { json: { source: kitSource("x") } });
-    await absent("POST", "/kits/remove", { json: { name: "greeter" } });
-    await absent("GET", "/kits/versions?name=greeter");
-    await absent("POST", "/kits/revert", { json: { name: "greeter", version: 1 } });
-    await absent("POST", "/kits/try", { json: { source: kitSource("x"), action: "hi" } });
     await absent("POST", "/wiki/lessons", { json: { title: "A lesson", body: "Some text for the lesson." } });
-    await body.call("GET", "/kits", { body: wire({ kits: ref.info(), active: ["move"], locked: true }) });
-    await body.call("GET", "/kits/docs", { body: { docs: ref.docs([]) } });
-    await body.call("GET", "/kits/search?q=walk&limit=2", { body: wire({ hits: ref.search("walk", 2) }) });
-    await body.call("GET", "/kits/schemas", { body: wire({ kits: ref.schemas() }) });
+    await absent("GET", "/routines");
   });
 
   it("shows the wiki the body's features allow: pages for missing features are hidden, the lesson is listed", async () => {
@@ -699,7 +610,6 @@ interface GatedProbe {
   served: (features: Features) => Expected;
 }
 
-const KIT_NAME_RULE = { status: 400, body: { error: "✖ use 1-32 lowercase letters, digits, and _; start with a letter\n  → at name" } };
 const ROUTINE_NAME_RULE = { status: 400, body: { error: "✖ use 1-48 lowercase letters, digits, _ and -; start with a letter\n  → at name" } };
 const CALL_NAME_RULE = "✖ use an action's name (1-48 lowercase letters, digits, _ and -; start with a letter) or a built-in routine's <module>.<routine>\n  → at name";
 
@@ -707,17 +617,6 @@ const CALL_NAME_RULE = "✖ use an action's name (1-48 lowercase letters, digits
 const GATED: GatedProbe[] = [
   { capability: "milestones", method: "GET", url: "/milestones", served: () => ({ body: { milestones: null } }) },
   { capability: "milestones", method: "PUT", url: "/milestones", call: { json: { milestones: null } }, served: () => ({ body: { milestones: null } }) },
-  { capability: "kits", method: "GET", url: "/kits", served: (f) => ({ body: wire({ kits: referenceKits(["move"], f.kitsLocked).info(), active: ["move"], locked: f.kitsLocked }) }) },
-  { capability: "kitSwitching", method: "POST", url: "/kits", call: { json: { use: ["move"] } }, served: () => ({ body: wire({ kits: referenceKits(["move"]).info(), active: ["move"], locked: false }) }) },
-  { capability: "kits", method: "GET", url: "/kits/docs?names=move", served: (f) => ({ body: { docs: referenceKits(["move"], f.kitsLocked).docs(["move"]) } }) },
-  { capability: "kits", method: "GET", url: "/kits/schemas", served: (f) => ({ body: wire({ kits: referenceKits(["move"], f.kitsLocked).schemas() }) }) },
-  { capability: "kits", method: "GET", url: "/kits/search?q=walk&limit=1", served: (f) => ({ body: wire({ hits: referenceKits(["move"], f.kitsLocked).search("walk", 1) }) }) },
-  { capability: "agentKits", method: "GET", url: "/kits/source?name=greeter", served: () => ({ status: 404, body: { error: 'no kit "greeter"' } }) },
-  { capability: "agentKits", method: "POST", url: "/kits/save", call: { json: { source: "" } }, served: () => ({ status: 400, body: { error: "✖ Too small: expected string to have >=1 characters\n  → at source" } }) },
-  { capability: "agentKits", method: "POST", url: "/kits/remove", call: { json: { name: "Bad" } }, served: () => KIT_NAME_RULE },
-  { capability: "agentKits", method: "GET", url: "/kits/versions?name=Bad", served: () => KIT_NAME_RULE },
-  { capability: "agentKits", method: "POST", url: "/kits/revert", call: { json: { name: "Bad", version: 1 } }, served: () => KIT_NAME_RULE },
-  { capability: "agentKits", method: "POST", url: "/kits/try", call: { json: { source: kitSource("try"), action: "hi" } }, served: () => ({ status: 503, body: NOT_CONNECTED }) },
   { capability: "wiki", method: "GET", url: "/wiki/search?q=zzzz", served: () => ({ body: { hits: [] } }) },
   {
     capability: "wiki",
@@ -749,7 +648,7 @@ const GATED: GatedProbe[] = [
 ];
 
 /** A body that offers every capability; each profile below turns one off. */
-const EVERY_CAPABILITY: Scenario = { kits: ["move"], lockKits: false, agentKits: true, wikiMode: "write", milestonesEnabled: true, triggers: true };
+const EVERY_CAPABILITY: Scenario = { wikiMode: "write", milestonesEnabled: true, triggers: true };
 
 interface Profile {
   /** The capabilities the body lacks: the one turned off, and those that cannot be on without it. */
@@ -758,14 +657,9 @@ interface Profile {
   features: Features;
 }
 
-// Each capability off on its own, every other one on. Two cannot be off alone (CAPABILITY_GATES):
-// kit switching and agent kits both need kits offered, so a body without kits lacks all three;
-// lessons need a writable wiki, so a body without a wiki lacks lessons. Those pairs are told apart
-// by the profiles that turn off kit switching, agent kits, or lessons alone.
+// Each capability off on its own, every other one on. A body without a wiki lacks lessons too
+// (CAPABILITY_GATES); the profile that turns off lessons alone tells the pair apart.
 const PROFILES: Profile[] = [
-  { off: ["kits", "kitSwitching", "agentKits"], scenario: { kits: [], lockKits: true }, features: { ...FEATURES_ALL, kits: [], kitsLocked: true } },
-  { off: ["kitSwitching"], scenario: { lockKits: true }, features: { ...FEATURES_ALL, kitsLocked: true } },
-  { off: ["agentKits"], scenario: { agentKits: false }, features: { ...FEATURES_ALL, agentKits: false } },
   { off: ["wiki", "lessons"], scenario: { wikiMode: "off" }, features: { ...FEATURES_ALL, wiki: "off", lessons: false } },
   { off: ["lessons"], scenario: { wikiMode: "read" }, features: { ...FEATURES_ALL, wiki: "read", lessons: false } },
   { off: ["milestones"], scenario: { milestonesEnabled: false }, features: { ...FEATURES_ALL, milestones: false } },
@@ -865,59 +759,50 @@ describe("body API: events and waits", () => {
   const event = (seq: number, type: string, data: object) => ({ seq, time: "<ms>", type, data });
 
   before(async () => {
-    body = await startBody({
-      kits: ["move"],
-      stateFiles: { "triggers.json": { broken: { on: "chat", routine: "r1" } } },
-      agentKitFiles: {
-        "orphan.ts":
-          `import { defineKit, action, z } from "minebot-sdk/kit";\n` +
-          `export default defineKit({ name: "orphan", description: "Needs a kit this body does not offer.", uses: ["dig"] }, { hi: action({ doc: "Says hi.", args: z.object({}), run: () => "hi" }) });\n`,
-      },
-    });
+    body = await startBody({ stateFiles: { "triggers.json": { broken: { on: "chat", routine: "r1" } } } });
   });
   after(() => body.close());
 
   // What the body produced from start to its first failed connection attempt, in order, as the normalizer shows it.
   const events = [
     event(1, "reflex_error", { name: "broken", error: "✖ Invalid input: expected array, received string\n  → at on\n✖ Invalid input: expected string, received undefined\n  → at updated" }),
-    event(2, "kit_error", { file: "orphan.ts", error: "it uses kits this body does not offer: dig" }),
-    event(3, "error", { message: "connect ECONNREFUSED 127.0.0.1:<port>" }),
-    event(4, "disconnected", { reason: "socketClosed" }),
-    event(5, "reconnect_scheduled", { inMs: 5000, attempt: 1 }),
+    event(2, "error", { message: "connect ECONNREFUSED 127.0.0.1:<port>" }),
+    event(3, "disconnected", { reason: "socketClosed" }),
+    event(4, "reconnect_scheduled", { inMs: 5000, attempt: 1 }),
   ];
 
   it("lists exactly the startup events, in order, from 0", async () => {
-    await body.call("GET", "/events?since=0", { body: { events, next: 5 } });
-    await body.call("GET", "/events", { body: { events, next: 5 } });
+    await body.call("GET", "/events?since=0", { body: { events, next: 4 } });
+    await body.call("GET", "/events", { body: { events, next: 4 } });
   });
 
   it("honors limit and since: the first two events with next at the second, then the rest", async () => {
     await body.call("GET", "/events?since=0&limit=2", { body: { events: events.slice(0, 2), next: 2 } });
     await body.call("GET", "/events?since=2&limit=2", { body: { events: events.slice(2, 4), next: 4 } });
-    await body.call("GET", "/events?since=4", { body: { events: events.slice(4), next: 5 } });
-    await body.call("GET", "/events?since=5", { body: { events: [], next: 5 } });
+    await body.call("GET", "/events?since=3", { body: { events: events.slice(3), next: 4 } });
+    await body.call("GET", "/events?since=4", { body: { events: [], next: 4 } });
   });
 
   it("restarts from the beginning when the cursor is ahead of the log", async () => {
-    await body.call("GET", "/events?since=999", { body: { events, next: 5 } });
+    await body.call("GET", "/events?since=999", { body: { events, next: 4 } });
     await body.call("GET", "/events?since=999&limit=1", { body: { events: events.slice(0, 1), next: 1 } });
   });
 
   it("POST /wait returns a buffered matching event with next, and filters by type and message", async () => {
-    await body.call("POST", "/wait", { body: { event: events[1], next: 2, timedOut: false } }, { json: { types: ["kit_error"], since: 0, timeoutMs: 5000 } });
-    await body.call("POST", "/wait", { body: { event: events[2], next: 3, timedOut: false } }, { json: { since: 2, match: "econnrefused", types: ["error"], timeoutMs: 5000 } });
-    await body.call("POST", "/wait", { body: { event: events[3], next: 4, timedOut: false } }, { json: { types: ["disconnected", "error"], since: 3, timeoutMs: 5000 } });
+    await body.call("POST", "/wait", { body: { event: events[0], next: 1, timedOut: false } }, { json: { types: ["reflex_error"], since: 0, timeoutMs: 5000 } });
+    await body.call("POST", "/wait", { body: { event: events[1], next: 2, timedOut: false } }, { json: { since: 1, match: "econnrefused", types: ["error"], timeoutMs: 5000 } });
+    await body.call("POST", "/wait", { body: { event: events[2], next: 3, timedOut: false } }, { json: { types: ["disconnected", "error"], since: 2, timeoutMs: 5000 } });
   });
 
   it("POST /wait times out with the log's end as next, and a cursor ahead of the log starts over", async () => {
-    await body.call("POST", "/wait", { body: { event: null, next: 5, timedOut: true } }, { json: { types: ["chat"], since: 0, timeoutMs: 50 } });
-    await body.call("POST", "/wait", { body: { event: null, next: 5, timedOut: true } }, { json: { types: ["kit_error"], since: 2, timeoutMs: 50 } });
-    await body.call("POST", "/wait", { body: { event: null, next: 5, timedOut: true } }, { json: { from: "someone", since: 0, timeoutMs: 50 } });
-    await body.call("POST", "/wait", { body: { event: events[2], next: 3, timedOut: false } }, { json: { types: ["error"], since: 999, timeoutMs: 5000 } });
+    await body.call("POST", "/wait", { body: { event: null, next: 4, timedOut: true } }, { json: { types: ["chat"], since: 0, timeoutMs: 50 } });
+    await body.call("POST", "/wait", { body: { event: null, next: 4, timedOut: true } }, { json: { types: ["reflex_error"], since: 1, timeoutMs: 50 } });
+    await body.call("POST", "/wait", { body: { event: null, next: 4, timedOut: true } }, { json: { from: "someone", since: 0, timeoutMs: 50 } });
+    await body.call("POST", "/wait", { body: { event: events[1], next: 2, timedOut: false } }, { json: { types: ["error"], since: 999, timeoutMs: 5000 } });
   });
 
   it("POST /wait without since waits for new events only: a buffered match is not returned", async () => {
-    await body.call("POST", "/wait", { body: { event: null, next: 5, timedOut: true } }, { json: { types: ["error"], timeoutMs: 50 } });
+    await body.call("POST", "/wait", { body: { event: null, next: 4, timedOut: true } }, { json: { types: ["error"], timeoutMs: 50 } });
   });
 });
 
@@ -932,7 +817,7 @@ describe("body API: the program history file", () => {
       .map((line) => normalize(JSON.parse(line), { token: body.token, ports: body.ports }));
 
   before(async () => {
-    body = await startBody({ kits: ["move"], history: true, stateFiles: { "bindings.json": { act: { kind: "action", routine: "act" } }, "routines/r1.ts": "export default () => 1;\n" } });
+    body = await startBody({ history: true, stateFiles: { "bindings.json": { act: { kind: "action", routine: "act" } }, "routines/r1.ts": "export default () => 1;\n" } });
   });
   after(() => body.close());
 
@@ -953,7 +838,7 @@ describe("body API: the program history file", () => {
     const stopped = Date.now();
     await body.call("POST", "/stop", { body: { stopped: false } });
     assert.ok(Date.now() - stopped < 1000, "POST /stop answered within a second");
-    assert.deepStrictEqual(lines(), [{ seq: 2, startedAt: "<timestamp>", kits: ["move"], code: flagged, escapeAttempts: ["process"], status: "started" }]);
+    assert.deepStrictEqual(lines(), [{ seq: 2, startedAt: "<timestamp>", code: flagged, escapeAttempts: ["process"], status: "started" }]);
   });
 
   it("records no program_finished event for a run that failed to start", async () => {
@@ -970,16 +855,9 @@ describe("body API: the program history file", () => {
     await body.call("POST", "/call", { status: 503, body: NOT_CONNECTED }, { json: { name: "act" } });
     const reflex = { kind: "reflex", name: "plain", routine: "r1", on: ["chat"], when: "process.pid > 0" };
     await body.call("POST", "/bind", { body: { binding: { ...reflex, cooldownMs: 1000, timeoutMs: 30_000, enabled: true, preempt: false, priority: 0, updated: "<timestamp>", fired: 0, failures: 0 }, replaced: false } }, { json: reflex });
-    assert.deepStrictEqual(lines().slice(1), [{ seq: 4, startedAt: "<timestamp>", kits: ["move"], code: reflex.when, escapeAttempts: ["process"], trigger: "plain", routine: "r1", on: ["chat"], status: "registered" }]);
+    assert.deepStrictEqual(lines().slice(1), [{ seq: 4, startedAt: "<timestamp>", code: reflex.when, escapeAttempts: ["process"], trigger: "plain", routine: "r1", on: ["chat"], status: "registered" }]);
   });
 
-  it("records a /kits/try as a program: its code, flagged by what it carries", async () => {
-    const source = `${kitSource("tried")}// require(\n`;
-    const code = `return await kits.try(${JSON.stringify(source)}, ${JSON.stringify({ action: "hi" })});`;
-    assert.deepStrictEqual(findEscapeAttempts(code), ["require("]);
-    await body.call("POST", "/kits/try", { status: 503, body: NOT_CONNECTED }, { json: { source, action: "hi" } });
-    assert.deepStrictEqual(lines().slice(2), [{ seq: 5, startedAt: "<timestamp>", kits: ["move"], code, escapeAttempts: ["require("], status: "started" }]);
-  });
 });
 
 describe("body API: the wiki is the repository's by default", () => {
@@ -1007,10 +885,8 @@ describe("body API: start and stop", () => {
     host: "127.0.0.1",
     apiHost: "127.0.0.1",
     apiPort: 0,
-    lockKits: false,
     wikiMode: "off" as const,
     milestonesEnabled: true,
-    agentKits: true,
   };
   let sequenceNumber = 0;
   const options = async (extra: Partial<DaemonOptions>): Promise<DaemonOptions> => {
@@ -1018,9 +894,9 @@ describe("body API: start and stop", () => {
     return { ...base, name: `charz-start-${++sequenceNumber}`, port: await refusedPort(), stateDir: path.join(dir, "state"), ...extra };
   };
 
-  it("rejects an unknown kit with the available ones named, and publishes nothing", async () => {
-    const opts = await options({ kits: ["nope"] });
-    await assert.rejects(startDaemon(opts), { message: `unknown built-in kit "nope"; available: ${BUILTIN_KITS.map((kit) => kit.name).join(", ")}` });
+  it("rejects an unknown built-in module with the available ones named, and publishes nothing", async () => {
+    const opts = await options({ builtins: ["nope"] });
+    await assert.rejects(startDaemon(opts), { message: `unknown built-in module "nope"; available: ${ALL_BUILTINS.join(", ")}` });
     assert.equal(existsSync(endpointFile(opts.name)), false);
   });
 

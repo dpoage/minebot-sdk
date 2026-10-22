@@ -34,7 +34,7 @@ const CELLS: Cell[] = [
 ];
 const label = (cell: Cell) => `routines ${cell.routines ? "on" : "off"}, built-ins ${cell.builtins ? "on" : "off"}`;
 
-const featuresOf = ({ routines, builtins }: Cell): BodyFeatures => ({ kits: ["move"], kitsLocked: false, agentKits: true, wiki: "write", lessons: true, milestones: true, reflexes: true, routines, builtins: builtins ? ["move", "inventory"] : [] });
+const featuresOf = ({ routines, builtins }: Cell): BodyFeatures => ({ wiki: "write", lessons: true, milestones: true, reflexes: true, routines, builtins: builtins ? ["move", "inventory"] : [] });
 
 describe("what each surface says is callable, in each combination of routines and built-ins", () => {
   for (const cell of CELLS) {

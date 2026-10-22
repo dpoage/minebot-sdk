@@ -2,5 +2,5 @@
 // layouts (src/ in the repository, dist/ in an installed package), so one relative step finds it.
 import { fileURLToPath } from "node:url";
 
-/** The package root: the directory with package.json, `src/kit/kits/` (the kit sources), and `wiki/`. */
+/** The package root: the directory with package.json, `src/routines/` (the built-in routine sources), and `wiki/`. */
 export const PACKAGE_ROOT = fileURLToPath(new URL("..", import.meta.url));

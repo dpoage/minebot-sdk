@@ -20,6 +20,6 @@ await bot.lookAt(target.position.offset(0, 0.2, 0), true);
 await bot.toss(itemId, null, count);
 ```
 
-<!-- kits -->
+<!-- builtins -->
 `kit.social.give({ player, item, count })` does this.
-<!-- /kits -->
+<!-- /builtins -->

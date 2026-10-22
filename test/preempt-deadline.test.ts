@@ -236,7 +236,6 @@ describe("a preemption aborts only the run that executes at the ask", () => {
         if (written) writes.push(written);
         if (message.kind === "run_finished") queueMicrotask(() => reporter.acknowledge(message.runId));
       },
-      kits: () => [],
       stop: () => {
         stops.push(sent.length);
         return runner.stop();
@@ -307,7 +306,7 @@ describe("a preemption aborts only the run that executes at the ask", () => {
 
   describe("stops the executing run after another run was refused", () => {
     const refusals = {
-      "by the runner, as busy (the body's /run and /kits/try)": (runner: InstanceType<typeof ProgramRunner>) => () => runner.call(async () => 2, { sourceDir: ROOT }),
+      "by the runner, as busy (the body's /run)": (runner: InstanceType<typeof ProgramRunner>) => () => runner.call(async () => 2, { sourceDir: ROOT }),
       "by a synchronous busy check before the runner (the body's trigger firing)": (runner: InstanceType<typeof ProgramRunner>) => () => {
         if (runner.running) throw new BusyError();
         return runner.call(async () => 2, { sourceDir: ROOT });
@@ -355,10 +354,8 @@ describe("the body's triggers", () => {
     auth: "offline" as const,
     host: "127.0.0.1",
     port: 1,
-    lockKits: false,
     wikiMode: "off" as const,
     milestonesEnabled: false,
-    agentKits: false,
     triggers: true,
     startedAt: "2026-01-01T00:00:00.000Z",
     deaths: 0,

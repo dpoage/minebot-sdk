@@ -30,6 +30,6 @@ Each trade has these fields: `inputItem1`, `inputItem2` (use it only when `hasIt
 
 Villagers are `e.name === "villager"`, and the wandering trader is `wandering_trader`. Find the nearest with `bot.nearestEntity((e) => e.name === "villager")`.
 
-<!-- kits -->
+<!-- builtins -->
 No kit action trades yet; use the code above.
-<!-- /kits -->
+<!-- /builtins -->

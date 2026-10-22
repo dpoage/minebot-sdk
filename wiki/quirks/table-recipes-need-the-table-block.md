@@ -24,6 +24,6 @@ const recipe = bot.recipesFor(bot.registry.itemsByName.wooden_pickaxe.id, null, 
 await bot.craft(recipe, 1, table);
 ```
 
-<!-- kits -->
+<!-- builtins -->
 `kit.craft` and `kit.make` (crafter kit) find, place, or craft a table when a recipe needs one.
-<!-- /kits -->
+<!-- /builtins -->

@@ -1,5 +1,5 @@
 // Furnaces: the state a furnace block holds between visits, and the window Mineflayer's
-// `openFurnace` hands out. Smelting runs on the harness clock, so a kit that waits (`sleep`)
+// `openFurnace` hands out. Smelting runs on the harness clock, so a routine that waits (`sleep`)
 // sees the output appear after the real 10 s per item, with real fuel burn times.
 import { EventEmitter } from "node:events";
 import type { Item } from "prismarine-item";

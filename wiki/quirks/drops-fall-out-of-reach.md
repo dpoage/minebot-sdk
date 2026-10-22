@@ -26,6 +26,6 @@ for (const e of Object.values(bot.entities)) {
 }
 ```
 
-<!-- kits -->
+<!-- builtins -->
 `await kit.gatherer.collectDrops()` does the same, and `kit.gatherer.gather` already picks up drops after each block.
-<!-- /kits -->
+<!-- /builtins -->

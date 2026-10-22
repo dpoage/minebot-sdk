@@ -23,6 +23,6 @@ await sleep(100);
 const seeds = bot.inventory.items().filter((i) => i.name === "wheat_seeds").reduce((n, i) => n + i.count, 0);
 ```
 
-<!-- kits -->
+<!-- builtins -->
 `kit.farm.harvest` waits before it computes `gained`.
-<!-- /kits -->
+<!-- /builtins -->

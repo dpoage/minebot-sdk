@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { type Item, type Vec3 } from "minebot-sdk/kit";
-import { createKitHarness, type KitHarness } from "minebot-sdk/testing";
+import { type Item, type Vec3 } from "minebot-sdk/routine";
+import { createHarness, type Harness } from "minebot-sdk/testing";
 import { burnTicks, fuelItemsFor, pickFuel, smeltInputs, smeltOutput, withoutReserved } from "../src/mc/smelting.ts";
 import { roomFor } from "../src/routines/container.ts";
 import * as crafter from "../src/routines/crafter.ts";
@@ -157,11 +157,11 @@ describe("armor", () => {
 
 /** A harness with a furnace at (1, 64, 3), within reach of the bot's start. */
 function smeltingHarness(inventory: Record<string, number>) {
-  return createKitHarness({ inventory, blocks: [{ name: "furnace", at: [1, 64, 3], properties: { lit: false } }] });
+  return createHarness({ inventory, blocks: [{ name: "furnace", at: [1, 64, 3], properties: { lit: false } }] });
 }
 
 /** The furnace.smelt calls the crafter made, in order. */
-function smelts(h: KitHarness): { item: string; count: number; at: unknown }[] {
+function smelts(h: Harness): { item: string; count: number; at: unknown }[] {
   return h.calls
     .filter((call) => call.kit === "furnace" && call.action === "smelt")
     .map(({ args }) => {
@@ -208,20 +208,20 @@ describe("crafter.make smelting", () => {
 
 describe("crafter.make crafting table", () => {
   it("pays for the table's planks before it makes the ingredients (a wooden pickaxe from 7 logs)", async () => {
-    const h = createKitHarness({ inventory: { oak_log: 7 } });
+    const h = createHarness({ inventory: { oak_log: 7 } });
     assert.equal(await h.run(crafter.make, { item: "wooden_pickaxe" }), 1);
     assert.equal(h.bot.findBlock({ matching: h.bot.registry.blocksByName.crafting_table!.id, maxDistance: 8 })?.name, "crafting_table");
     assert.equal(h.count("crafting_table"), 0);
   });
 
   it("makes the table from planks it already holds", async () => {
-    const h = createKitHarness({ inventory: { oak_planks: 9 } });
+    const h = createHarness({ inventory: { oak_planks: 9 } });
     assert.equal(await h.run(crafter.make, { item: "wooden_pickaxe" }), 1);
     assert.equal(h.bot.findBlock({ matching: h.bot.registry.blocksByName.crafting_table!.id, maxDistance: 8 })?.name, "crafting_table");
   });
 
   it("fails when the table and the pickaxe together need more logs than it holds", async () => {
-    const h = createKitHarness({ inventory: { oak_log: 1 } });
+    const h = createHarness({ inventory: { oak_log: 1 } });
     await assert.rejects(h.run(crafter.make, { item: "wooden_pickaxe" }), /cannot make 1 wooden_pickaxe/);
   });
 });

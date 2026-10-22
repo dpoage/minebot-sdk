@@ -7,13 +7,10 @@ import { CAPABILITIES, capabilities, CAPABILITY_GATES, programApiDoc, type BodyF
 import { wikiView } from "../src/wiki/access.ts";
 
 /** A body with every capability on: the baseline to switch one off. */
-const EVERYTHING: BodyFeatures = { kits: ["move", "gatherer"], kitsLocked: false, agentKits: true, wiki: "write", lessons: true, milestones: true, reflexes: true, routines: true, builtins: ["move", "gatherer"] };
+const EVERYTHING: BodyFeatures = { wiki: "write", lessons: true, milestones: true, reflexes: true, routines: true, builtins: ["move", "gatherer"] };
 
 /** Words an agent must not see when the capability is off. */
 const FORBIDDEN_WORDS: Record<Capability, RegExp> = {
-  kits: /\bkits?\b|\bkit\./i,
-  kitSwitching: /kits\.use|kits use|use_kits|swap the active kits/i,
-  agentKits: /kits\.save|kits\.remove|kits\.source|kits\.try|kits\.versions|kits\.revert|kit_save|kit_remove|kit_source|kit_try|kit_versions|kit_revert|kits save|kits rm|kits source|kits try|kits versions|kits revert|agent kits|agentKits|your own kit|save.*kit source/i,
   wiki: /\bwiki\b|\blessons?\b/i,
   lessons: /\blearned\b|add a lesson|wiki lesson|wiki_add_lesson|addLesson/i,
   milestones: /\bmilestones?\b|minebot milestones|body's milestones/i,
@@ -28,16 +25,6 @@ const FORBIDDEN_WORDS: Record<Capability, RegExp> = {
 function withOff(capability: Capability): BodyFeatures {
   const features = { ...EVERYTHING };
   switch (capability) {
-    case "kits":
-      features.kits = [];
-      features.kitsLocked = true;
-      break;
-    case "kitSwitching":
-      features.kitsLocked = true;
-      break;
-    case "agentKits":
-      features.agentKits = false;
-      break;
     case "wiki":
       features.wiki = "off";
       break;
@@ -67,9 +54,6 @@ function withOff(capability: Capability): BodyFeatures {
 describe("the capability table", () => {
   it("derives every capability from BodyFeatures through the gates", () => {
     assert.deepEqual(capabilities(EVERYTHING), {
-      kits: true,
-      kitSwitching: true,
-      agentKits: true,
       wiki: true,
       lessons: true,
       milestones: true,
@@ -78,7 +62,7 @@ describe("the capability table", () => {
       builtins: true,
       call: true,
     });
-    assert.deepEqual(CAPABILITIES, ["kits", "kitSwitching", "agentKits", "wiki", "lessons", "milestones", "reflexes", "routines", "builtins", "call"]);
+    assert.deepEqual(CAPABILITIES, ["wiki", "lessons", "milestones", "reflexes", "routines", "builtins", "call"]);
   });
 
   it("turns each capability off, alone, in every surface", () => {
@@ -96,7 +80,7 @@ describe("the capability table", () => {
       assert.doesNotMatch(usage, forbidden, `usageFor leaks ${capability}`);
 
       // The MCP tool plan, in both tool sets: the capability's tools are disabled, and no enabled tool leaks it.
-      // kit_docs, call_routine and bind_routine are the gated tools in the core set (test/mcp.test.ts checks the whole list).
+      // builtin_docs, call_routine and bind_routine are the gated tools in the core set (test/mcp.test.ts checks the whole list).
       const capsNow = capabilities(features);
       for (const toolSet of TOOL_SETS) {
         for (const [tool, entry] of Object.entries(toolPlan(features, toolSet))) {
@@ -108,7 +92,7 @@ describe("the capability table", () => {
 
       // The wiki's view of the body: the gated features map straight onto it.
       const view = wikiView(features);
-      if (capability === "kits" || capability === "milestones" || capability === "agentKits" || capability === "reflexes" || capability === "routines") {
+      if (capability === "builtins" || capability === "milestones" || capability === "reflexes" || capability === "routines") {
         assert.equal(view[capability], false, `wikiView leaks ${capability}`);
       }
     }
@@ -136,12 +120,13 @@ describe("the capability table", () => {
     for (const match of gated) {
       assert.ok(CAPABILITIES.includes(match[2] as Capability), `${match[1]} names unknown capability ${match[2]}`);
     }
-    assert.ok(gated.some((match) => match[1] === "/kits"), "kit routes are gated");
+    assert.ok(gated.some((match) => match[1] === "/routines"), "routine routes are gated");
+    assert.ok(!routes.some((match) => match[1]!.startsWith("/kits")), "no route of the kits is left");
     assert.ok(gated.some((match) => match[1]!.startsWith("/wiki/")), "wiki routes are gated");
     assert.ok(!routes.some((match) => match[1]!.startsWith("/triggers")), "no route of the code triggers is left");
     // The CLI's feature commands come from the same gates.
     const cli = readFileSync(new URL("../src/cli.ts", import.meta.url), "utf8");
-    assert.match(cli, /const FEATURE_COMMANDS: Record<string, \(features: BodyFeatures\) => boolean> = \{\s*kits: CAPABILITY_GATES\.kits,\s*wiki: CAPABILITY_GATES\.wiki,\s*milestones: CAPABILITY_GATES\.milestones,\s*routines: CAPABILITY_GATES\.routines,\s*bind: CAPABILITY_GATES\.routines,\s*unbind: CAPABILITY_GATES\.routines,\s*call: CAPABILITY_GATES\.call,\s*builtins: CAPABILITY_GATES\.builtins,\s*\};/);
+    assert.match(cli, /const FEATURE_COMMANDS: Record<string, \(features: BodyFeatures\) => boolean> = \{\s*wiki: CAPABILITY_GATES\.wiki,\s*milestones: CAPABILITY_GATES\.milestones,\s*routines: CAPABILITY_GATES\.routines,\s*bind: CAPABILITY_GATES\.routines,\s*unbind: CAPABILITY_GATES\.routines,\s*call: CAPABILITY_GATES\.call,\s*builtins: CAPABILITY_GATES\.builtins,\s*\};/);
   });
 
   it("describes reflexes in bind_routine exactly when the body offers reflexes, and the routine tools exactly when it offers routines", () => {
@@ -210,10 +195,8 @@ describe("the capability table", () => {
     assert.match(programApiDoc(EVERYTHING), /Routines: /);
     assert.doesNotMatch(programApiDoc(withOff("routines")), /Routines: /);
     const members = (features: BodyFeatures) => /ctx has exactly: ([^.]*)\./.exec(programApiDoc(features))?.[1];
-    assert.equal(members(EVERYTHING), "bot, log, sleep, signal, on, notes, status, kit, wiki");
-    assert.equal(members(withOff("kits")), "bot, log, sleep, signal, on, notes, status, wiki");
-    assert.equal(members(withOff("wiki")), "bot, log, sleep, signal, on, notes, status, kit");
-    assert.equal(members({ ...withOff("kits"), wiki: "off", lessons: false }), "bot, log, sleep, signal, on, notes, status");
+    assert.equal(members(EVERYTHING), "bot, log, sleep, signal, on, notes, status, wiki");
+    assert.equal(members(withOff("wiki")), "bot, log, sleep, signal, on, notes, status");
   });
 
   it("does not mention milestones anywhere a body without them looks", () => {
@@ -228,22 +211,12 @@ function capabilitiesOn(features: BodyFeatures): Capability[] {
 }
 
 /** The gated tools the core set serves: the rest of the gated tools are in the full set only. */
-const CORE_GATED_TOOLS = ["kit_docs", "builtin_docs", "call_routine", "bind_routine"];
+const CORE_GATED_TOOLS = ["builtin_docs", "call_routine", "bind_routine"];
 const ROUTINE_TOOLS = ["call_routine", "bind_routine", "list_routines", "routine_save", "routine_source", "routine_versions", "routine_revert", "unbind_routine"];
 
 /** The capability a capability-gated tool belongs to. */
 function capabilityOf(tool: string): Capability {
   const byTool: Record<string, Capability> = {
-    list_kits: "kits",
-    kit_docs: "kits",
-    kit_search: "kits",
-    use_kits: "kitSwitching",
-    kit_save: "agentKits",
-    kit_remove: "agentKits",
-    kit_source: "agentKits",
-    kit_try: "agentKits",
-    kit_versions: "agentKits",
-    kit_revert: "agentKits",
     wiki_search: "wiki",
     wiki_read: "wiki",
     wiki_list: "wiki",

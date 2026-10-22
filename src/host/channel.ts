@@ -43,8 +43,6 @@ export class HostEvents implements EventSink {
 export interface RunReporterOptions {
   /** Sends a message to the supervisor. `written` is called once the message is written to the channel, or could not be. */
   send: (message: FromHost, written?: () => void) => void;
-  /** The kits the body is running now. */
-  kits: () => string[];
   /** Aborts the running program; false when none runs. */
   stop: () => boolean;
   /** Whether the runner runs a program now (one whose code has started and not settled, its grace included). */
@@ -130,7 +128,6 @@ export class RunReporter implements RunRecorder {
         code: run.code,
         timeoutMs: run.timeoutMs ?? DEFAULT_TIMEOUT_MS,
         extra: run.extra ?? {},
-        kits: this.#options.kits(),
         ...(run.requestId !== undefined && { requestId: run.requestId }),
         ...(run.trigger && { trigger: run.trigger }),
       });
@@ -193,7 +190,7 @@ export class RunReporter implements RunRecorder {
 
   async register(code: string, extra: object): Promise<void> {
     const runId = this.#nextId++;
-    await this.#acked(runId, { kind: "register", runId, code, extra, kits: this.#options.kits() });
+    await this.#acked(runId, { kind: "register", runId, code, extra });
   }
 
   /** Resolves once every reported run has reported its end. */

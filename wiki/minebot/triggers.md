@@ -27,9 +27,9 @@ In programs: `await triggers.add({ name: "eat", on: ["low_food"], run: "...progr
 A reflex is a trigger whose code is a saved routine: `minebot bind reflex <name> <routine> --on <types>` binds it, and the body calls the routine as `(ctx, { event })`. It has the fields and the rules of a trigger. See `minebot/routines`.
 <!-- /routines -->
 
-<!-- kits -->
+<!-- builtins -->
 The program may call kit actions, for example `await kit.survival.eat()` instead of the code above.
-<!-- /kits -->
+<!-- /builtins -->
 
 ## What a trigger has
 

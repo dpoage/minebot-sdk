@@ -1,5 +1,5 @@
 // The player's inventory with Mineflayer's slot layout: armor at 5-8, the main grid at 9-35, the
-// hotbar at 36-44, the off hand at 45. Kits read `slots`, `items()`, and the held item.
+// hotbar at 36-44, the off hand at 45. Routines read `slots`, `items()`, and the held item.
 import type { Item } from "prismarine-item";
 import type { ItemClass, Registry } from "./universe.ts";
 
@@ -107,7 +107,7 @@ export class Inventory {
     return count - left;
   }
 
-  /** Totals by item name, as kits report them. */
+  /** Totals by item name, as routines report them. */
   totals(): Record<string, number> {
     const totals: Record<string, number> = {};
     for (const item of this.items()) totals[item.name] = (totals[item.name] ?? 0) + item.count;
