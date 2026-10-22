@@ -4,15 +4,16 @@ import { EventEmitter } from "node:events";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, it } from "node:test";
+import type { RoutineContext } from "minebot-sdk/routine";
 import type { Bot } from "mineflayer";
 import { Vec3 } from "vec3";
 import { EventLog } from "../src/body/events.ts";
 import { brief } from "../src/host/observation.ts";
 import { watchGame } from "../src/host/watch.ts";
-import { explorer, type Place } from "../src/kit/kits/explorer.ts";
-import type { KitContext } from "../src/kit/kit.ts";
 import { activeEffects, trackEffects } from "../src/mc/effects.ts";
 import type { Observation } from "../src/protocol/index.ts";
+import * as explorer from "../src/routines/explorer.ts";
+import type { Place } from "../src/routines/explorer.ts";
 import { JsonStore } from "../src/store.ts";
 
 type Connected = Extract<Observation, { connected: true }>;
@@ -183,18 +184,19 @@ describe("watchGame", () => {
 describe("explorer places", () => {
   const scratch = () => new JsonStore(path.join(mkdtempSync(path.join(tmpdir(), "minebot-places-")), "explorer.json"));
   const at = new Vec3(100, 64, 0);
-  type ExplorerContext = Parameters<typeof explorer.actions.scan.invoke>[0];
+  /** A context whose `explorer` namespace is `store` and whose other namespaces are empty. */
   const contextOf = (store: JsonStore, dimension = "minecraft:overworld") =>
-    ({ store, bot: { entity: { position: at }, game: { dimension } } }) as unknown as ExplorerContext;
-  const call = (ctx: ExplorerContext, name: keyof typeof explorer.actions, args: unknown = {}) => explorer.actions[name].invoke(ctx, args, `explorer.${name}`);
+    ({ store: (namespace: string) => (namespace === "explorer" ? store : JsonStore.memory()), bot: { entity: { position: at }, game: { dimension } } }) as unknown as RoutineContext;
+  const call = (ctx: RoutineContext, name: "places" | "waypoints" | "remember", args: unknown = {}): Promise<unknown> =>
+    (explorer[name] as (ctx: RoutineContext, args: unknown) => Promise<unknown>)(ctx, args);
 
-  it("converts stored waypoints into places once, and keeps waypoints and travel working on them", () => {
+  it("converts stored waypoints into places once, and keeps waypoints and travel working on them", async () => {
     const store = scratch();
     store.set("waypoints", { home: { x: 5, y: 70, z: 6, dimension: "minecraft:overworld" } });
     const ctx = contextOf(store);
-    assert.deepEqual(call(ctx, "waypoints"), { home: { x: 5, y: 70, z: 6, dimension: "minecraft:overworld" } });
+    assert.deepEqual(await call(ctx, "waypoints"), { home: { x: 5, y: 70, z: 6, dimension: "minecraft:overworld" } });
     assert.equal(store.get("waypoints"), undefined);
-    const [home] = call(ctx, "places") as Place[];
+    const [home] = (await call(ctx, "places")) as Place[];
     assert.deepEqual({ ...home, updatedAt: "" }, {
       name: "home",
       kind: "other",
@@ -207,30 +209,30 @@ describe("explorer places", () => {
     });
   });
 
-  it("remembers typed places across a reload, merges a repeated name, and lists them nearest first", () => {
+  it("remembers typed places across a reload, merges a repeated name, and lists them nearest first", async () => {
     const file = path.join(mkdtempSync(path.join(tmpdir(), "minebot-places-")), "explorer.json");
     const ctx = contextOf(new JsonStore(file));
-    call(ctx, "remember", { name: "far chest", at: [400, 64, 0], kind: "chest", tags: ["food"], contents: { bread: 5 } });
-    call(ctx, "remember", { name: "near chest", at: [110, 64, 0], kind: "chest", note: "tools" });
-    call(ctx, "remember", { name: "bed", at: [90, 64, 0], kind: "bed" });
-    call(ctx, "remember", { name: "far chest", at: [400, 64, 0], note: "more bread" });
+    await call(ctx, "remember", { name: "far chest", at: [400, 64, 0], kind: "chest", tags: ["food"], contents: { bread: 5 } });
+    await call(ctx, "remember", { name: "near chest", at: [110, 64, 0], kind: "chest", note: "tools" });
+    await call(ctx, "remember", { name: "bed", at: [90, 64, 0], kind: "bed" });
+    await call(ctx, "remember", { name: "far chest", at: [400, 64, 0], note: "more bread" });
     const reloaded = contextOf(new JsonStore(file));
-    const chests = call(reloaded, "places", { kind: "chest" }) as (Place & { distance?: number })[];
+    const chests = (await call(reloaded, "places", { kind: "chest" })) as (Place & { distance?: number })[];
     assert.deepEqual(chests.map((p) => [p.name, p.distance]), [["near chest", 10], ["far chest", 300]]);
     assert.deepEqual(chests[1]?.tags, ["food"]);
     assert.deepEqual(chests[1]?.contents, { bread: 5 });
     assert.equal(chests[1]?.note, "more bread");
-    assert.deepEqual(call(reloaded, "places", { kind: "chest", radius: 50 }), [chests[0]]);
-    assert.deepEqual(call(reloaded, "places", { near: [400, 64, 0], limit: 1 }), [{ ...chests[1], distance: 0 }]);
+    assert.deepEqual(await call(reloaded, "places", { kind: "chest", radius: 50 }), [chests[0]]);
+    assert.deepEqual(await call(reloaded, "places", { near: [400, 64, 0], limit: 1 }), [{ ...chests[1], distance: 0 }]);
   });
 
-  it("lists places of another dimension last, without a distance, and never within a radius", () => {
+  it("lists places of another dimension last, without a distance, and never within a radius", async () => {
     const store = scratch();
-    call(contextOf(store, "minecraft:the_nether"), "remember", { name: "portal", kind: "portal" });
-    call(contextOf(store), "remember", { name: "base", kind: "base" });
+    await call(contextOf(store, "minecraft:the_nether"), "remember", { name: "portal", kind: "portal" });
+    await call(contextOf(store), "remember", { name: "base", kind: "base" });
     const ctx = contextOf(store);
-    const all = call(ctx, "places") as (Place & { distance?: number })[];
+    const all = (await call(ctx, "places")) as (Place & { distance?: number })[];
     assert.deepEqual(all.map((p) => [p.name, p.distance]), [["base", 0], ["portal", undefined]]);
-    assert.deepEqual((call(ctx, "places", { radius: 1000 }) as Place[]).map((p) => p.name), ["base"]);
+    assert.deepEqual(((await call(ctx, "places", { radius: 1000 })) as Place[]).map((p) => p.name), ["base"]);
   });
 });

@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { Vec3 } from "vec3";
-import { BUILTIN_KITS } from "../src/kit/index.ts";
-import { faceIndex, isSource } from "../src/kit/kits/bucket.ts";
-import { attackCooldownMs, bestWeapon, weaponScore } from "../src/kit/kits/combat.ts";
-import { breedingFoods, closestPair, cropOf, isBaby, isRipe, seedItem } from "../src/kit/kits/farm.ts";
 import { isHostile } from "../src/mc/hostile.ts";
+import { faceIndex, isSource } from "../src/routines/bucket.ts";
+import { attackCooldownMs, bestWeapon, weaponScore } from "../src/routines/combat.ts";
+import { breedingFoods, closestPair, cropOf, isBaby, isRipe, seedItem } from "../src/routines/farm.ts";
+import { BUILTIN_MODULES } from "../src/routines/index.ts";
 
 describe("combat", () => {
   it("ranks swords above axes, and each by damage", () => {
@@ -96,10 +96,10 @@ describe("bucket", () => {
 
 describe("combat, farm, and bucket kits", () => {
   it("ship as primitives with the documented actions", () => {
-    const actions = (kit: string) => Object.keys(BUILTIN_KITS.find((k) => k.name === kit)!.actions);
+    const actions = (kit: string) => Object.keys(BUILTIN_MODULES.find((m) => m.name === kit)!.routines);
     assert.deepEqual(actions("combat"), ["attack", "fight", "retreat"]);
     assert.deepEqual(actions("farm"), ["till", "plant", "harvest", "breed"]);
     assert.deepEqual(actions("bucket"), ["fill", "empty"]);
-    for (const name of ["combat", "farm", "bucket"]) assert.deepEqual(BUILTIN_KITS.find((k) => k.name === name)!.uses, []);
+    for (const name of ["combat", "farm", "bucket"]) assert.deepEqual(BUILTIN_MODULES.find((m) => m.name === name)!.uses, []);
   });
 });

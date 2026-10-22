@@ -6,6 +6,18 @@ import { createKitHarness, UnsupportedApiError } from "minebot-sdk/testing";
 import { Notes } from "../src/notes.ts";
 import { ProgramRunner } from "../src/program/runner.ts";
 import { invokeRoutine } from "../src/routine/invoke.ts";
+import * as combat from "../src/routines/combat.ts";
+import * as craft from "../src/routines/craft.ts";
+import * as crafter from "../src/routines/crafter.ts";
+import * as dig from "../src/routines/dig.ts";
+import * as furnace from "../src/routines/furnace.ts";
+import * as gatherer from "../src/routines/gatherer.ts";
+import * as inventory from "../src/routines/inventory.ts";
+import * as items from "../src/routines/items.ts";
+import * as move from "../src/routines/move.ts";
+import * as place from "../src/routines/place.ts";
+import * as sense from "../src/routines/sense.ts";
+import * as survival from "../src/routines/survival.ts";
 import { JsonStore } from "../src/store.ts";
 
 /** A kit whose actions reach for Mineflayer APIs the harness does not implement. */
@@ -30,7 +42,7 @@ const brawler = defineKit(
 describe("minebot-sdk/testing crafting and gathering", () => {
   it("crafts a wooden pickaxe from 7 logs: the table's planks come first, and the table gets placed", async () => {
     const h = createKitHarness({ inventory: { oak_log: 7 } });
-    assert.equal(await h.kit.crafter.make({ item: "wooden_pickaxe" }), 1);
+    assert.equal(await h.run(crafter.make, { item: "wooden_pickaxe" }), 1);
     assert.equal(h.count("wooden_pickaxe"), 1);
     assert.equal(h.count("crafting_table"), 0);
     const table = h.bot.findBlock({ matching: h.bot.registry.blocksByName.crafting_table!.id, maxDistance: 8 });
@@ -39,12 +51,12 @@ describe("minebot-sdk/testing crafting and gathering", () => {
 
   it("refuses to craft at a table that is not there", async () => {
     const h = createKitHarness({ inventory: { oak_planks: 4, stick: 2 } });
-    await assert.rejects(h.call("craft.craft", { item: "wooden_pickaxe" }), /needs a crafting table within 4 blocks/);
+    await assert.rejects(h.run(craft.craft, { item: "wooden_pickaxe" }), /needs a crafting table within 4 blocks/);
   });
 
   it("gathers logs by walking to them, digging them, and picking up the drops", async () => {
     const h = createKitHarness({ blocks: [{ name: "oak_log", from: [8, 64, 0], to: [8, 67, 0] }] });
-    const result = await h.call<{ dug: number; gained: Record<string, number>; skipped: number }>("gatherer.gather", { blocks: "*_log", count: 2 });
+    const result = await h.run(gatherer.gather, { blocks: "*_log", count: 2 });
     assert.deepEqual(result, { dug: 2, gained: { oak_log: 2 }, skipped: 0 });
     assert.equal(h.count("oak_log"), 2);
     assert.equal(h.blockAt([8, 64, 0]).name, "air");
@@ -55,9 +67,9 @@ describe("minebot-sdk/testing crafting and gathering", () => {
   it("gathers stone only with a pickaxe, and the tool is chosen from the inventory", async () => {
     const blocks = [{ name: "stone", at: [3, 64, 0] as const }];
     const bare = createKitHarness({ blocks });
-    await assert.rejects(bare.call("gatherer.gather", { blocks: "stone", count: 1 }), /needs one of: .*wooden_pickaxe/);
+    await assert.rejects(bare.run(gatherer.gather, { blocks: "stone", count: 1 }), /needs one of: .*wooden_pickaxe/);
     const tooled = createKitHarness({ blocks, inventory: { wooden_pickaxe: 1 } });
-    const result = await tooled.call<{ dug: number }>("gatherer.gather", { blocks: "stone", count: 1 });
+    const result = await tooled.run(gatherer.gather, { blocks: "stone", count: 1 });
     assert.equal(result.dug, 1);
     assert.equal(tooled.count("cobblestone"), 1);
     assert.equal(tooled.bot.heldItem?.name, "wooden_pickaxe");
@@ -65,56 +77,56 @@ describe("minebot-sdk/testing crafting and gathering", () => {
 
   it("fails a gather when nothing matches in reach, naming the pattern", async () => {
     const h = createKitHarness();
-    await assert.rejects(h.call("gatherer.gather", { blocks: "*_log", count: 1, radius: 16 }), /no reachable "\*_log" within 16 blocks/);
+    await assert.rejects(h.run(gatherer.gather, { blocks: "*_log", count: 1, radius: 16 }), /no reachable "\*_log" within 16 blocks/);
   });
 });
 
 describe("minebot-sdk/testing world and inventory", () => {
   it("digs, drops, and places: the placed block spends the held item and takes the dug block's place", async () => {
     const h = createKitHarness({ blocks: [{ name: "dirt", at: [1, 64, 0] }], inventory: { cobblestone: 2 } });
-    await h.call("dig.dig", { at: [1, 64, 0] });
+    await h.run(dig.dig, { at: [1, 64, 0] });
     assert.equal(h.blockAt([1, 64, 0]).name, "air");
     assert.equal(h.count("dirt"), 1, "the bot stands within pickup range of the drop");
-    assert.equal(await h.call("place.place", { at: [1, 64, 0], item: "cobblestone" }), true);
+    assert.equal(await h.run(place.place, { at: [1, 64, 0], item: "cobblestone" }), true);
     assert.equal(h.blockAt([1, 64, 0]).name, "cobblestone");
     assert.equal(h.count("cobblestone"), 1);
-    assert.equal(await h.call("place.place", { at: [1, 64, 0], item: "cobblestone" }), false);
+    assert.equal(await h.run(place.place, { at: [1, 64, 0], item: "cobblestone" }), false);
   });
 
   it("limits digging to the player's reach", async () => {
     const h = createKitHarness({ blocks: [{ name: "dirt", at: [9, 64, 0] }] });
-    await assert.rejects(h.call("dig.dig", { at: [9, 64, 0] }), /dirt at .* is out of reach/);
+    await assert.rejects(h.run(dig.dig, { at: [9, 64, 0] }), /dirt at .* is out of reach/);
   });
 
   it("finds blocks nearest first and walks within range of a position", async () => {
     const h = createKitHarness({ blocks: [{ name: "coal_ore", at: [10, 64, 0] }, { name: "coal_ore", at: [3, 64, 3] }] });
-    assert.deepEqual(await h.call("sense.find", { blocks: "coal_ore" }), [{ x: 3, y: 64, z: 3 }, { x: 10, y: 64, z: 0 }]);
-    const stood = await h.call<{ x: number; y: number; z: number }>("move.to", { position: [10, 64, 0], range: 2 });
+    assert.deepEqual(await h.run(sense.find, { blocks: "coal_ore" }), [{ x: 3, y: 64, z: 3 }, { x: 10, y: 64, z: 0 }]);
+    const stood = await h.run(move.to, { position: [10, 64, 0], range: 2 });
     assert.ok(Math.hypot(stood.x - 10, stood.z) <= 2);
     assert.equal(stood.y, 64);
   });
 
   it("holds, wears, and tosses items", async () => {
     const h = createKitHarness({ inventory: { stick: 3, iron_helmet: 1, diamond_helmet: 1 }, equipment: { head: "iron_helmet" } });
-    assert.deepEqual(await h.call("survival.armor"), { equipped: { head: "diamond_helmet" }, wearing: { head: "diamond_helmet", torso: null, legs: null, feet: null } });
+    assert.deepEqual(await h.run(survival.armor), { equipped: { head: "diamond_helmet" }, wearing: { head: "diamond_helmet", torso: null, legs: null, feet: null } });
     assert.equal(h.inventory.iron_helmet, 1, "the displaced helmet is back in the inventory");
-    await h.call("inventory.equip", { item: "stick" });
+    await h.run(inventory.equip, { item: "stick" });
     assert.equal(h.bot.heldItem?.name, "stick");
-    await h.call("inventory.toss", { item: "stick", count: 2 });
+    await h.run(inventory.toss, { item: "stick", count: 2 });
     assert.equal(h.count("stick"), 1);
     assert.equal(h.entities.filter((e) => e.name === "item").length, 1);
   });
 
   it("reports recipes from the real registry, and drops lying on the ground", async () => {
     const h = createKitHarness({ entities: [{ name: "item", item: "stick", at: [2.5, 64, 0.5] }] });
-    const [recipe] = await h.call<{ makes: number; ingredients: Record<string, number> }[]>("items.recipes", { item: "stick" });
+    const [recipe] = await h.run(items.recipes, { item: "stick" });
     assert.equal(recipe?.makes, 4);
-    assert.deepEqual(await h.call("items.drops", { radius: 4 }), [{ x: 2, y: 64, z: 0 }]);
+    assert.deepEqual(await h.run(items.drops, { radius: 4 }), [{ x: 2, y: 64, z: 0 }]);
   });
 
   it("cooks at a furnace on the clock: fuel burns for its real time and the output appears", async () => {
     const h = createKitHarness({ blocks: [{ name: "furnace", at: [1, 64, 0], properties: { lit: false } }], inventory: { raw_iron: 2, coal: 1 } });
-    const smelted = await h.call<{ output: string; count: number; fuel: Record<string, number> }>("furnace.smelt", { item: "raw_iron", count: 2 });
+    const smelted = await h.run(furnace.smelt, { item: "raw_iron", count: 2 });
     assert.deepEqual({ output: smelted.output, count: smelted.count, fuel: smelted.fuel }, { output: "iron_ingot", count: 2, fuel: { coal: 1 } });
     assert.equal(h.count("iron_ingot"), 2);
     assert.equal(h.count("raw_iron"), 0);
@@ -229,7 +241,7 @@ describe("minebot-sdk/testing matches Mineflayer where kits can tell", () => {
 
   it("finds a stand spot beyond 12 blocks for a GoalInvert, so combat.retreat works at any distance", async () => {
     const h = createKitHarness();
-    const far = await h.call<{ position: { x: number; z: number }; distance: number }>("combat.retreat", { from: [0, 64, 0], distance: 20 });
+    const far = await h.run(combat.retreat, { from: [0, 64, 0], distance: 20 });
     assert.ok(far.distance > 20, `stopped ${far.distance} blocks away`);
     assert.ok(Math.hypot(h.position.x, h.position.z) > 20);
   });
@@ -326,10 +338,10 @@ describe("minebot-sdk/testing matches Mineflayer where kits can tell", () => {
 
   it("refuses to place a block into the bot's own cell, and the place kit steps out first", async () => {
     const h = createKitHarness({ inventory: { cobblestone: 2 } });
-    await h.call("inventory.equip", { item: "cobblestone" });
+    await h.run(inventory.equip, { item: "cobblestone" });
     await assert.rejects(h.bot.placeBlock(h.blockAt([0, 63, 0]), new Vec3(0, 1, 0)), /cannot place cobblestone at .*stands there/);
     assert.equal(h.blockAt([0, 64, 0]).name, "air");
-    assert.equal(await h.call("place.place", { at: [0, 64, 0], item: "cobblestone" }), true);
+    assert.equal(await h.run(place.place, { at: [0, 64, 0], item: "cobblestone" }), true);
     assert.equal(h.blockAt([0, 64, 0]).name, "cobblestone");
     assert.ok(!h.position.floored().equals(new Vec3(0, 64, 0)));
   });

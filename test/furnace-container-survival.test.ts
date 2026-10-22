@@ -2,9 +2,10 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { type Item, type Vec3 } from "minebot-sdk/kit";
 import { createKitHarness, type KitHarness } from "minebot-sdk/testing";
-import { roomFor } from "../src/kit/kits/container.ts";
-import { armorSlotOf, armorTier, canSleep, chooseFood } from "../src/kit/kits/survival.ts";
 import { burnTicks, fuelItemsFor, pickFuel, smeltInputs, smeltOutput, withoutReserved } from "../src/mc/smelting.ts";
+import { roomFor } from "../src/routines/container.ts";
+import * as crafter from "../src/routines/crafter.ts";
+import { armorSlotOf, armorTier, canSleep, chooseFood } from "../src/routines/survival.ts";
 
 describe("smelting table", () => {
   it("maps inputs to furnace outputs", () => {
@@ -172,7 +173,7 @@ function smelts(h: KitHarness): { item: string; count: number; at: unknown }[] {
 describe("crafter.make smelting", () => {
   it("smelts a furnace output from the inputs the inventory holds", async () => {
     const h = smeltingHarness({ raw_iron: 2, iron_ore: 1, coal: 1 });
-    assert.equal(await h.kit.crafter.make({ item: "iron_ingot", count: 3 }), 3);
+    assert.equal(await h.run(crafter.make, { item: "iron_ingot", count: 3 }), 3);
     assert.deepEqual(smelts(h), [
       { item: "raw_iron", count: 2, at: { x: 1, y: 64, z: 3 } },
       { item: "iron_ore", count: 1, at: { x: 1, y: 64, z: 3 } },
@@ -182,25 +183,25 @@ describe("crafter.make smelting", () => {
 
   it("smelts only what is missing", async () => {
     const h = smeltingHarness({ raw_iron: 5, iron_ingot: 1, coal: 1 });
-    assert.equal(await h.kit.crafter.make({ item: "iron_ingot", count: 3 }), 3);
+    assert.equal(await h.run(crafter.make, { item: "iron_ingot", count: 3 }), 3);
     assert.deepEqual(smelts(h).map((s) => s.count), [2]);
     assert.equal(h.count("raw_iron"), 3);
   });
 
   it("names the inputs to gather when the inventory holds none", async () => {
     const h = smeltingHarness({});
-    await assert.rejects(h.kit.crafter.make({ item: "iron_ingot" }), /a furnace makes it from (?=.*\braw_iron\b)(?=.*\biron_ore\b).*, which the inventory lacks/);
+    await assert.rejects(h.run(crafter.make, { item: "iron_ingot" }), /a furnace makes it from (?=.*\braw_iron\b)(?=.*\biron_ore\b).*, which the inventory lacks/);
     assert.deepEqual(smelts(h), []);
   });
 
   it("reports an item that nothing makes as one to gather", async () => {
     const h = smeltingHarness({});
-    await assert.rejects(h.kit.crafter.make({ item: "cobblestone" }), /which cannot be crafted; gather it/);
+    await assert.rejects(h.run(crafter.make, { item: "cobblestone" }), /which cannot be crafted; gather it/);
   });
 
   it("names the inputs to gather for an item only a furnace makes, when the inventory holds none", async () => {
     const h = smeltingHarness({});
-    await assert.rejects(h.kit.crafter.make({ item: "glass" }), /need 1 more glass, which a furnace makes from .*\bsand\b.*the inventory holds none of them, gather some/);
+    await assert.rejects(h.run(crafter.make, { item: "glass" }), /need 1 more glass, which a furnace makes from .*\bsand\b.*the inventory holds none of them, gather some/);
     assert.deepEqual(smelts(h), []);
   });
 });
@@ -208,19 +209,19 @@ describe("crafter.make smelting", () => {
 describe("crafter.make crafting table", () => {
   it("pays for the table's planks before it makes the ingredients (a wooden pickaxe from 7 logs)", async () => {
     const h = createKitHarness({ inventory: { oak_log: 7 } });
-    assert.equal(await h.kit.crafter.make({ item: "wooden_pickaxe" }), 1);
+    assert.equal(await h.run(crafter.make, { item: "wooden_pickaxe" }), 1);
     assert.equal(h.bot.findBlock({ matching: h.bot.registry.blocksByName.crafting_table!.id, maxDistance: 8 })?.name, "crafting_table");
     assert.equal(h.count("crafting_table"), 0);
   });
 
   it("makes the table from planks it already holds", async () => {
     const h = createKitHarness({ inventory: { oak_planks: 9 } });
-    assert.equal(await h.kit.crafter.make({ item: "wooden_pickaxe" }), 1);
+    assert.equal(await h.run(crafter.make, { item: "wooden_pickaxe" }), 1);
     assert.equal(h.bot.findBlock({ matching: h.bot.registry.blocksByName.crafting_table!.id, maxDistance: 8 })?.name, "crafting_table");
   });
 
   it("fails when the table and the pickaxe together need more logs than it holds", async () => {
     const h = createKitHarness({ inventory: { oak_log: 1 } });
-    await assert.rejects(h.kit.crafter.make({ item: "wooden_pickaxe" }), /cannot make 1 wooden_pickaxe/);
+    await assert.rejects(h.run(crafter.make, { item: "wooden_pickaxe" }), /cannot make 1 wooden_pickaxe/);
   });
 });
