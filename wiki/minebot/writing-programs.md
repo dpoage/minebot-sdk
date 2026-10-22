@@ -18,3 +18,7 @@ A program is the body of an async function that runs against the live bot. These
 <!-- kits -->
 When kits are active, prefer a kit action over raw Mineflayer code: `await kit.gatherer.gather({ blocks: "*_log", count: 4 })`. Run `minebot kits docs` for the full list with argument types.
 <!-- /kits -->
+
+<!-- routines -->
+When you run the same code again and again, or it needs `import`, save it as a routine and call it by name. See `minebot/routines`.
+<!-- /routines -->

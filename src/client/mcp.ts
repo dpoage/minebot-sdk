@@ -134,17 +134,19 @@ export function toolPlan(features: BodyFeatures, toolSet: ToolSet): Record<strin
     bind_routine: {
       enabled: caps.routines,
       description: caps.triggers
-        ? "Bind a name to a saved routine (a TypeScript module in this body's routine library). kind \"action\": call_routine runs it by name with JSON args. kind \"reflex\": the body calls the routine on its own whenever an event of the types in `on` arrives (hurt, chat, night, ...), with the same filters as a trigger (when, from, match, cooldown_ms, timeout_ms, preempt, priority, enabled); a reflex that fails 3 times in a row disables itself. Pass `source` to save the module as <routine>.ts and bind it in one call; a refused bind leaves the saved module. Bindings are kept on the body and survive restarts."
+        ? "Bind a name to a saved routine (a TypeScript module in this body's routine library). kind \"action\": call_routine runs it by name with JSON args. kind \"reflex\": the body calls the routine on its own whenever an event of the types in `on` arrives (hurt, chat, night, ...), with the same filters as a trigger (when, from, match, cooldown_ms, timeout_ms, preempt, priority, enabled); the routine is called as (ctx, { event }) with event { seq, type, time, data }. A reflex that fails 3 times in a row disables itself; bind it again to enable it. Pass `source` to save the module as <routine>.ts and bind it in one call; a refused bind leaves the saved module. Bindings are kept on the body and survive restarts."
         : "Bind a name to a saved routine (a TypeScript module in this body's routine library) as an action: call_routine runs it by name with JSON args. Pass `source` to save the module as <routine>.ts and bind it in one call; a refused bind leaves the saved module. Bindings are kept on the body and survive restarts.",
     },
     list_routines: {
       enabled: caps.routines,
-      description: "The saved routines with their versions, and the names bound to them: actions, and reflexes with how often each ran since the body started and how the last run ended.",
+      description: caps.triggers
+        ? "The saved routines with their versions, and the names bound to them: actions, and reflexes with how often each ran since the body started and how the last run ended."
+        : "The saved routines with their versions, and the names bound to them as actions.",
     },
     routine_save: {
       enabled: caps.routines,
       description:
-        "Save a routine: a TypeScript module whose default export is a function (ctx, args) => result, usually `export default defineRoutine({ description?, args?, returns? }, async (ctx, args) => result)` with `import { defineRoutine, z } from \"minebot-sdk/routine\"`. It may import Node built-ins, the packages this body ships, and other saved routines (`./helper.ts`). The answer includes the type check of the source, which does not stop the save; fix the errors and save again. Saving over a routine keeps the old source (routine_versions). Bind it with bind_routine to call it.",
+        "Save a routine: a TypeScript module whose default export is a function (ctx, args) => result, usually `export default defineRoutine({ description?, args?, returns? }, async (ctx, args) => result)` with `import { defineRoutine, z } from \"minebot-sdk/routine\"`. Use `import`; `require` does not work. It may import Node built-ins, the packages this body ships (mineflayer, mineflayer-pathfinder, vec3, minecraft-data, prismarine-*, zod), `minebot-sdk/<subpath>` (bare `minebot-sdk` does not resolve), and other saved routines by file name (`./helper.ts`; save the imported routine first). The answer includes the type check of the source, which does not stop the save; fix the errors and save again. Saving over a routine keeps the old source (routine_versions). Bind it with bind_routine to call it.",
     },
     routine_source: {
       enabled: caps.routines,
@@ -160,7 +162,7 @@ export function toolPlan(features: BodyFeatures, toolSet: ToolSet): Record<strin
     },
     unbind_routine: {
       enabled: caps.routines,
-      description: "Remove a binding: the action stops being callable, or the reflex stops firing. The saved routine stays.",
+      description: caps.triggers ? "Remove a binding: the action stops being callable, or the reflex stops firing. The saved routine stays." : "Remove a binding: the action stops being callable. The saved routine stays.",
     },
   };
   for (const [name, entry] of Object.entries(plan)) entry.enabled &&= toolSet === "full" || Object.hasOwn(CORE_TOOLS, name);
@@ -420,7 +422,7 @@ export async function serveMcp(bodyName: string, toolSet: ToolSet): Promise<void
       inputSchema: {
         name: TriggerName,
         on: TriggerInput.shape.on.describe("Event types that fire it, e.g. ['hurt'] or ['chat']; any of them matches."),
-        run: TriggerInput.shape.run.describe("Program source: the body of an async function, with `event` ({ seq, type, data }) in scope."),
+        run: TriggerInput.shape.run.describe("Program source: the body of an async function, with `event` ({ seq, type, time, data }) in scope."),
         when: TriggerInput.shape.when.describe("JavaScript expression over `event` and `bot` that must be truthy, e.g. event.data.health < 8."),
         from: TriggerInput.shape.from.describe("Only chat or whisper events sent by this player."),
         match: TriggerInput.shape.match.describe("Case-insensitive regular expression over chat, whisper, and system messages."),

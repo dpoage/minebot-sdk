@@ -70,11 +70,11 @@ export const OPERATOR_FLAG_HELP = [
   "          --wiki <off|read|write> (default read; write lets the agent add lessons),",
   "          --wiki-dir <dir> (curated pages; default the repository's wiki/),",
   `          --lessons <dir> (default ${path.join(RUNTIME_DIR, "lessons")}),`,
-  `          --state <dir> (notes, milestones, triggers, kit stores, agent kits; default ${path.join(RUNTIME_DIR, "state", "<bot>")}),`,
+  `          --state <dir> (notes, milestones, triggers, bindings, kit stores, agent kits, routines; default ${path.join(RUNTIME_DIR, "state", "<bot>")}),`,
   "          --milestones <file> (milestones JSON; replaces the stored set),",
   "          --no-milestones (no milestones: the agent cannot read, set, or grade them),",
   "          --no-triggers (the agent cannot register triggers: programs that run when an event arrives),",
-  "          --no-routines (no routines: the agent cannot save, bind, or call modules), --routines <dir> (default <state>/routines),",
+  "          --no-routines (no routines: the agent cannot save, bind, or call modules), --routines <dir> (default <state>/routines; \"\" turns routines off),",
 ];
 
 /** Parses and validates raw flag values (already through parseArgs) into a body command. */

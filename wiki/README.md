@@ -44,14 +44,14 @@ Body in markdown.
 | `mc_version` | no | The Minecraft version on which someone confirmed the page. Leave it out for general knowledge that nobody has checked in game. |
 | `verified_by` | yes | How the page was confirmed: a check program, a test, or a dated observation. |
 | `check` | no | A program in `checks/` that succeeds while the page is true. |
-| `requires` | no | Features a body needs for the page to make sense: `kits`, `milestones`, `agentKits`, `triggers`. Bodies without one do not see the page. |
+| `requires` | no | Features a body needs for the page to make sense: `kits`, `milestones`, `agentKits`, `triggers`, `routines`. Bodies without one do not see the page. |
 
 ## Features
 
-A body can lack kits, milestones, agent kits, or triggers. An agent must not read about a feature its body does not have, so the body hides that content:
+A body can lack kits, milestones, agent kits, triggers, or routines. An agent must not read about a feature its body does not have, so the body hides that content:
 
 - A page that needs a feature declares it in the frontmatter: `requires: [kits]`. Bodies without kits do not list, search, or read the page.
-- A block of a page that needs a feature goes between marker lines, `<!-- kits -->` and `<!-- /kits -->` (or `milestones`, `agentKits`, `triggers`). Bodies without the feature do not see the block, neither in the page nor in search results. Bodies with it see the text without the markers. Blocks do not nest.
+- A block of a page that needs a feature goes between marker lines, `<!-- kits -->` and `<!-- /kits -->` (or `milestones`, `agentKits`, `triggers`, `routines`). Bodies without the feature do not see the block, neither in the page nor in search results. Bodies with it see the text without the markers. Blocks do not nest.
 - Everything outside the markers, and the title, the tags, and `verified_by`, must read well on a body without any of these features. A test (`test/wiki.test.ts`) fails when a page mentions kits or milestones there.
 
 Write each page for Mineflayer first, and put kit shortcuts in a `<!-- kits -->` block after it. The feature names come from one enum (`WikiFeature` in `src/protocol/schemas.ts`); the cut markers accept exactly those names.
