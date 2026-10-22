@@ -8,7 +8,7 @@ import { initWorkspace } from "../src/client/init.ts";
 import { generateEnv, schemaToType } from "../src/protocol/declarations.ts";
 import type { BodyFeatures, KitSchema } from "../src/protocol/index.ts";
 
-const EVERYTHING: BodyFeatures = { kits: ["move", "tidy"], kitsLocked: false, agentKits: true, wiki: "write", lessons: true, milestones: true, reflexes: true, routines: true };
+const EVERYTHING: BodyFeatures = { kits: ["move", "tidy"], kitsLocked: false, agentKits: true, wiki: "write", lessons: true, milestones: true, reflexes: true, routines: true, builtins: [] };
 
 function schemaOf(schema: z.ZodType, io: "input" | "output"): Record<string, unknown> {
   return z.toJSONSchema(schema, { io, unrepresentable: "any" });
@@ -85,7 +85,7 @@ describe("generateEnv", () => {
   });
 
   it("declares only the globals the body offers", () => {
-    const bare: BodyFeatures = { kits: [], kitsLocked: true, agentKits: false, wiki: "off", lessons: false, milestones: false, reflexes: false, routines: false };
+    const bare: BodyFeatures = { kits: [], kitsLocked: true, agentKits: false, wiki: "off", lessons: false, milestones: false, reflexes: false, routines: false, builtins: [] };
     const env = generateEnv(bare, []);
     assert.doesNotMatch(env, /KitRegistry|const kit\b|const kits\b|const wiki\b|const triggers\b|addLesson|milestones/);
     assert.doesNotMatch(generateEnv(EVERYTHING, []), /const triggers\b/, "the triggers global is gone on a body that offers everything");

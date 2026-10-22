@@ -8,15 +8,16 @@ import type { Kit } from "../kit/kit.ts";
 import { KitHost } from "../kit/kit.ts";
 import { KitLibrary } from "../kit/library.ts";
 import { BUILTIN_KITS } from "../kit/index.ts";
-import { KitStats } from "../kit/stats.ts";
 import type { ProgramScope } from "../program/scope.ts";
 import type { HostInit, EventSink } from "../protocol/host.ts";
 import type { KitInfo, SaveKitResponse, SaveRoutineResponse } from "../protocol/index.ts";
 import { Wiki } from "../wiki/wiki.ts";
 import { Bindings } from "./bindings.ts";
 import { Body, type RunRecorder } from "./body.ts";
+import { Builtins } from "./routines/builtins.ts";
 import { RoutineLibrary } from "./routines/library.ts";
-import { RoutineLoader } from "./routines/loader.ts";
+import { RoutineLoader, setOfferGate } from "./routines/loader.ts";
+import { KitStats } from "./routines/stats.ts";
 import { type ApiRequest, bodyRoutes, serve } from "./routes.ts";
 import { BodyState } from "./state.ts";
 import { typeCheckKit, typeCheckLog, typeCheckRoutine } from "./typecheck.ts";
@@ -28,7 +29,7 @@ export interface World {
   serve(request: ApiRequest): Promise<{ status: number; body: unknown }>;
   /** Joins the server. */
   start(): void;
-  /** Closes the body and writes the kit stats still buffered. */
+  /** Closes the body and writes the call counts still buffered. */
   close(): void;
 }
 
@@ -83,8 +84,10 @@ export function buildWorld(options: HostInit, io: { events: EventSink; recorder:
     reported.add(`${file}: ${error}`);
     startupProblems.push({ file, error });
   };
-  // Per-action call counts live in the state directory; a changed or removed agent kit starts from zero.
+  // Per-action call counts live in the state directory; a changed or removed agent kit starts from zero. This one instance takes the kit framework's counts and the built-in routines' alike.
   const stats = new KitStats(state.kitStats);
+  const builtins = new Builtins({ offer: options.builtins, stats });
+  setOfferGate(builtins.allows);
   const library = new KitLibrary({
     dir: options.agentKits ? (options.agentKitsDir ?? state.agentKitsDir) : undefined,
     onProblem: (file, error) => reportKitError(file, error),
@@ -180,6 +183,7 @@ export function buildWorld(options: HostInit, io: { events: EventSink; recorder:
     port: options.port,
     state,
     kits: host,
+    builtins,
     wiki,
     wikiMode: options.wikiMode,
     milestonesEnabled: options.milestonesEnabled,
@@ -224,7 +228,7 @@ export function buildWorld(options: HostInit, io: { events: EventSink; recorder:
       return { routine, typeCheck: await typeCheckRoutine(routineLibrary.dir, name) };
     },
   };
-  const routes = bodyRoutes({ body, kits: host, library, syncKits, saveKit, revertKit, recorder: io.recorder, routines });
+  const routes = bodyRoutes({ body, kits: host, builtins, library, syncKits, saveKit, revertKit, recorder: io.recorder, routines });
   return {
     body,
     kits: host,
@@ -234,7 +238,7 @@ export function buildWorld(options: HostInit, io: { events: EventSink; recorder:
       try {
         body.close();
       } finally {
-        stats.flush();
+        builtins.flush();
       }
     },
   };

@@ -189,7 +189,7 @@ describe("repository wiki", () => {
     assert.throws(() => wiki.read("minebot/routines", none), WikiPageNotFoundError);
     assert.equal(wiki.read("quirks/logs", none).body, "Dig the log.");
     assert.equal(wiki.read("quirks/logs", all).body, "Dig the log.\n\nSave a routine that digs.");
-    const features = { kits: [], kitsLocked: true, agentKits: false, wiki: "read" as const, lessons: false, milestones: false, reflexes: false };
+    const features = { kits: [], kitsLocked: true, agentKits: false, wiki: "read" as const, lessons: false, milestones: false, reflexes: false, builtins: [] };
     assert.equal(wikiView({ ...features, routines: true }).routines, true);
     assert.equal(wikiView({ ...features, routines: false }).routines, false);
     assert.equal(FULL_VIEW.routines, true);

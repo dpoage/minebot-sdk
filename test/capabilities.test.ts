@@ -7,7 +7,7 @@ import { CAPABILITIES, capabilities, CAPABILITY_GATES, programApiDoc, type BodyF
 import { wikiView } from "../src/wiki/access.ts";
 
 /** A body with every capability on: the baseline to switch one off. */
-const EVERYTHING: BodyFeatures = { kits: ["move", "gatherer"], kitsLocked: false, agentKits: true, wiki: "write", lessons: true, milestones: true, reflexes: true, routines: true };
+const EVERYTHING: BodyFeatures = { kits: ["move", "gatherer"], kitsLocked: false, agentKits: true, wiki: "write", lessons: true, milestones: true, reflexes: true, routines: true, builtins: ["move", "gatherer"] };
 
 /** Words an agent must not see when the capability is off. */
 const FORBIDDEN_WORDS: Record<Capability, RegExp> = {
@@ -18,7 +18,9 @@ const FORBIDDEN_WORDS: Record<Capability, RegExp> = {
   lessons: /\blearned\b|add a lesson|wiki lesson|wiki_add_lesson|addLesson/i,
   milestones: /\bmilestones?\b|minebot milestones|body's milestones/i,
   reflexes: /\breflexes?\b|reflex_|--no-reflexes|\btriggers?\b|trigger_|--no-triggers/i,
-  routines: /\broutines?\b|call_routine|bind_routine|--no-routines|\/bind\b|\/call\b|defineRoutine/i,
+  // A body without a routine library still describes its built-ins, which a routine imports: "built-in routine" and the <module>.<routine> call name are theirs.
+  routines: /(?<!built-in |\.<)\broutines?\b|call_routine|bind_routine|--no-routines|\/bind\b|\/call\b|defineRoutine/i,
+  builtins: /built-in routines?\b|\bbuiltins?\b|builtin_|minebot-sdk\/routines\/|<module>\.<routine>/i,
 };
 
 function withOff(capability: Capability): BodyFeatures {
@@ -49,6 +51,9 @@ function withOff(capability: Capability): BodyFeatures {
     case "routines":
       features.routines = false;
       break;
+    case "builtins":
+      features.builtins = [];
+      break;
   }
   return features;
 }
@@ -64,8 +69,9 @@ describe("the capability table", () => {
       milestones: true,
       reflexes: true,
       routines: true,
+      builtins: true,
     });
-    assert.deepEqual(CAPABILITIES, ["kits", "kitSwitching", "agentKits", "wiki", "lessons", "milestones", "reflexes", "routines"]);
+    assert.deepEqual(CAPABILITIES, ["kits", "kitSwitching", "agentKits", "wiki", "lessons", "milestones", "reflexes", "routines", "builtins"]);
   });
 
   it("turns each capability off, alone, in every surface", () => {
@@ -128,7 +134,7 @@ describe("the capability table", () => {
     assert.ok(!routes.some((match) => match[1]!.startsWith("/triggers")), "no route of the code triggers is left");
     // The CLI's feature commands come from the same gates.
     const cli = readFileSync(new URL("../src/cli.ts", import.meta.url), "utf8");
-    assert.match(cli, /const FEATURE_COMMANDS: Record<string, \(features: BodyFeatures\) => boolean> = \{\s*kits: CAPABILITY_GATES\.kits,\s*wiki: CAPABILITY_GATES\.wiki,\s*milestones: CAPABILITY_GATES\.milestones,\s*routines: CAPABILITY_GATES\.routines,\s*bind: CAPABILITY_GATES\.routines,\s*unbind: CAPABILITY_GATES\.routines,\s*call: CAPABILITY_GATES\.routines,\s*\};/);
+    assert.match(cli, /const FEATURE_COMMANDS: Record<string, \(features: BodyFeatures\) => boolean> = \{\s*kits: CAPABILITY_GATES\.kits,\s*wiki: CAPABILITY_GATES\.wiki,\s*milestones: CAPABILITY_GATES\.milestones,\s*routines: CAPABILITY_GATES\.routines,\s*bind: CAPABILITY_GATES\.routines,\s*unbind: CAPABILITY_GATES\.routines,\s*call: CAPABILITY_GATES\.routines,\s*builtins: CAPABILITY_GATES\.builtins,\s*\};/);
   });
 
   it("describes reflexes in bind_routine exactly when the body offers reflexes, and the routine tools exactly when it offers routines", () => {
@@ -185,7 +191,7 @@ function capabilitiesOn(features: BodyFeatures): Capability[] {
 }
 
 /** The gated tools the core set serves: the rest of the gated tools are in the full set only. */
-const CORE_GATED_TOOLS = ["kit_docs", "call_routine", "bind_routine"];
+const CORE_GATED_TOOLS = ["kit_docs", "builtin_docs", "call_routine", "bind_routine"];
 const ROUTINE_TOOLS = ["call_routine", "bind_routine", "list_routines", "routine_save", "routine_source", "routine_versions", "routine_revert", "unbind_routine"];
 
 /** The capability a capability-gated tool belongs to. */
@@ -206,6 +212,10 @@ function capabilityOf(tool: string): Capability {
     wiki_list: "wiki",
     wiki_add_lesson: "lessons",
     ...Object.fromEntries(ROUTINE_TOOLS.map((routineTool) => [routineTool, "routines" as const])),
+    list_builtins: "builtins",
+    builtin_docs: "builtins",
+    builtin_search: "builtins",
+    builtin_source: "builtins",
   };
   const capability = byTool[tool];
   if (capability === undefined) throw new Error(`unknown tool ${tool}`);

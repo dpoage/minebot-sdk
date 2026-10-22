@@ -15,6 +15,7 @@ export const BODY_FLAG_OPTIONS = {
   history: { type: "string" },
   kits: { type: "string" },
   "lock-kits": { type: "boolean", default: false },
+  builtins: { type: "string" },
   wiki: { type: "string", default: "read" },
   "wiki-dir": { type: "string" },
   lessons: { type: "string" },
@@ -40,6 +41,7 @@ export const BodyFlags = z
     history: z.string().optional(),
     kits: z.string().optional(),
     lockKits: z.boolean(),
+    builtins: z.string().optional(),
     wiki: z.enum(["off", "read", "write"]),
     wikiDir: z.string().optional(),
     lessons: z.string().optional(),
@@ -54,9 +56,18 @@ export const BodyFlags = z
   })
   .refine((flags) => !(flags.milestones && flags.noMilestones), { message: "--milestones and --no-milestones cannot be combined" })
   .refine((flags) => !(flags.agentKits && flags.noAgentKits), { message: "--agent-kits and --no-agent-kits cannot be combined" })
-  .refine((flags) => !(flags.routines && flags.noRoutines), { message: "--routines and --no-routines cannot be combined" });
+  .refine((flags) => !(flags.routines && flags.noRoutines), { message: "--routines and --no-routines cannot be combined" })
+  .refine((flags) => flags.builtins === undefined || flags.builtins === "none" || (builtinOffer(flags.builtins)!.length > 0 && !builtinOffer(flags.builtins)!.includes("none")), {
+    message: '--builtins takes module names separated by commas, or "none" alone',
+  });
 
 export type BodyFlags = z.infer<typeof BodyFlags>;
+
+/** The built-in modules `--builtins` lists, which the host closes over their uses: undefined (flag absent) offers every module, `none` offers none. */
+export function builtinOffer(value: string | undefined): string[] | undefined {
+  if (value === undefined) return undefined;
+  return value === "none" ? [] : value.split(",").map((name) => name.trim()).filter(Boolean);
+}
 
 /** The help lines for the operator flags, shown by `minebot --help` on an install with a body. */
 export const OPERATOR_FLAG_HELP = [
@@ -66,6 +77,7 @@ export const OPERATOR_FLAG_HELP = [
   "          and caches tokens in <state>/auth; the in-game name is the account's, and --username keys the cache),",
   "          --api-port <port> (default 0, a free port), --history <file> (append each program run as JSON),",
   "          --kits <a,b> (kits the body offers; default: every built-in kit), --lock-kits (fix the active set),",
+  "          --builtins <a,b|none> (built-in routine modules the body offers, with the modules they use; default: every built-in module),",
   "          --no-agent-kits (agents cannot save their own kits), --agent-kits <dir> (default <state>/agent-kits),",
   "          --wiki <off|read|write> (default read; write lets the agent add lessons),",
   "          --wiki-dir <dir> (curated pages; default the repository's wiki/),",
@@ -89,6 +101,7 @@ export function parseBodyFlags(name: string, values: Record<string, string | boo
     history: values.history,
     kits: values.kits,
     lockKits: values["lock-kits"],
+    builtins: values.builtins,
     wiki: values.wiki,
     wikiDir: values["wiki-dir"],
     lessons: values.lessons,

@@ -9,6 +9,9 @@ import { KitSourceError } from "../kit/agent.ts";
 import { BusyError } from "../program/runner.ts";
 import {
   BindInput,
+  BuiltinDocsQuery,
+  BuiltinSearchQuery,
+  BuiltinSourceQuery,
   CallInput,
   capabilities,
   ChatInput,
@@ -50,6 +53,7 @@ import { NoteLimitError } from "../notes.ts";
 import type { Bindings } from "./bindings.ts";
 import { BindingInvalidError } from "./bindings.ts";
 import { RoutineSourceError, type RoutineLibrary } from "./routines/library.ts";
+import type { Builtins } from "./routines/builtins.ts";
 import { RoutineNotFoundError } from "./routines/loader.ts";
 import { NameConflictError, TriggerInvalidError, TriggerLimitError } from "./triggers.ts";
 
@@ -125,6 +129,7 @@ export interface RoutineRouteDeps {
 export interface RouteDeps {
   body: Body;
   kits: KitHost;
+  builtins: Builtins;
   library: KitLibrary;
   syncKits: () => void;
   saveKit: (source: string) => Promise<SaveKitResponse>;
@@ -135,7 +140,7 @@ export interface RouteDeps {
 }
 
 /** The routes the host answers: every route of the body API except health, events, waits, and stop, which the supervisor answers. */
-export function bodyRoutes({ body, kits: host, library, syncKits, saveKit, revertKit, recorder, routines }: RouteDeps): Route[] {
+export function bodyRoutes({ body, kits: host, builtins, library, syncKits, saveKit, revertKit, recorder, routines }: RouteDeps): Route[] {
   function kitsResponse(): KitsResponse {
     return { kits: host.info(), active: host.active, locked: host.locked };
   }
@@ -311,6 +316,40 @@ export function bodyRoutes({ body, kits: host, library, syncKits, saveKit, rever
         return recorder.record({ code, timeoutMs, requestId }, () => body.run(code, timeoutMs));
       },
     },
+    { method: "GET", path: "/builtins", capability: "builtins", handler: () => ({ builtins: builtins.list() }) },
+    {
+      method: "GET",
+      path: "/builtins/docs",
+      capability: "builtins",
+      handler: async ({ url }) => {
+        const { names } = parse(BuiltinDocsQuery, Object.fromEntries(url.searchParams));
+        try {
+          return { docs: builtins.docs(names ? names.split(",").filter(Boolean) : []) };
+        } catch (err) {
+          throw new HttpError(400, err instanceof Error ? err.message : String(err));
+        }
+      },
+    },
+    {
+      method: "GET",
+      path: "/builtins/search",
+      capability: "builtins",
+      handler: async ({ url }) => {
+        const { q, limit } = parse(BuiltinSearchQuery, Object.fromEntries(url.searchParams));
+        return { hits: builtins.search(q, limit) };
+      },
+    },
+    {
+      method: "GET",
+      path: "/builtins/source",
+      capability: "builtins",
+      handler: async ({ url }) => {
+        const { name } = parse(BuiltinSourceQuery, Object.fromEntries(url.searchParams));
+        const source = builtins.source(name);
+        if (source === undefined) throw new HttpError(404, `no built-in module "${name}"`);
+        return { name, source };
+      },
+    },
     { method: "GET", path: "/routines", capability: "routines", handler: () => ({ routines: routines!.library.list() }) },
     {
       method: "GET",
@@ -368,12 +407,17 @@ export function bodyRoutes({ body, kits: host, library, syncKits, saveKit, rever
       },
     },
     {
-      // A call is a run: recorded like a program, with the action and its routine and args on the history line.
+      // A call is a run: recorded like a program, with the action and its routine and args on the history line; a built-in's line has its call name and args.
       method: "POST",
       path: "/call",
       capability: "routines",
       handler: async ({ read, requestId }) => {
         const { name, args, timeoutMs } = parse(CallInput, await read());
+        // A name with a dot is a built-in's; it is never a binding.
+        if (name.includes(".")) {
+          if (builtins.routine(name) === undefined) throw new HttpError(404, `no built-in routine "${name}"`);
+          return recorder.record({ code: "", timeoutMs, requestId, extra: { call: { name, args } } }, () => body.callBuiltin(name, args, timeoutMs));
+        }
         const binding = routines!.bindings.action(name);
         if (!binding) throw new HttpError(404, `no action bound to "${name}"`);
         return recorder.record({ code: "", timeoutMs, requestId, extra: { call: { name, routine: binding.routine, args } } }, () => body.call(binding.routine, args, timeoutMs));

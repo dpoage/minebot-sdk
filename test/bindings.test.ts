@@ -151,20 +151,22 @@ describe("action bindings", () => {
 
 describe("binding names", () => {
   const RULE = { error: "✖ use 1-48 lowercase letters, digits, _ and -; start with a letter\n  → at name" };
+  const CALL_RULE = { error: "✖ use an action's name (1-48 lowercase letters, digits, _ and -; start with a letter) or a built-in routine's <module>.<routine>\n  → at name" };
   const STORED_RULE = { error: "✖ use 1-48 lowercase letters, digits, and . _ -; start with a letter or digit\n  → at name" };
 
-  it("refuse a dotted name on every bind and call path with 400 and the name rule's message, and none is stored", async () => {
+  it("refuse a dotted name on every bind path with 400 and the name rule's message, and none is stored; a call takes a dotted name as a built-in routine's", async () => {
     const body = await startFakeBody();
     await using(body, async () => {
       body.writeRoutines({ r1: "export default () => 1;\n" });
       for (const name of ["move.to", "a.b", ".x", "Bad"]) {
-        for (const [url, request] of [
-          ["/bind", { kind: "action", name, routine: "r1" }],
-          ["/call", { name }],
-        ] as const) {
-          assert.deepEqual(await body.request("POST", url, request), { status: 400, body: RULE }, `${url} ${name}`);
-        }
+        assert.deepEqual(await body.request("POST", "/bind", { kind: "action", name, routine: "r1" }), { status: 400, body: RULE }, `/bind ${name}`);
       }
+      // A call never resolves a dotted name to a binding: `move.to` is the built-in routine, which fails on its missing arguments; `a.b` is none.
+      const builtin = await body.request("POST", "/call", { name: "move.to" });
+      assert.equal(builtin.status, 200);
+      assert.match((builtin.body as { error: string }).error, /^Error: routine "move\.to" arguments: /);
+      assert.deepEqual(await body.request("POST", "/call", { name: "a.b" }), { status: 404, body: { error: 'no built-in routine "a.b"' } });
+      for (const name of [".x", "Bad"]) assert.deepEqual(await body.request("POST", "/call", { name }), { status: 400, body: CALL_RULE }, `/call ${name}`);
       assert.deepEqual(await listed(body), []);
       assert.equal(existsSync(path.join(body.stateDir, "bindings.json")), false);
       assert.equal((await body.request("POST", "/bind", { kind: "action", name: "x1", routine: "r1" })).status, 200);

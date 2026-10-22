@@ -10,7 +10,9 @@ import { WikiAccess, wikiView } from "../wiki/access.ts";
 import { Connection, type ServerAuth } from "./connection.ts";
 import { programFinished, type EventSink, type FiringOf, type LostFiring, type TriggerDisabled, type TriggerFinished } from "../protocol/host.ts";
 import { invokeRoutine } from "../routine/invoke.ts";
+import type { RoutineContext } from "../routine/public.ts";
 import { programGlobals, routineContext, type GlobalsDeps } from "./globals.ts";
+import type { Builtins } from "./routines/builtins.ts";
 import type { RoutineLoader } from "./routines/loader.ts";
 import { briefOf, observation } from "./observation.ts";
 import { Notes } from "../notes.ts";
@@ -31,6 +33,8 @@ export interface BodyOptions {
   state: BodyState;
   /** The kit catalog and active set, built by the composition root. */
   kits: KitHost;
+  /** The built-in routine modules the body offers, and the counter of calls into them. */
+  builtins: Builtins;
   /** Curated wiki pages; null for none. */
   wiki: Wiki | null;
   /** What the agent may do with the wiki. */
@@ -158,6 +162,7 @@ export class Body {
       wiki: this.wiki,
       notes: this.notes,
       store: (namespace) => this.#options.state.routineStore(namespace),
+      observe: this.#options.builtins.observe,
       features: () => this.features,
       status: () => this.status(),
       ...(capabilities(this.features).agentKits && this.#options.kitAuthoring && { kitAuthoring: this.#options.kitAuthoring }),
@@ -175,6 +180,7 @@ export class Body {
       milestones: this.#options.milestonesEnabled ?? true,
       reflexes: this.triggers !== null,
       routines: this.#options.routines !== undefined,
+      builtins: [...this.#options.builtins.offered],
     };
   }
 
@@ -197,17 +203,27 @@ export class Body {
   async call(routine: string, args: unknown, timeoutMs?: number): Promise<RunOutcome> {
     const loader = this.#options.routines;
     if (!loader) throw new Error("this body has no routines");
+    return this.#called(async (ctx) => invokeRoutine(await loader.load(routine), routine, ctx, args), loader.dir, timeoutMs);
+  }
+
+  /**
+   * Calls the built-in routine `name` (`<module>.<routine>`) as `call` calls a library routine: one run with the same duties,
+   * the arguments as given, the result the routine's validated return as JSON. Throws when the body does not offer that routine.
+   */
+  async callBuiltin(name: string, args: unknown, timeoutMs?: number): Promise<RunOutcome> {
+    const { builtins } = this.#options;
+    const routine = builtins.routine(name);
+    if (!routine) throw new Error(`no built-in routine "${name}"`);
+    return this.#called(async (ctx) => invokeRoutine({ default: routine }, name, ctx, args), builtins.dir, timeoutMs);
+  }
+
+  /** One call as a run: `invoke` runs inside it with the context of the run, and an error reports the frames inside `sourceDir`. */
+  async #called(invoke: (ctx: RoutineContext) => Promise<unknown>, sourceDir: string, timeoutMs?: number): Promise<RunOutcome> {
     this.#options.syncKits?.();
     const environment = this.#environment();
     // Not connected answers as a program does, not as a run that failed.
     this.#connection.requireBot();
-    const result = await this.runner.call(
-      async (scope) => {
-        const ctx = routineContext(scope, environment);
-        return invokeRoutine(await loader.load(routine), routine, ctx, args);
-      },
-      { timeoutMs, sourceDir: loader.dir },
-    );
+    const result = await this.runner.call(async (scope) => invoke(routineContext(scope, environment)), { timeoutMs, sourceDir });
     return this.#ended(result);
   }
 

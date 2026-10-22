@@ -7,7 +7,7 @@ import path from "node:path";
 import { text } from "node:stream/consumers";
 import { parseArgs } from "node:util";
 import { BodyClient } from "./client/client.ts";
-import { formatBound, formatKitHits, formatKits, formatKitVersions, formatLibrary, formatRevertedRoutine, formatRoutineVersions, formatRun, formatSavedRoutine, formatStatus } from "./client/render.ts";
+import { formatBound, formatBuiltinHits, formatBuiltins, formatKitHits, formatKits, formatKitVersions, formatLibrary, formatRevertedRoutine, formatRoutineVersions, formatRun, formatSavedRoutine, formatStatus } from "./client/render.ts";
 import { HAS_BODY, usageFor } from "./client/usage.ts";
 import { BODY_FLAG_OPTIONS, OPERATOR_FLAG_HELP } from "./client/body-flags.ts";
 import { ENV_FILE, initWorkspace } from "./client/init.ts";
@@ -83,6 +83,7 @@ const FEATURE_COMMANDS: Record<string, (features: BodyFeatures) => boolean> = {
   bind: CAPABILITY_GATES.routines,
   unbind: CAPABILITY_GATES.routines,
   call: CAPABILITY_GATES.routines,
+  builtins: CAPABILITY_GATES.builtins,
 };
 
 async function main(): Promise<number> {
@@ -228,7 +229,7 @@ async function main(): Promise<number> {
       return 0;
     }
     case "call": {
-      if (!rest[0]) throw new Error("call needs the name of an action");
+      if (!rest[0]) throw new Error("call needs the name of an action or a built-in routine");
       let args: Record<string, unknown> | undefined;
       try {
         args = opts.args === undefined ? undefined : JSON.parse(opts.args);
@@ -237,6 +238,30 @@ async function main(): Promise<number> {
       }
       const client = await BodyClient.connect(opts.bot);
       return printRun(await client.call(rest[0], args, opts.timeout === undefined ? undefined : Number(opts.timeout)));
+    }
+    case "builtins": {
+      const client = await BodyClient.connect(opts.bot);
+      const [action, ...names] = rest;
+      switch (action) {
+        case undefined:
+          console.log(formatBuiltins((await client.builtins()).builtins));
+          return 0;
+        case "docs":
+          console.log((await client.builtinDocs(names)).docs);
+          return 0;
+        case "search": {
+          if (names.length === 0) throw new Error("builtins search needs a query");
+          const { hits } = await client.searchBuiltins(names.join(" "), Number(opts.limit));
+          console.log(hits.length === 0 ? "no matching built-ins" : formatBuiltinHits(hits));
+          return 0;
+        }
+        case "source":
+          if (!names[0]) throw new Error("builtins source needs a module name");
+          console.log((await client.builtinSource(names[0])).source);
+          return 0;
+        default:
+          throw new Error(`unknown builtins action "${action}"; use docs, search, or source`);
+      }
     }
     case "stop":
       print(await (await BodyClient.connect(opts.bot)).stop());

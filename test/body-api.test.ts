@@ -28,6 +28,7 @@ const { startDaemon } = await import("../src/body/daemon.ts");
 const { endpointFile, programApiDoc } = await import("../src/protocol/index.ts");
 const { MC_VERSION } = await import("../src/mc/version.ts");
 const { BUILTIN_KITS } = await import("../src/kit/index.ts");
+const { BUILTIN_MODULES } = await import("../src/routines/index.ts");
 const { KitHost: KitHostClass } = await import("../src/kit/kit.ts");
 const { JsonStore } = await import("../src/store.ts");
 const { findEscapeAttempts } = await import("../src/audit.ts");
@@ -317,7 +318,8 @@ function referenceKits(names: readonly string[], locked = false): KitHost {
   return new KitHostClass({ kits, stores: () => JsonStore.memory(), locked, active: names });
 }
 
-const FEATURES_ALL: Features = { kits: ["move"], kitsLocked: false, agentKits: true, wiki: "write", lessons: true, milestones: true, reflexes: true, routines: true };
+const ALL_BUILTINS = BUILTIN_MODULES.map((module) => module.name);
+const FEATURES_ALL: Features = { kits: ["move"], kitsLocked: false, agentKits: true, wiki: "write", lessons: true, milestones: true, reflexes: true, routines: true, builtins: ALL_BUILTINS };
 
 const NOT_CONNECTED = { error: "the body is not connected to a server" };
 const NO_ROUTE = (method: string, pathname: string) => ({ error: `no route for ${method} ${pathname}` });
@@ -554,10 +556,10 @@ describe("body API: agent kits", () => {
 
 describe("body API on a body with every optional feature off", () => {
   let body: Running;
-  const features: Features = { kits: [], kitsLocked: true, agentKits: false, wiki: "off", lessons: false, milestones: false, reflexes: false, routines: false };
+  const features: Features = { kits: [], kitsLocked: true, agentKits: false, wiki: "off", lessons: false, milestones: false, reflexes: false, routines: false, builtins: [] };
 
   before(async () => {
-    body = await startBody({ kits: [], lockKits: true, wikiMode: "off", milestonesEnabled: false, agentKits: false, triggers: false, routines: false });
+    body = await startBody({ kits: [], lockKits: true, wikiMode: "off", milestonesEnabled: false, agentKits: false, triggers: false, routines: false, builtins: [] });
   });
   after(() => body.close());
 
@@ -608,7 +610,7 @@ describe("body API on a body with every optional feature off", () => {
 describe("body API on a body with locked kits, agent kits off, and a read-only wiki that holds a lesson", () => {
   let body: Running;
   const ref = referenceKits(["move"], true);
-  const features: Features = { kits: ["move"], kitsLocked: true, agentKits: false, wiki: "read", lessons: true, milestones: true, reflexes: true, routines: true };
+  const features: Features = { kits: ["move"], kitsLocked: true, agentKits: false, wiki: "read", lessons: true, milestones: true, reflexes: true, routines: true, builtins: ALL_BUILTINS };
 
   before(async () => {
     body = await startBody({

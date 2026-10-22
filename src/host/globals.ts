@@ -5,6 +5,7 @@ import pathfinderPkg from "mineflayer-pathfinder";
 import { Vec3 } from "vec3";
 import type { KitHost } from "../kit/kit.ts";
 import type { KitRegistry } from "../kit/registry.ts";
+import { withObserver, type RoutineCallObserver } from "../routine/define.ts";
 import type { RoutineContext } from "../routine/public.ts";
 import { capabilities, type BodyFeatures, type LessonInput, type StatusResponse } from "../protocol/index.ts";
 import type { ProgramScope } from "../program/scope.ts";
@@ -21,6 +22,8 @@ export interface GlobalsDeps {
   notes: Notes;
   /** The persistent store of a routine namespace, for `ctx.store`. */
   store: (namespace: string) => ReturnType<RoutineContext["store"]>;
+  /** Told of every routine call a routine run makes, nested ones included (see `routineContext`). */
+  observe: RoutineCallObserver;
   features: () => BodyFeatures;
   status: () => Promise<StatusResponse>;
   /** Authoring hooks, present only when the body offers agent kits. `try` runs inside the calling program, so it takes that program's scope and bot. */
@@ -83,5 +86,6 @@ export function routineContext(scope: ProgramScope, deps: GlobalsDeps): RoutineC
   const bot = deps.connection.requireBot();
   const { kit, ...rest } = facilities(scope, deps, bot);
   // The kit calls of the host's registry are the shape `KitRegistry` types for authors.
-  return { ...scope, bot, ...rest, store: deps.store, ...(kit && { kit: kit as Readonly<KitRegistry> }) };
+  const ctx: RoutineContext = { ...scope, bot, ...rest, store: deps.store, ...(kit && { kit: kit as Readonly<KitRegistry> }) };
+  return withObserver(ctx, deps.observe);
 }

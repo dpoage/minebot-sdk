@@ -27,7 +27,7 @@ after(() => {
   removeScratch();
 });
 
-const FEATURES: BodyFeatures = { kits: [], kitsLocked: true, agentKits: false, wiki: "off", lessons: false, milestones: false, reflexes: true, routines: true };
+const FEATURES: BodyFeatures = { kits: [], kitsLocked: true, agentKits: false, wiki: "off", lessons: false, milestones: false, reflexes: true, routines: true, builtins: [] };
 
 interface Seen {
   method: string;

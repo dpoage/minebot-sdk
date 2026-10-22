@@ -16,7 +16,7 @@ const exec = promisify(execFile);
 const ROUTINE_KITS = ["gatherer", "crafter", "builder", "explorer", "social"];
 /** What --locks with the routine kits offers: their used primitives come along automatically. */
 const OFFERED_KITS = ["move", "sense", "dig", "place", "inventory", "craft", "items", "furnace", ...ROUTINE_KITS];
-const raw: BodyFeatures = { kits: [], kitsLocked: true, agentKits: false, wiki: "off", lessons: false, milestones: false, reflexes: false, routines: false };
+const raw: BodyFeatures = { kits: [], kitsLocked: true, agentKits: false, wiki: "off", lessons: false, milestones: false, reflexes: false, routines: false, builtins: [] };
 const kitsTier: BodyFeatures = { ...raw, kits: OFFERED_KITS, agentKits: true };
 const wikiTier: BodyFeatures = { ...raw, wiki: "read" };
 const full: BodyFeatures = { ...kitsTier, wiki: "read" };
@@ -142,9 +142,9 @@ describe("tier visibility on a running body", () => {
   let plainKitsBody: BodyClient;
   before(async () => {
     [rawBody, fullBody, plainKitsBody] = await Promise.all([
-      start("features-raw", "--wiki", "off", "--no-milestones", "--no-agent-kits", "--no-reflexes", "--no-routines", "--kits", ""),
+      start("features-raw", "--wiki", "off", "--no-milestones", "--no-agent-kits", "--no-reflexes", "--no-routines", "--kits", "", "--builtins", "none"),
       start("features-full", "--wiki", "read", "--kits", ROUTINE_KITS.join(","), "--no-milestones"),
-      start("features-plainkits", "--wiki", "off", "--no-agent-kits", "--no-milestones", "--no-reflexes", "--kits", ROUTINE_KITS.join(",")),
+      start("features-plainkits", "--wiki", "off", "--no-agent-kits", "--no-milestones", "--no-reflexes", "--kits", ROUTINE_KITS.join(","), "--builtins", "none"),
     ]);
   });
   after(() => {

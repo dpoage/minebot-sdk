@@ -23,6 +23,9 @@
 // Node accepts only for the names it can read off the source), and `require` is bound to a
 // `createRequire` anchored where the module's bare specifiers resolve, unless the module has a
 // binding of that name of its own.
+//
+// A library module may not import (or `require`) a built-in routine module the body does not offer:
+// the body sets that offer once, process-wide (`setOfferGate`), and the hook refuses the specifier.
 import { createHash, randomUUID } from "node:crypto";
 import { readdirSync, readFileSync, realpathSync } from "node:fs";
 import { createRequire, findPackageJSON, registerHooks, type ResolveFnOutput } from "node:module";
@@ -74,6 +77,19 @@ function isFileSpecifier(specifier: string): boolean {
   return specifier.startsWith(".") || specifier.startsWith("/") || specifier.startsWith("file:");
 }
 
+/** Whether a library module may import a bare specifier; unset (before a body is built) allows every one. Process-wide: one body runs in a host process. */
+let offerGate: ((specifier: string) => boolean) | undefined;
+
+/** Sets which bare specifiers library modules may import: the body's offer of built-in routine modules, which are `minebot-sdk/routines/<module>`. */
+export function setOfferGate(gate: (specifier: string) => boolean): void {
+  offerGate = gate;
+}
+
+/** Throws, naming `specifier`, when the offer gate refuses it. */
+function checkOffered(specifier: string): void {
+  if (offerGate !== undefined && !offerGate(specifier)) throw new Error(`routine modules may not import "${specifier}": this body does not offer that built-in routine module`);
+}
+
 /** The specifier of the import `withRequire` appends; the resolve hook answers it, for library modules only, with this module. */
 const REQUIRE_SPECIFIER = "minebot:require";
 
@@ -87,6 +103,7 @@ export const routineRequire: NodeJS.Require = (() => {
   const base = createRequire(PACKAGE_MANIFEST);
   const named = (id: string): string => {
     if (isFileSpecifier(id)) throw new Error(`routine modules may require only packages and Node built-ins (library modules import each other with import); "${id}" is neither`);
+    checkOffered(id);
     return id;
   };
   const resolve = Object.assign((id: string, options?: { paths?: string[] }) => base.resolve(named(id), options), { paths: (request: string) => base.resolve.paths(request) });
@@ -186,6 +203,7 @@ registerHooks({
     if (!parent) return nextResolve(specifier, context);
     if (specifier === REQUIRE_SPECIFIER) return nextResolve(import.meta.url, context);
     if (!isFileSpecifier(specifier)) {
+      checkOffered(specifier);
       // `node:os` and other URLs resolve alone; a package name (or a built-in without `node:`) resolves from the body package.
       if (/^[a-z][a-z0-9+.-]*:/i.test(specifier)) return nextResolve(specifier, context);
       const resolved = nextResolve(specifier, { ...context, parentURL: PACKAGE_MANIFEST });

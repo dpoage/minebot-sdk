@@ -9,10 +9,10 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import type { BodyFeatures } from "../src/protocol/index.ts";
 
-const EVERYTHING: BodyFeatures = { kits: ["move"], kitsLocked: false, agentKits: true, wiki: "write", lessons: true, milestones: true, reflexes: true, routines: true };
+const EVERYTHING: BodyFeatures = { kits: ["move"], kitsLocked: false, agentKits: true, wiki: "write", lessons: true, milestones: true, reflexes: true, routines: true, builtins: ["move"] };
 const CLI = [...process.execArgv, path.join(import.meta.dirname, "..", "src", "cli.ts")];
 
-const CORE = ["api_reference", "bind_routine", "call_routine", "get_events", "kit_docs", "observe", "run_program", "stop_program", "wait_for"];
+const CORE = ["api_reference", "bind_routine", "builtin_docs", "call_routine", "get_events", "kit_docs", "observe", "run_program", "stop_program", "wait_for"];
 const ROUTINE_TOOLS = ["bind_routine", "call_routine", "list_routines", "routine_revert", "routine_save", "routine_source", "routine_versions", "unbind_routine"];
 const FULL = [
   ...CORE,
@@ -21,6 +21,7 @@ const FULL = [
   "use_kits",
   "wiki_add_lesson", "wiki_list", "wiki_read", "wiki_search",
   "list_routines", "routine_revert", "routine_save", "routine_source", "routine_versions", "unbind_routine",
+  "builtin_search", "builtin_source", "list_builtins",
 ].sort();
 
 /** A body that answers the feature probe with `features`; its URL, and a way to stop it. */

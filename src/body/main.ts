@@ -4,7 +4,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { MilestoneSet } from "../milestones/milestones.ts";
 import { RUNTIME_DIR } from "../protocol/index.ts";
-import { parseBodyFlags } from "../client/body-flags.ts";
+import { builtinOffer, parseBodyFlags } from "../client/body-flags.ts";
 import { startDaemon } from "./daemon.ts";
 
 export interface BodyCommandInput {
@@ -28,6 +28,7 @@ export async function runBody({ name, token, flags }: BodyCommandInput): Promise
     historyFile: parsed.history,
     kits: parsed.kits === undefined ? undefined : parsed.kits.split(",").map((k) => k.trim()).filter(Boolean),
     lockKits: parsed.lockKits,
+    builtins: builtinOffer(parsed.builtins),
     wikiMode: parsed.wiki,
     wikiDir: parsed.wikiDir,
     lessonsDir: parsed.lessons ?? path.join(RUNTIME_DIR, "lessons"),
