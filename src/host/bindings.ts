@@ -3,7 +3,7 @@
 // A binding names a routine and nothing else: binding never loads the module, so no agent code runs
 // until something calls it.
 import { z } from "zod";
-import { RoutineName, TriggerName, type BindInput, type BindingInfo, type BindResponse, type ActionBindingInfo } from "../protocol/index.ts";
+import { BindingName, RoutineName, type BindInput, type BindingInfo, type BindResponse, type ActionBindingInfo } from "../protocol/index.ts";
 import type { EventSink } from "../protocol/host.ts";
 import type { JsonStore } from "../store.ts";
 import type { Triggers } from "./triggers.ts";
@@ -32,7 +32,7 @@ export class Bindings {
     this.#deps = deps;
     for (const name of deps.store.keys()) {
       // A bad entry on disk never stops the body: it is skipped, left in the file, and reported.
-      const parsed = TriggerName.safeParse(name);
+      const parsed = BindingName.safeParse(name);
       const stored = Stored.safeParse(deps.store.get(name));
       if (parsed.success && stored.success) this.#actions.set(name, { kind: "action", name, routine: stored.data.routine });
       else deps.events.push("binding_error", { name, error: z.prettifyError(parsed.success ? stored.error! : parsed.error) });

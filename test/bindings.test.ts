@@ -102,18 +102,19 @@ describe("action bindings", () => {
       "bad-routine": { kind: "action", routine: "Not A Routine" },
       "not-an-object": 7,
       "Bad Name": { kind: "action", routine: "r1" },
+      "move.to": { kind: "action", routine: "r1" },
     };
     const body = await startFakeBody({ stateFiles: { "bindings.json": stored } });
     await using(body, async () => {
       assert.deepEqual(await listed(body), [{ kind: "action", name: "good", routine: "r1" }]);
       const reported = body.eventsOf("binding_error").map((event) => event.data.name);
-      assert.deepEqual([...reported].sort(), ["Bad Name", "bad-kind", "bad-routine", "not-an-object"]);
+      assert.deepEqual([...reported].sort(), ["Bad Name", "bad-kind", "bad-routine", "move.to", "not-an-object"]);
       for (const event of body.eventsOf("binding_error")) assert.equal(typeof event.data.error, "string");
       // Binding another name rewrites the file, and the skipped entries are still in it.
       body.writeRoutines({ r1: "export default () => 1;\n" });
       await body.ok("POST", "/bind", { kind: "action", name: "fresh", routine: "r1" });
       const file = JSON.parse(readFileSync(path.join(body.stateDir, "bindings.json"), "utf8")) as Record<string, unknown>;
-      assert.deepEqual(Object.keys(file).sort(), ["Bad Name", "bad-kind", "bad-routine", "fresh", "good", "not-an-object"]);
+      assert.deepEqual(Object.keys(file).sort(), ["Bad Name", "bad-kind", "bad-routine", "fresh", "good", "move.to", "not-an-object"]);
       assert.deepEqual(file["bad-kind"], stored["bad-kind"]);
     });
   });
@@ -137,6 +138,29 @@ describe("action bindings", () => {
       assert.equal((await body.request("POST", "/unbind", { name: "act" })).status, 404);
       assert.deepEqual(await listed(body), []);
       assert.equal(existsSync(path.join(body.stateDir, "bindings.json")), false, "a refused bind writes nothing");
+    });
+  });
+});
+
+describe("binding names", () => {
+  const RULE = { error: "✖ use 1-48 lowercase letters, digits, _ and -; start with a letter\n  → at name" };
+
+  it("refuse a dotted name on every bind, unbind, and call path with 400 and the name rule's message, and none is stored", async () => {
+    const body = await startFakeBody();
+    await using(body, async () => {
+      body.writeRoutines({ r1: "export default () => 1;\n" });
+      for (const name of ["move.to", "a.b", ".x", "Bad"]) {
+        for (const [url, request] of [
+          ["/bind", { kind: "action", name, routine: "r1" }],
+          ["/unbind", { name }],
+          ["/call", { name }],
+        ] as const) {
+          assert.deepEqual(await body.request("POST", url, request), { status: 400, body: RULE }, `${url} ${name}`);
+        }
+      }
+      assert.deepEqual(await listed(body), []);
+      assert.equal(existsSync(path.join(body.stateDir, "bindings.json")), false);
+      assert.equal((await body.request("POST", "/bind", { kind: "action", name: "x1", routine: "r1" })).status, 200);
     });
   });
 });
