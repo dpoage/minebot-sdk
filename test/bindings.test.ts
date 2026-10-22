@@ -407,6 +407,26 @@ describe("reflex bindings persist", () => {
   });
 });
 
+describe("no module is evaluated until a reflex fires", () => {
+  it("leaves no marker from binding, listing, rebinding, or unbinding a reflex, and the first firing evaluates the routine's module", async () => {
+    const body = await startFakeBody();
+    await using(body, async () => {
+      const marker = path.join(body.stateDir, "marker");
+      body.writeRoutines({ marked: `import { appendFileSync } from "node:fs";\nappendFileSync(${JSON.stringify(marker)}, "x");\nexport default () => 1;\n` });
+      await body.ok("POST", "/bind", { kind: "reflex", name: "rfx", routine: "marked", on: ["chat"], cooldownMs: 0 });
+      await body.ok("POST", "/bind", { kind: "reflex", name: "rfx", routine: "marked", on: ["hurt"], cooldownMs: 0 });
+      await listed(body);
+      await body.ok("POST", "/bind", { kind: "reflex", name: "again", routine: "marked", on: ["never"] });
+      await body.ok("POST", "/unbind", { name: "again" });
+      assert.equal(existsSync(marker), false, "a module's top level ran");
+      await body.ok("POST", "/bind", { kind: "reflex", name: "rfx", routine: "marked", on: ["chat"], cooldownMs: 0 });
+      runOf(await body.request("POST", "/run", { code: "bot.emit('chat', 'ana', 'go')" }));
+      await body.waitFor("trigger_finished");
+      assert.equal(readFileSync(marker, "utf8"), "x");
+    });
+  });
+});
+
 describe("reflexes and the body's features", () => {
   const reflexEntry = { on: ["chat"], routine: "r1", cooldownMs: 0, timeoutMs: 30_000, enabled: true, preempt: false, priority: 0, updated: "2026-01-01T00:00:00.000Z" };
   const codeEntry = { on: ["chat"], run: "return 1", cooldownMs: 0, timeoutMs: 30_000, enabled: true, preempt: false, priority: 0, updated: "2026-01-01T00:00:00.000Z" };

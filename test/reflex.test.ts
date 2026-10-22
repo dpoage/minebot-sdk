@@ -142,6 +142,9 @@ describe("a reflex's firing", () => {
       assert.ok(Date.now() - started < 5_000, `took ${Date.now() - started} ms`);
       const [done] = body.eventsOf("trigger_finished");
       assert.deepEqual([done!.data.name, done!.data.status], ["slow", "timeout"]);
+      // The reflex's own timeout ended it: without one, the supervisor's deadline (the timeout plus the grace) kills the host and answers for it.
+      assert.notEqual(done!.data.error, restartedError(hungCause(GRACE_MS)));
+      assert.ok(Number(done!.data.durationMs) < GRACE_MS + 300, `ended after ${done!.data.durationMs} ms`);
       const slow = await reflexOf(body, "slow");
       assert.deepEqual([slow.lastStatus, slow.failures], ["timeout", 1]);
       assert.equal(body.history().find((line) => line.trigger === "slow" && line.status !== "registered")!.status, "timeout");
