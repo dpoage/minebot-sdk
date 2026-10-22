@@ -98,7 +98,7 @@ describe("a reflex's firing", () => {
       const [done] = body.eventsOf("trigger_finished");
       assert.deepEqual([done!.data.name, done!.data.status], ["greet", "ok"]);
       // The routine saw the BodyEvent itself, in the args object.
-      const note = runOf(await body.request("POST", "/call", { name: "seen" })).result as string;
+      const note = runOf(await body.request("POST", "/run", { code: "return notes.get('seen')" })).result as string;
       assert.deepEqual(JSON.parse(note), { event: { seq: heard.seq, type: "chat", time: heard.time, data: { from: "alice", message: "hello" } } });
 
       // The firing is a history line of its own: no code, the trigger, the routine, and the event.
