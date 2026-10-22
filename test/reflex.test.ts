@@ -18,6 +18,8 @@ const SLEEPER = "export default async (ctx) => {\n  await ctx.sleep(30_000);\n};
 const THROWS = "export default (): never => {\n  throw new Error('boom');\n};\n";
 const BLOCKER = "export default (): never => {\n  for (;;) {}\n};\n";
 const PID = "export default () => process.pid;\n";
+const SAY = "export default async (ctx, args) => {\n  ctx.bot.emit('chat', args.from, args.message);\n};\n";
+const SEEN = "export default (ctx) => ctx.notes.get('seen');\n";
 
 const chat = (from: string, message: string): string => `bot.emit('chat', ${JSON.stringify(from)}, ${JSON.stringify(message)});`;
 
@@ -27,7 +29,8 @@ const saysThen = (from: string, message: string, rest: string): string =>
 
 async function bodyWith(routines: Record<string, string>, options: FakeBodyOptions = {}): Promise<FakeBody> {
   const body = await startFakeBody(options);
-  body.writeRoutines(routines);
+  body.writeRoutines({ ...routines, say: SAY, seen: SEEN });
+  for (const name of ["say", "seen"]) await body.ok("POST", "/bind", { kind: "action", name, routine: name });
   return body;
 }
 
@@ -48,8 +51,8 @@ const reflexes = async (body: FakeBody): Promise<ReflexBindingInfo[]> =>
   ((await body.ok("GET", "/bindings")) as { bindings: BindingInfo[] }).bindings.filter((binding): binding is ReflexBindingInfo => binding.kind === "reflex");
 const reflexOf = async (body: FakeBody, name: string): Promise<ReflexBindingInfo> => (await reflexes(body)).find((reflex) => reflex.name === name)!;
 
-/** Makes the body hear a chat message through a program of the agent. */
-const say = async (body: FakeBody, from: string, message: string): Promise<RunResult> => runOf(await body.request("POST", "/run", { code: chat(from, message) }));
+/** Makes the body hear a chat message through a call of the action `say`. */
+const say = async (body: FakeBody, from: string, message: string): Promise<RunResult> => runOf(await body.request("POST", "/call", { name: "say", args: { from, message } }));
 
 /** Resolves once `count` firings have ended. */
 async function finished(body: FakeBody, count: number): Promise<void> {

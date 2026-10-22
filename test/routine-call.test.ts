@@ -208,10 +208,9 @@ describe("a routine's ctx", () => {
 
   it("shares the body's notes and status with programs, and offers the kits' actions as ctx.kit", async () => {
     const probe = "export default async (ctx: { notes: { get(key: string): string | undefined }; status(): Promise<{ connected: boolean }>; kit?: Record<string, unknown> }) => ({ note: ctx.notes.get('shared'), connected: (await ctx.status()).connected, kits: Object.keys(ctx.kit ?? {}).includes('move') });\n";
-    const setter = "export default (ctx: { notes: { set(key: string, text: string): void } }) => {\n  ctx.notes.set('shared', 'from a program');\n};\n";
-    const body = await bodyWith({ probe, setter });
+    const body = await bodyWith({ probe });
     await using(body, async () => {
-      assert.equal(runOf(await body.request("POST", "/call", { name: "setter" })).status, "ok");
+      assert.equal(runOf(await body.request("POST", "/run", { code: "notes.set('shared', 'from a program')" })).status, "ok");
       assert.deepEqual(runOf(await body.request("POST", "/call", { name: "probe" })).result, { note: "from a program", connected: true, kits: true });
     });
   });

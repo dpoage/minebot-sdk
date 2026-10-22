@@ -1,5 +1,5 @@
 // A bot host for host-process.test.ts: the real HostEvents and Triggers over the real channel,
-// with no world. After `start` it pushes one `ping` event; a trigger on `ping` fires when the
+// with no world. After `start` it pushes one `ping` event; a reflex on `ping` fires when the
 // supervisor echoes it back, and reports the seq it fired on through `trigger_fired`. Its trigger
 // store lives in the init's state directory, which the test owns.
 import path from "node:path";
@@ -20,14 +20,14 @@ process.on("message", async (message: ToHost) => {
         runner: { running: null, stop: () => false },
         connected: () => true,
         bot: () => undefined,
-        reflexes: false,
+        reflexes: true,
         run: async (_trigger, _event, started) => {
           started();
           return { status: "ok", result: null, logs: "", durationMs: 0 };
         },
         register: async () => {},
       });
-      await triggers.add({ name: "on-ping", on: ["ping"], run: "return 1;" });
+      await triggers.addReflex({ name: "on-ping", on: ["ping"], routine: "stand-in" });
       send({ kind: "ready" });
       return;
     }
