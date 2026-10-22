@@ -1,108 +1,88 @@
-// `minebot init [dir]`: scaffolds an authoring workspace. Kits are plain TypeScript files the body
-// loads from a directory; programs are TypeScript files `minebot run` sends to it; `tsc` checks both
-// against the package and the declarations `minebot types` generates for the body.
+// `minebot init [dir]`: scaffolds an authoring workspace. A routine is a TypeScript module the body
+// saves into its library; a run is a module `minebot run` sends to the body, whose `./` imports name
+// library modules; `tsc` checks both against the package, and the harness tests a routine without a server.
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
 import { PACKAGE_ROOT } from "../package.ts";
+import { ROUTINE_COMPILER_OPTIONS } from "../protocol/routine-tsconfig.ts";
 
-/** The generated declaration file's name; the tsconfig includes it and the README tells you how to produce it. */
-export const ENV_FILE = "minebot-env.d.ts";
+const EXAMPLE_ROUTINE = `// An example routine: copy it, rename it, and change what it does. Save it into a body's library
+// with: npx minebot routines save routines/*.ts
+import { defineRoutine, z } from "minebot-sdk/routine";
+import * as inventory from "minebot-sdk/routines/inventory";
 
-const EXAMPLE_KIT = `// An example kit: copy it, rename it, and change what the actions do. The body loads every .ts
-// file in kits/ (run it with --agent-kits ./kits) and reloads a file when you save it.
-import { action, defineKit, z } from "minebot-sdk/kit";
-
-// A block position, as the actions below return it.
-const Point = z.object({ x: z.number(), y: z.number(), z: z.number() });
-
-export default defineKit(
+export default defineRoutine(
   {
-    name: "hello",
-    description: "Example kit: report where the player stands, and greet in chat while walking a few blocks.",
-    // Kits this kit calls through ctx.kits; they activate together with it.
-    uses: ["move"],
+    description: "Say \`message\` in chat, then report where the player stands and how many \`items\` it carries.",
+    args: z.object({
+      message: z.string().min(1).default("hello"),
+      // An item name or glob for the inventory built-in: "oak_log" or "*_log".
+      items: z.string().default("*_log"),
+    }),
+    returns: z.object({
+      said: z.string(),
+      position: z.object({ x: z.number(), y: z.number(), z: z.number() }),
+      count: z.number(),
+    }),
   },
-  {
-    here: action({
-      doc: "Report where the player stands and its health.",
-      args: z.object({}),
-      returns: z.object({ position: Point, health: z.number() }),
-      run: (ctx) => {
-        const at = ctx.bot.entity.position.floored();
-        return { position: { x: at.x, y: at.y, z: at.z }, health: ctx.bot.health };
-      },
-    }),
-    greet: action({
-      doc: "Say \`message\` in chat, then walk \`steps\` blocks east (+x) with the move kit. Returns what was said and where the player stands.",
-      args: z.object({
-        message: z.string().default("hello"),
-        steps: z.number().int().min(0).max(20).default(0),
-      }),
-      returns: z.object({ said: z.string(), position: Point }),
-      run: async (ctx, { message, steps }) => {
-        ctx.bot.chat(message);
-        const start = ctx.bot.entity.position.floored();
-        const end = await ctx.kits.move.to({ position: [start.x + steps, start.y, start.z] });
-        return { said: message, position: { x: end.x, y: end.y, z: end.z } };
-      },
-    }),
+  async (ctx, { message, items }) => {
+    ctx.bot.chat(message);
+    const at = ctx.bot.entity.position.floored();
+    // A built-in routine is an import; calling it validates its arguments like any routine.
+    const count = await inventory.count(ctx, { items });
+    return { said: message, position: { x: at.x, y: at.y, z: at.z }, count };
   },
 );
 `;
 
-const EXAMPLE_PROGRAM = `// A program: the body of an async function that runs inside the body, with the globals the
-// generated ${ENV_FILE} declares. Run it with: npx minebot run programs/hello.ts
-const here = await kit.hello.here();
-log("standing at", here.position, "with", here.health, "health");
+const EXAMPLE_RUN = `// A run: a module the body evaluates each time \`minebot run runs/say-hello.ts\` sends it. \`./hello.ts\`
+// is the library routine \`hello\` once you have saved it, so the file name must not be the same as a
+// routine's: runs/hello.ts would import itself. What the default export returns is the run's result.
+import type { RoutineContext } from "minebot-sdk/routine";
+import hello from "./hello.ts";
 
-const greeted = await kit.hello.greet({ message: "hello from a program", steps: 2 });
-log("said", greeted.said, "and now stands at", greeted.position);
+export default (ctx: RoutineContext) => hello(ctx, { message: "hello from a run" });
 `;
 
-const EXAMPLE_TEST = `// A kit test: the harness runs the kit's actions through the real kit framework against a fake
-// bot on Minecraft's real data, with no server. Run it with: npm test
+const EXAMPLE_TEST = `// A routine test: the harness runs the routine through the same argument and result checks as a body
+// against a fake bot on Minecraft's real data, with no server. Run it with: npm test
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { createKitHarness } from "minebot-sdk/testing";
-import hello from "../kits/hello.ts";
+import { createHarness } from "minebot-sdk/testing";
+import hello from "../routines/hello.ts";
 
-test("here reports where the player stands", async () => {
-  const h = createKitHarness({ kits: [hello], position: [4.5, 64, 4.5], health: 18 });
-  const here = await h.call<{ position: { x: number; y: number; z: number }; health: number }>("hello.here");
-  assert.deepEqual(here, { position: { x: 4, y: 64, z: 4 }, health: 18 });
-});
-
-test("greet talks in chat, then walks east with the move kit", async () => {
-  const h = createKitHarness({ kits: [hello] });
-  const greeted = await h.call<{ said: string; position: { x: number } }>("hello.greet", { message: "hi", steps: 5 });
-  assert.equal(greeted.said, "hi");
+test("hello greets in chat and reports the position and the logs carried", async () => {
+  const h = createHarness({ position: [4.5, 64, 4.5], inventory: { oak_log: 3, birch_log: 2, stick: 9 } });
+  const result = await h.run(hello, { message: "hi" });
+  assert.deepEqual(result, { said: "hi", position: { x: 4, y: 64, z: 4 }, count: 5 });
   assert.deepEqual(h.chat, ["hi"]);
-  assert.ok(greeted.position.x >= 4, "walked east");
 });
 
-test("greet rejects steps beyond its schema", async () => {
-  const h = createKitHarness({ kits: [hello] });
-  await assert.rejects(h.call("hello.greet", { steps: 99 }), /kit\\.hello\\.greet arguments/);
+test("hello rejects an empty message", async () => {
+  const h = createHarness();
+  await assert.rejects(h.run(hello, { message: "" }), /arguments/);
 });
 `;
 
-function readme(): string {
-  return `# Minebot workspace
+const README = `# Minebot workspace
 
-Kits live in \`kits/\`, programs in \`programs/\`, kit tests in \`test/\`. All TypeScript, checked by \`tsc\`.
+Routines live in \`routines/\`, runs in \`runs/\`, routine tests in \`test/\`. All TypeScript, checked by \`tsc\`.
+
+- A routine is a module whose default export is \`defineRoutine({ description, args, returns }, async (ctx, args) => result)\`. The body keeps saved routines in its library and runs them by name.
+- A run is a module that \`minebot run\` sends to the body. It runs once and is gone. Its \`./x.ts\` imports are library routines, so a run calls what you saved. The result is what its default export returns (or, for a default export that is a function, what it returns when called with \`(ctx, args)\`).
+- A run file must not have the same file name as a routine: \`runs/hello.ts\` would import itself, not \`routines/hello.ts\`. Here the run is \`runs/say-hello.ts\`.
 
 1. Install: \`npm install\`
-2. Run a body that loads your kits: \`npx minebot body --agent-kits ./kits\` (add the server flags you need; \`npx minebot --help\`)
-3. Generate types for that body: \`npx minebot types --out ${ENV_FILE}\`
-4. Check: \`npx tsc\`
-5. Run a program: \`npx minebot run programs/hello.ts\`
-6. Test kits without a server: \`npm test\` (\`test/\` uses \`minebot-sdk/testing\`)
+2. Start a body (a separate process: \`npx minebot body\`, with the server flags you need; \`npx minebot --help\`)
+3. Save the routines into its library: \`npx minebot routines save routines/*.ts\`. It prints \`saved hello\` with its version and time, and \`type check: passed\` (or the errors tsc found).
+4. Bind a name and call it: \`npx minebot bind action hello hello\`, then \`npx minebot call hello\`. It prints \`status: ok\` and a result \`{ said, position, count }\`: \`said\` is "hello" (give another with \`--args '{"message":"hi"}'\`), \`position\` where the player stands, and \`count\` how many logs it carries.
+5. Run the run: \`npx minebot run runs/say-hello.ts\`. It prints \`status: ok\` and the same kind of result, with \`said\` "hello from a run".
+6. Test routines without a server: \`npm test\` (\`test/\` uses \`minebot-sdk/testing\`)
+7. Check types: \`npx tsc\`. Because the tsconfig lists both folders in \`rootDirs\`, an error in a routine's signature shows up where a run calls it.
 
-Saving a kit file reloads it on the running body. Regenerate \`${ENV_FILE}\` after the body's kits change.
-Kit files import from \`"minebot-sdk/kit"\` only; \`npx minebot kits source move\` shows a built-in kit written the same way.
+Saving a routine again replaces it on the running body. \`npx minebot builtins docs\` lists the built-in routines you may import from \`minebot-sdk/routines/<module>\`.
 `;
-}
 
 const OwnPackage = z.object({
   version: z.string(),
@@ -126,24 +106,17 @@ async function packageJson(dir: string): Promise<string> {
   )}\n`;
 }
 
+// The body's routine check options, plus what only a workspace has: the Node types it installs, and the run folder.
+// The body's check also sets customConditions when it runs from source; a workspace takes the installed package.
 const TSCONFIG = `${JSON.stringify(
   {
     compilerOptions: {
-      target: "es2023",
-      module: "nodenext",
-      strict: true,
-      noEmit: true,
-      skipLibCheck: true,
-      // No DOM: its globals (`status`, `name`, ...) would collide with the program globals. esnext: Node 24
-      // has Promise.withResolvers, which the built-in kits use; the body's type check uses the same lib.
-      lib: ["esnext"],
+      ...ROUTINE_COMPILER_OPTIONS,
       types: ["node"],
-      // Every file is a module, so a program may use top-level await.
-      moduleDetection: "force",
-      // Tests import a kit by its file name.
-      allowImportingTsExtensions: true,
+      // A run's \`./hello.ts\` names a library module, which is routines/hello.ts here: the two folders read as one.
+      rootDirs: ["routines", "runs"],
     },
-    include: ["kits/**/*.ts", "programs/**/*.ts", "test/**/*.ts", ENV_FILE],
+    include: ["routines/**/*.ts", "runs/**/*.ts", "test/**/*.ts"],
   },
   null,
   2,
@@ -154,10 +127,10 @@ export async function initWorkspace(dir: string): Promise<string[]> {
   const files: [string, string][] = [
     ["package.json", await packageJson(dir)],
     ["tsconfig.json", TSCONFIG],
-    [".gitignore", "node_modules\nkits/.history/\n.minebot/\n"],
-    ["README.md", readme()],
-    ["kits/hello.ts", EXAMPLE_KIT],
-    ["programs/hello.ts", EXAMPLE_PROGRAM],
+    [".gitignore", "node_modules\n.minebot/\n"],
+    ["README.md", README],
+    ["routines/hello.ts", EXAMPLE_ROUTINE],
+    ["runs/say-hello.ts", EXAMPLE_RUN],
     ["test/hello.test.ts", EXAMPLE_TEST],
   ];
   const written: string[] = [];

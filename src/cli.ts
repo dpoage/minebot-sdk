@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // The `minebot` command: a thin client. Everything heavy loads on demand — the body for
 // `minebot body`, the MCP server for `minebot mcp` — so a client-only install works without them.
-import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { text } from "node:stream/consumers";
 import { parseArgs } from "node:util";
@@ -9,8 +9,7 @@ import { BodyClient } from "./client/client.ts";
 import { formatBound, formatBuiltinHits, formatBuiltins, formatLibrary, formatRevertedRoutine, formatRoutineVersions, formatRun, formatSavedRoutine, formatStatus } from "./client/render.ts";
 import { HAS_BODY, usageFor } from "./client/usage.ts";
 import { BODY_FLAG_OPTIONS, OPERATOR_FLAG_HELP } from "./client/body-flags.ts";
-import { ENV_FILE, initWorkspace } from "./client/init.ts";
-import { generateEnv } from "./protocol/declarations.ts";
+import { initWorkspace } from "./client/init.ts";
 import { CAPABILITY_GATES, DEFAULT_SERVER_HOST, DEFAULT_SERVER_PORT, type BodyFeatures, RUNTIME_DIR, type RunResult } from "./protocol/index.ts";
 
 const { values: opts, positionals } = parseArgs({
@@ -27,7 +26,6 @@ const { values: opts, positionals } = parseArgs({
     from: { type: "string" },
     match: { type: "string" },
     args: { type: "string" },
-    out: { type: "string" },
     on: { type: "string" },
     when: { type: "string" },
     cooldown: { type: "string" },
@@ -291,19 +289,7 @@ async function main(): Promise<number> {
       const written = await initWorkspace(dir);
       for (const file of written) console.log(`wrote ${path.join(dir, file)}`);
       if (written.length === 0) console.log(`${dir} already has every workspace file`);
-      console.log(`\nNext: cd ${dir} && npm install, then \`minebot types --out ${ENV_FILE}\` and \`npx tsc\`.`);
-      return 0;
-    }
-    case "types": {
-      const client = await BodyClient.connect(opts.bot);
-      const bodyFeatures = await client.features();
-      const env = generateEnv(bodyFeatures);
-      if (opts.out === undefined) process.stdout.write(env);
-      else {
-        await mkdir(path.dirname(path.resolve(opts.out)), { recursive: true });
-        await writeFile(opts.out, env);
-        console.error(`wrote ${opts.out}`);
-      }
+      console.log(`\nNext: cd ${dir} && npm install, then \`npx tsc\` and \`npm test\`. Start a body, save the routines with \`minebot routines save routines/*.ts\`, and bind one with \`minebot bind action hello hello\`; README.md has the rest.`);
       return 0;
     }
     case "wiki": {
