@@ -3,7 +3,7 @@
 // and the run scope's refusal of subscriptions after the run's abort (mb-jg8).
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
-import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { after, describe, it } from "node:test";
@@ -11,7 +11,7 @@ import type { Bot } from "mineflayer";
 import { BodyState } from "../src/host/state.ts";
 import { ProgramRunner } from "../src/program/runner.ts";
 import type { ProgramScope } from "../src/program/scope.ts";
-import { type RoutineCallEnd, type RoutineCallObserver, withObserver } from "../src/routine/define.ts";
+import { BODY_STORES, type RoutineCallEnd, type RoutineCallObserver, withObserver } from "../src/routine/define.ts";
 import { invokeRoutine } from "../src/routine/invoke.ts";
 import * as publicRoutine from "../src/routine/public.ts";
 import { defineRoutine, z, type RoutineContext } from "../src/routine/public.ts";
@@ -237,6 +237,15 @@ describe("ctx.store", () => {
     for (const namespace of INVALID) assert.throws(() => state.routineStore(namespace), /ctx\.store namespace .* is not allowed: use 1-48 lowercase letters, digits, _ and -; start with a letter/, namespace);
     for (const namespace of ["notes", "body"]) assert.throws(() => state.routineStore(namespace), new RegExp(`ctx\\.store namespace "${namespace}" is reserved for the body's own state`));
     assert.equal(state.notes.get("k")?.text, "kept");
+  });
+
+  it("refuses to routines exactly the stores the body writes its own state to", () => {
+    const dir = path.join(SCRATCH, "state-own");
+    const state = new BodyState(dir);
+    state.notes.set("k", "v");
+    state.setMilestones({ m: 1 });
+    assert.deepEqual(readdirSync(path.join(dir, "stores")).sort(), Object.values(BODY_STORES).map((name) => `${name}.json`).sort());
+    for (const namespace of Object.values(BODY_STORES)) assert.throws(() => state.routineStore(namespace), /is reserved for the body's own state/, namespace);
   });
 
   it("is in memory and per harness in the harness, under the same rule", async () => {

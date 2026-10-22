@@ -10,7 +10,7 @@ const OBSERVER = Symbol.for("minebot-sdk.routine-observer");
 
 /** What a routine says about itself: enforced when the routine is called. */
 export interface RoutineMeta<A extends z.ZodType = z.ZodType, R extends z.ZodType = z.ZodType> {
-  /** The routine's name in messages and call records, `module.routine` for a built-in; a call of a routine without one is reported as "routine". */
+  /** The routine's name, `module.routine` for a built-in. A direct call `routine(ctx, args)` names the routine by it in its error messages, or as "routine" when it has none. */
   name?: string;
   description?: string;
   /** The arguments a call may pass; a call that does not match fails before the routine runs, and the routine receives the parsed value, defaults applied. */
@@ -38,7 +38,8 @@ export type RoutineCallEnd = { ok: true } | { ok: false; message: string; aborte
 /**
  * Told of every call of a routine value made with a context that carries it: at the start, with
  * the arguments as the caller passed them, and at the end through the function it returns.
- * `name` is the routine's declared `meta.name`.
+ * `name` is the routine's declared `meta.name`. An observer must not throw: a throw at the start
+ * rejects the call before the routine runs, and a throw at the end replaces the call's outcome.
  */
 export type RoutineCallObserver = (call: { routine: Routine; name?: string; args: unknown }) => (end: RoutineCallEnd) => void;
 
@@ -53,8 +54,10 @@ export function observerOf(ctx: object): RoutineCallObserver | undefined {
   return typeof observer === "function" ? (observer as RoutineCallObserver) : undefined;
 }
 
-/** Names that hold the body's own state files beside the routines' stores. */
-const RESERVED_STORES: readonly string[] = ["notes", "body"];
+/** The stores under `<state>/stores/` that hold the body's own state: `BodyState` opens them by these names, and `checkStoreNamespace` refuses them to routines. */
+export const BODY_STORES = { notes: "notes", body: "body" } as const;
+
+const RESERVED_STORES: readonly string[] = Object.values(BODY_STORES);
 
 /** Throws, naming the rule, unless `namespace` may name a routine store: a routine name that is not one of the body's own. */
 export function checkStoreNamespace(namespace: string): void {
