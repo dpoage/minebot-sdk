@@ -8,7 +8,7 @@ import { MC_VERSION } from "../src/mc/version.ts";
 import { formatPage, Wiki, WIKI_DIR, WikiDisabledError, WikiPageNotFoundError } from "../src/wiki/wiki.ts";
 import { FULL_VIEW, WikiAccess, wikiView, type WikiView } from "../src/wiki/access.ts";
 import { WikiFeature } from "../src/protocol/index.ts";
-import { BUILTIN_MODULES } from "../src/routines/index.ts";
+import { BUILTINS_VOCABULARY, markedLines, REFLEXES_VOCABULARY, strayVocabulary, WIKI_SEARCH_QUERIES } from "./helpers/wiki-vocabulary.ts";
 import { chunk, compress, dataPages, loadMinecraftData } from "../scripts/wiki-reference.ts";
 
 async function fixture(): Promise<{ root: string; lessons: string }> {
@@ -245,32 +245,6 @@ describe("repository wiki", () => {
   const VIEWS: WikiView[] = Array.from({ length: 1 << WikiFeature.options.length }, (_, bits) =>
     Object.fromEntries(WikiFeature.options.map((feature, i) => [feature, ((bits >> i) & 1) === 1])) as WikiView,
   );
-  const MARKER = new RegExp(`<!-- (/?)(${WikiFeature.options.join("|")}) -->`);
-
-  /** Each feature's marked lines on a repository page, parsed from its raw file: the trimmed lines inside its `<!-- feature -->` blocks that no line outside them repeats. */
-  function markedLines(id: string): Record<WikiFeature, string[]> {
-    const lines: { feature: WikiFeature | null; text: string }[] = [];
-    let open: WikiFeature | null = null;
-    for (const line of readFileSync(path.join(WIKI_DIR, `${id}.md`), "utf8").split("\n")) {
-      const text = line.trim();
-      const marker = MARKER.exec(text);
-      if (!marker) {
-        if (text) lines.push({ feature: open, text });
-        continue;
-      }
-      assert.equal(marker[0], text, `${id}: a marker must be alone on its line: ${text}`);
-      const feature = marker[2] as WikiFeature;
-      assert.equal(open, marker[1] ? feature : null, `${id}: unbalanced ${text}`);
-      open = marker[1] ? null : feature;
-    }
-    assert.equal(open, null, `${id}: <!-- ${open} --> is never closed`);
-    const marked = Object.fromEntries(WikiFeature.options.map((feature) => [feature, [] as string[]])) as Record<WikiFeature, string[]>;
-    for (const { feature, text } of lines) {
-      if (feature && !marked[feature].includes(text) && !lines.some((other) => other.feature !== feature && other.text === text)) marked[feature].push(text);
-    }
-    return marked;
-  }
-
   const viewName = (view: WikiView) => WikiFeature.options.filter((feature) => view[feature]).join("+") || "no features";
 
   it("shows each page's marked lines exactly in the views with their feature, in the page text and in search", () => {
@@ -302,24 +276,23 @@ describe("repository wiki", () => {
     }
   });
 
-  it("marks every built-in routine a page names unless the page requires built-ins, so a view without built-ins names none", () => {
+  it("shows a view none of the words of a feature it lacks, in a page's text, title, or tags, or in a search result", () => {
     const wiki = Wiki.load(WIKI_DIR);
-    const calls = BUILTIN_MODULES.flatMap((module) => Object.keys(module.routines).map((routine) => `${module.name}.${routine}`));
-    // `bot.inventory.count` is Mineflayer's, not the inventory.count routine: a name preceded by `.` or a word character is not a call.
-    const names = new RegExp(`(?<![\\w.])(?:${calls.map((call) => call.replace(".", "\\.")).join("|")})\\b|minebot-sdk/routines/`);
-    for (const view of VIEWS.filter((v) => !v.builtins)) {
+    for (const view of VIEWS) {
       for (const { id } of wiki.list(undefined, view)) {
         const page = wiki.read(id, view);
-        for (const text of [formatPage(page), page.meta.tags.join(" ")]) assert.doesNotMatch(text, names, `${id} with ${viewName(view)} names a built-in routine`);
+        assert.deepEqual(strayVocabulary(`${formatPage(page)}\n${page.meta.tags.join(" ")}`, view), [], `${id} with ${viewName(view)}`);
       }
-    }
-    for (const view of [VIEWS[0]!, { ...FULL_VIEW, builtins: false }]) {
-      for (const call of calls) {
-        for (const hit of wiki.search(call, 20, view)) {
-          assert.doesNotMatch(`${hit.title} ${hit.tags.join(" ")} ${hit.snippet}`, names, `search "${call}" with ${viewName(view)} shows ${hit.id}: ${hit.snippet}`);
+      for (const query of WIKI_SEARCH_QUERIES) {
+        for (const hit of wiki.search(query, 20, view)) {
+          assert.deepEqual(strayVocabulary(`${hit.title}\n${hit.tags.join(" ")}\n${hit.snippet}`, view), [], `search "${query}" with ${viewName(view)} shows ${hit.id}`);
         }
       }
     }
+  });
+
+  it("searches with every word of the built-ins' and reflexes' vocabulary", () => {
+    for (const pattern of [...BUILTINS_VOCABULARY, ...REFLEXES_VOCABULARY]) assert.ok(WIKI_SEARCH_QUERIES.some((query) => pattern.test(query)), `no query has ${pattern}`);
   });
 });
 
