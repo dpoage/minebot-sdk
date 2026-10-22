@@ -169,6 +169,35 @@ describe("the capability table", () => {
     }
   });
 
+  it("tags every built-in route with the builtins capability, and offers built-ins exactly when the offered set is not empty", () => {
+    const daemon = readFileSync(new URL("../src/host/routes.ts", import.meta.url), "utf8");
+    for (const path of ["/builtins", "/builtins/docs", "/builtins/search", "/builtins/source"]) {
+      assert.match(daemon, new RegExp(`method: "GET",\\s*path: "${path}",\\s*capability: "builtins",`), `GET ${path} must name the builtins capability`);
+    }
+    for (const builtins of [[], ["move"], ["move", "gatherer"]]) {
+      const features = { ...EVERYTHING, builtins };
+      assert.equal(capabilities(features).builtins, builtins.length > 0);
+      assert.equal(CAPABILITY_GATES.builtins(features), builtins.length > 0);
+      assert.equal(/\bbuiltins\b/.test(usageFor(features, false)), builtins.length > 0, "usage");
+      assert.equal(/Built-in routines: /.test(programApiDoc(features)), builtins.length > 0, "api doc");
+      assert.equal(toolPlan(features, "full").list_builtins!.enabled, builtins.length > 0, "tool plan");
+    }
+  });
+
+  it("names an offered module only in the program reference's one built-in line: the commands, the tools and the rest of the reference do not depend on which modules are offered", () => {
+    const few = { ...EVERYTHING, builtins: ["move"] };
+    const many = { ...EVERYTHING, builtins: ["move", "gatherer", "crafter"] };
+    for (const toolSet of TOOL_SETS) assert.deepEqual(toolPlan(few, toolSet), toolPlan(many, toolSet), toolSet);
+    assert.equal(usageFor(few, false), usageFor(many, false));
+    const line = /^Built-in routines: .*$/m;
+    assert.match(programApiDoc(many), /^Built-in routines: move, gatherer, crafter\./m);
+    assert.equal(programApiDoc(few).replace(line, ""), programApiDoc(many).replace(line, ""));
+    // And with the library off, the line only describes how to look them up.
+    const withoutLibrary = programApiDoc({ ...many, routines: false });
+    assert.match(withoutLibrary, /^Built-in routines: move, gatherer, crafter\. Reference: minebot builtins docs/m);
+    assert.doesNotMatch(withoutLibrary, /minebot-sdk\/routines\/|POST \/call/);
+  });
+
   it("describes routines in the program reference exactly when the body offers them, and lists only the ctx members it offers", () => {
     assert.match(programApiDoc(EVERYTHING), /Routines: /);
     assert.doesNotMatch(programApiDoc(withOff("routines")), /Routines: /);

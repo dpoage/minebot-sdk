@@ -14,6 +14,7 @@ const CLI = [...process.execArgv, path.join(import.meta.dirname, "..", "src", "c
 
 const CORE = ["api_reference", "bind_routine", "builtin_docs", "call_routine", "get_events", "kit_docs", "observe", "run_program", "stop_program", "wait_for"];
 const ROUTINE_TOOLS = ["bind_routine", "call_routine", "list_routines", "routine_revert", "routine_save", "routine_source", "routine_versions", "unbind_routine"];
+const BUILTIN_TOOLS = ["builtin_docs", "builtin_search", "builtin_source", "list_builtins"];
 const FULL = [
   ...CORE,
   "kit_remove", "kit_revert", "kit_save", "kit_search", "kit_source", "kit_try", "kit_versions", "list_kits",
@@ -69,6 +70,18 @@ describe("minebot mcp tool sets", () => {
       for (const args of [[], ["--tools", "full"]]) {
         const served = await tools(bare, ...args);
         assert.deepEqual(served.filter((name) => ROUTINE_TOOLS.includes(name)), [], args.join(" "));
+      }
+    } finally {
+      server.close();
+    }
+  });
+
+  it("serves the built-in tools exactly when the body offers built-ins, builtin_docs in the core set and the rest with --tools full", async () => {
+    const { server, url: none } = await stubBody({ ...EVERYTHING, builtins: [] });
+    try {
+      for (const args of [[], ["--tools", "full"]]) {
+        assert.deepEqual((await tools(none, ...args)).filter((name) => BUILTIN_TOOLS.includes(name)), [], `no built-ins, ${args.join(" ")}`);
+        assert.deepEqual((await tools(url, ...args)).filter((name) => BUILTIN_TOOLS.includes(name)), args.length === 0 ? ["builtin_docs"] : BUILTIN_TOOLS, `built-ins, ${args.join(" ")}`);
       }
     } finally {
       server.close();

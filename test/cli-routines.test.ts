@@ -15,8 +15,8 @@ import { after, before, describe, it } from "node:test";
 import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-import { formatBound, formatLibrary, formatRevertedRoutine, formatRoutineVersions, formatRun, formatSavedRoutine } from "../src/client/render.ts";
-import type { BindingInfo, BodyFeatures, KitTypeCheck, RoutineInfo, RoutineVersion, RunResult } from "../src/protocol/index.ts";
+import { formatBound, formatBuiltinHits, formatBuiltins, formatLibrary, formatRevertedRoutine, formatRoutineVersions, formatRun, formatSavedRoutine } from "../src/client/render.ts";
+import type { BindingInfo, BodyFeatures, BuiltinInfo, BuiltinSearchHit, KitTypeCheck, RoutineInfo, RoutineVersion, RunResult } from "../src/protocol/index.ts";
 import { type FakeBody, removeScratch, startFakeBody } from "./fixtures/host/fake-body.ts";
 
 const exec = promisify(execFile);
@@ -306,6 +306,127 @@ describe("the routine commands of the CLI, against the HTTP contract", () => {
       const action = await minebot(stub.url, "bind", "action", "act", "act");
       assert.equal(action.code, 0, action.err);
       assert.deepEqual(stub.seen.map((request) => request.url), ["/bind"]);
+    } finally {
+      stub.server.close();
+    }
+  });
+});
+
+describe("the built-in commands of the CLI and tools of the MCP server, against a recording body", () => {
+  const WITH = { ...FEATURES, builtins: ["move", "gatherer"] };
+  const INFOS: BuiltinInfo[] = [
+    { name: "move", description: "Walk.", uses: [], routines: ["to", "stop"], stats: { to: { ok: 3, failed: 1, lastError: "no path\nat x" } } },
+    { name: "gatherer", description: "Gather.", uses: ["move"], routines: ["gather"], stats: {} },
+  ];
+  const HITS: BuiltinSearchHit[] = [{ module: "move", score: 4.2, text: "Walk." }, { module: "move", routine: "to", score: 3.1, text: "Walk within range.", stats: { ok: 3, failed: 1 } }];
+  const DOCS = "## move\nWalk.\nUses no other built-in modules.\n### move.to(ctx, { position })";
+  const SOURCE = "export const description = 'Walk.';\n";
+  const requests = (stub: { seen: Seen[] }) => stub.seen.map((request) => `${request.method} ${request.url}`);
+  const answers: Answers = {
+    "GET /builtins": { status: 200, body: { builtins: INFOS } },
+    "GET /builtins/docs": { status: 200, body: { docs: DOCS } },
+    "GET /builtins/search": { status: 200, body: { hits: HITS } },
+    "GET /builtins/source": { status: 200, body: { name: "move", source: SOURCE } },
+    "POST /call": { status: 200, body: OK_RUN },
+  };
+
+  it("sends the contract's request and prints the formatter's text for each command", async () => {
+    const stub = await stubBody(WITH, answers);
+    try {
+      const cases: [string[], string][] = [
+        [["builtins"], formatBuiltins(INFOS)],
+        [["builtins", "docs", "move", "gatherer"], DOCS],
+        [["builtins", "docs"], DOCS],
+        [["builtins", "search", "walk", "to", "--limit", "3"], formatBuiltinHits(HITS)],
+        [["builtins", "source", "move"], SOURCE],
+        [["call", "move.to", "--args", '{"position":[1,2,3]}', "--timeout", "500"], formatRun(OK_RUN)],
+      ];
+      for (const [args, stdout] of cases) {
+        const result = await minebot(stub.url, ...args);
+        assert.equal(result.code, 0, `${args.join(" ")}: ${result.err}`);
+        assert.equal(result.out, `${stdout}\n`, args.join(" "));
+      }
+      assert.deepEqual(stub.seen, [
+        { method: "GET", url: "/builtins" },
+        { method: "GET", url: "/builtins/docs?names=move%2Cgatherer" },
+        { method: "GET", url: "/builtins/docs?names=" },
+        { method: "GET", url: "/builtins/search?q=walk%20to&limit=3" },
+        { method: "GET", url: "/builtins/source?name=move" },
+        { method: "POST", url: "/call", body: { name: "move.to", args: { position: [1, 2, 3] }, timeoutMs: 500 } },
+      ].map((request) => ({ body: undefined, ...request })));
+      // A search that finds nothing says so.
+      const none = await stubBody(WITH, { "GET /builtins/search": { status: 200, body: { hits: [] } } });
+      try {
+        assert.equal((await minebot(none.url, "builtins", "search", "xyzzy")).out, "no matching built-ins\n");
+      } finally {
+        none.server.close();
+      }
+    } finally {
+      stub.server.close();
+    }
+  });
+
+  it("sends nothing for a command line it can tell is wrong", async () => {
+    const stub = await stubBody(WITH, answers);
+    try {
+      for (const [args, message] of [
+        [["builtins", "search"], /needs a query/],
+        [["builtins", "source"], /needs a module name/],
+        [["builtins", "frobnicate"], /unknown builtins action "frobnicate"; use docs, search, or source/],
+      ] as const) {
+        const result = await minebot(stub.url, ...args);
+        assert.equal(result.code, 1, args.join(" "));
+        assert.match(result.err, message, args.join(" "));
+      }
+      assert.deepEqual(stub.seen, []);
+    } finally {
+      stub.server.close();
+    }
+  });
+
+  it("answers the built-in command of a body without built-ins as an unknown command, whose usage names none", async () => {
+    const stub = await stubBody(FEATURES, {});
+    try {
+      const result = await minebot(stub.url, "builtins");
+      assert.equal(result.code, 1);
+      assert.match(result.err, /^unknown command: builtins\n/);
+      assert.doesNotMatch(result.err.slice(result.err.indexOf("\n")), /builtin|built-in/i);
+      assert.deepEqual(stub.seen, []);
+    } finally {
+      stub.server.close();
+    }
+  });
+
+  it("serves builtin_docs in the core set and the other built-in tools in the full set, over the contract's requests", async () => {
+    const stub = await stubBody(WITH, answers);
+    try {
+      const core = await withMcp(stub.url, [], async (client) => ({
+        docs: await tool(client, "builtin_docs", { modules: ["move", "gatherer"] }),
+        all: await tool(client, "builtin_docs", {}),
+        call: await tool(client, "call_routine", { name: "move.to", args: { position: [1, 2, 3] }, timeout_ms: 500 }),
+      }));
+      assert.deepEqual([core.docs.content[0]!.text, core.all.content[0]!.text, core.call.content[0]!.text], [DOCS, DOCS, formatRun(OK_RUN)]);
+      assert.deepEqual(requests(stub), ["GET /builtins/docs?names=move%2Cgatherer", "GET /builtins/docs?names=", "POST /call"]);
+      assert.deepEqual(stub.seen[2]!.body, { name: "move.to", args: { position: [1, 2, 3] }, timeoutMs: 500 });
+      stub.seen.length = 0;
+      const full = await withMcp(stub.url, ["--tools", "full"], async (client) => ({
+        list: await tool(client, "list_builtins", {}),
+        search: await tool(client, "builtin_search", { query: "walk", limit: 2 }),
+        source: await tool(client, "builtin_source", { name: "move" }),
+      }));
+      assert.deepEqual([full.list.content[0]!.text, full.search.content[0]!.text, full.source.content[0]!.text], [formatBuiltins(INFOS), formatBuiltinHits(HITS), SOURCE]);
+      assert.deepEqual(requests(stub), ["GET /builtins", "GET /builtins/search?q=walk&limit=2", "GET /builtins/source?name=move"]);
+    } finally {
+      stub.server.close();
+    }
+  });
+
+  it("takes a built-in's call name in call_routine only from a body that offers built-ins", async () => {
+    const stub = await stubBody(FEATURES, answers);
+    try {
+      const answer = await withMcp(stub.url, [], (client) => tool(client, "call_routine", { name: "move.to" }));
+      assert.equal(answer.isError, true, "the tool's own schema refuses a dotted name");
+      assert.deepEqual(stub.seen, []);
     } finally {
       stub.server.close();
     }
