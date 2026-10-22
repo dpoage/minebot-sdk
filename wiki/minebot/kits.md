@@ -1,7 +1,7 @@
 ---
 title: Kits are composable libraries of actions you can swap
 tags: [kits, kit, actions, gather, craft, build, explore, social, swap, primitives]
-requires: [kits]
+requires: [builtins]
 verified_by: "smoke-tested on the 26.1 dev server, 2026-10-18"
 mc_version: "26.1"
 ---
@@ -41,7 +41,7 @@ Kits come in two layers. Primitives are small kits that do one thing; routine ki
 
 A routine kit reaches another kit only through the public actions of the kits it declares in `uses`, so anything a routine kit does, you can do too — and combine differently.
 
-<!-- agentKits -->
+<!-- routines -->
 ## Your own kits
 
 You can save kits of your own, in the same shape as the built-ins: one import from `minebot-sdk/kit` (the only import a kit may have), then one exported kit (`export default`, or `export const <name> = defineKit(...)` as the built-ins are written; other exports are ignored):
@@ -71,4 +71,4 @@ export default defineKit(
 ```
 
 Save it from a program with `await kits.save(source)`, or from the terminal with `minebot kits save <file>`. Nothing is written when the source is rejected: it must compile, use only kits this body offers, not take a built-in kit's name, and pass the escape audit. `kits.source("move")` prints a built-in kit's source — start from it. A saved kit is offered and active immediately. Several bodies can share the kit directory: a kit one body saves works on the others without a restart. Run an action once before you save the kit with `kits.try(source, { action, args })`, and take a save back with `kits.revert(name, version)`; see `minebot/writing-kits`.
-<!-- /agentKits -->
+<!-- /routines -->

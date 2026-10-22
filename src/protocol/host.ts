@@ -97,8 +97,6 @@ export type HostInit = Omit<DaemonOptions, "apiHost" | "apiPort" | "token" | "hi
   startedAt: string;
   deaths: number;
   reconnects: number;
-  /** The kit set to activate, when it is not the catalog's default. */
-  active?: string[];
   /** Each reflex's run of failures, as the host this one replaces last reported it. */
   triggerFailures?: Record<string, number>;
   /** The reflex firing the replaced host ended in: this host records its end as if the firing had finished here. */
@@ -135,9 +133,9 @@ export type FromHost =
   | { kind: "event"; type: string; data: Record<string, unknown> }
   /**
    * A program is about to run; user code starts only after the matching `run_ack`. `requestId` is
-   * the forwarded request the run answers (/run, /call, /kits/try); `trigger` is the definition a reflex's run fires, which has no request.
+   * the forwarded request the run answers (/run, /call); `trigger` is the definition a reflex's run fires, which has no request.
    */
-  | { kind: "run_started"; runId: number; code: string; timeoutMs: number; extra: object; kits: string[]; requestId?: number; trigger?: FiringOf }
+  | { kind: "run_started"; runId: number; code: string; timeoutMs: number; extra: object; requestId?: number; trigger?: FiringOf }
   /**
    * The run ended; the run settles once the matching `run_ack` arrives. `result: null` means it threw
    * before producing one (not connected, busy): the run is over and leaves no final history line.
@@ -160,7 +158,7 @@ export type FromHost =
    */
   | { kind: "run_delivered"; runId: number; finished?: TriggerFinished; disabled?: TriggerDisabled; triggerFailures?: Record<string, number> }
   /** Code the body will run later (a reflex's `when`), for the history's audit; answered by `run_ack` like a run. */
-  | { kind: "register"; runId: number; code: string; extra: object; kits: string[] }
+  | { kind: "register"; runId: number; code: string; extra: object }
   /**
    * The reflexes' failures after a change no run's delivery carries: the counts a host starts with
    * (the firing it was started to count included), a firing that ended with no run of the
@@ -169,7 +167,7 @@ export type FromHost =
    * counts reach the supervisor.
    */
   | { kind: "trigger_counts"; triggerFailures: Record<string, number>; finished?: TriggerFinished; disabled?: TriggerDisabled }
-  | { kind: "state"; connected: boolean; deaths: number; reconnects: number; active: string[] }
+  | { kind: "state"; connected: boolean; deaths: number; reconnects: number }
   /**
    * The host is exiting because of an uncaught exception or unhandled rejection; sent as the last
    * message, and written before the host exits. The error's text and frame travel in this one message.

@@ -1,10 +1,9 @@
 // One Minecraft player: a Mineflayer connection that reconnects, an event log, a program runner,
-// kits, the wiki, and persistent notes and milestones. The composition root (the daemon) injects
-// the kit catalog and the wiki; Body wires them into the program environment.
+// the built-in routines, the wiki, and persistent notes and milestones. The composition root (the daemon) injects
+// the built-in offer and the wiki; Body wires them into the program environment.
 import { grade, MilestoneSet, type MilestoneProgress } from "../milestones/milestones.ts";
 import { capabilities, type BodyEvent, type BodyFeatures, type Observation, type RunResult, type StatusResponse, type WikiMode } from "../protocol/index.ts";
 import { BusyError, ProgramRunner, type RunOutcome } from "../program/runner.ts";
-import type { KitHost } from "../kit/kit.ts";
 import type { Wiki } from "../wiki/wiki.ts";
 import { WikiAccess, wikiView } from "../wiki/access.ts";
 import { Connection, type ServerAuth } from "./connection.ts";
@@ -29,10 +28,8 @@ export interface BodyOptions {
   authCacheDir: string;
   host: string;
   port: number;
-  /** Owner of the state directory: notes, per-kit stores, milestones, agent kits. */
+  /** Owner of the state directory: notes, routine stores, milestones, reflexes, bindings. */
   state: BodyState;
-  /** The kit catalog and active set, built by the composition root. */
-  kits: KitHost;
   /** The built-in routine modules the body offers, and the counter of calls into them. */
   builtins: Builtins;
   /** Curated wiki pages; null for none. */
@@ -41,12 +38,6 @@ export interface BodyOptions {
   wikiMode: WikiMode;
   /** Let the agent read, set, and grade milestones. Default: true. A body without them neither mentions nor serves them. */
   milestonesEnabled?: boolean;
-  /** Whether agents may save and remove their own kits. */
-  agentKits: boolean;
-  /** Re-reads the agent-kit directory before each program run, so kits other bodies save appear. */
-  syncKits?: () => void;
-  /** Authoring hooks for the program globals; wired to the kit library by the daemon. */
-  kitAuthoring?: GlobalsDeps["kitAuthoring"];
   /** Let the agent bind reflexes. Default: true. A body without them neither mentions nor serves them. */
   triggersEnabled?: boolean;
   /** Loads the routines a call runs; undefined for a body without routines. */
@@ -97,12 +88,11 @@ export interface RunRecorder {
 
 /**
  * One Minecraft player: a Mineflayer connection that reconnects, an event log, a program runner,
- * kits, the wiki, and persistent notes and milestones.
+ * the built-in routines, the wiki, and persistent notes and milestones.
  */
 export class Body {
   readonly events: EventSink;
   readonly runner: ProgramRunner;
-  readonly kits: KitHost;
   readonly wiki: WikiAccess;
   readonly notes: Notes;
   /** The agent's reflexes; null on a body that has them turned off. */
@@ -116,7 +106,6 @@ export class Body {
     this.#options = options;
     this.events = options.events;
     this.state = options.state;
-    this.kits = options.kits;
     this.notes = options.state.notes;
     this.#connection = new Connection({
       username: options.username,
@@ -131,7 +120,7 @@ export class Body {
     this.wiki = new WikiAccess(options.wiki, options.wikiMode, options.username, () => wikiView(this.features));
     this.runner = new ProgramRunner({
       // Only the features the body offers become globals, so a program cannot find the others.
-      globals: (scope) => programGlobals(scope, this.#environment()),
+      globals: () => programGlobals(this.#environment()),
       events: () => this.#connection.bot ?? undefined,
       onAbort: () => this.#connection.halt(),
     });
@@ -158,23 +147,18 @@ export class Body {
   #environment(): GlobalsDeps {
     return {
       connection: this.#connection,
-      kits: this.kits,
       wiki: this.wiki,
       notes: this.notes,
       store: (namespace) => this.#options.state.routineStore(namespace),
       observe: this.#options.builtins.observe,
       features: () => this.features,
       status: () => this.status(),
-      ...(capabilities(this.features).agentKits && this.#options.kitAuthoring && { kitAuthoring: this.#options.kitAuthoring }),
     };
   }
 
   /** The optional parts of this body. Everything an agent can see derives from this. */
   get features(): BodyFeatures {
     return {
-      kits: this.kits.active,
-      kitsLocked: this.kits.locked,
-      agentKits: this.#options.agentKits,
       wiki: this.wiki.mode,
       lessons: this.wiki.lessons,
       milestones: this.#options.milestonesEnabled ?? true,
@@ -190,7 +174,6 @@ export class Body {
    * A hung run comes back flagged: its host is about to be killed, and the supervisor logs its end.
    */
   async run(code: string, timeoutMs?: number): Promise<RunOutcome> {
-    this.#options.syncKits?.();
     return this.#ended(await this.runner.run(code, timeoutMs));
   }
 
@@ -219,7 +202,6 @@ export class Body {
 
   /** One call as a run: `invoke` runs inside it with the context of the run, and an error reports the frames inside `sourceDir`. */
   async #called(invoke: (ctx: RoutineContext) => Promise<unknown>, sourceDir: string, timeoutMs?: number): Promise<RunOutcome> {
-    this.#options.syncKits?.();
     const environment = this.#environment();
     // Not connected answers as a program does, not as a run that failed.
     this.#connection.requireBot();
@@ -251,7 +233,6 @@ export class Body {
    * `reflex_finished` event, not `program_finished`, so an agent waiting on its own programs is not woken by reflexes.
    */
   async #runTrigger(reflex: StoredReflex, event: BodyEvent, started: () => void): Promise<RunResult> {
-    this.#options.syncKits?.();
     const run = () => {
       if (this.runner.running) throw new BusyError();
       started();
@@ -348,10 +329,8 @@ export class Body {
       };
     }
     const running = this.runner.running;
-    const kitsOffered = capabilities(this.features).kits;
     return observation(bot, {
       programsWithoutChange: this.#stall.streak,
-      activeKits: kitsOffered ? this.kits.active : undefined,
       program: running ? { running: true, elapsedMs: running.elapsedMs } : { running: false },
     });
   }

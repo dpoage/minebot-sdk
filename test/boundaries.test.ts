@@ -6,10 +6,10 @@ import { describe, it } from "node:test";
 
 const ROOT = path.join(import.meta.dirname, "..");
 
-/** The package's own entry points as the minebot-sdk:source condition resolves them: "minebot-sdk/kit" → src/kit/public.ts. */
+/** The package's own entry points as the minebot-sdk:source condition resolves them: "minebot-sdk/routine" → src/routine/public.ts. */
 const SELF_EXPORTS = (JSON.parse(readFileSync(path.join(ROOT, "package.json"), "utf8")) as { exports: Record<string, { "minebot-sdk:source"?: string } | null> }).exports;
 
-/** The source file of the export `subpath` (`./kit`), through an exact entry or a `*` pattern (`./routines/*` → src/routines/*.ts); a `null` entry blocks the subpath. */
+/** The source file of the export `subpath` (`./routine`), through an exact entry or a `*` pattern (`./routines/*` → src/routines/*.ts); a `null` entry blocks the subpath. */
 function exportedSource(subpath: string): string | undefined {
   if (subpath in SELF_EXPORTS) return SELF_EXPORTS[subpath]?.["minebot-sdk:source"];
   for (const [pattern, target] of Object.entries(SELF_EXPORTS)) {
@@ -134,18 +134,18 @@ describe("package boundaries", () => {
 
   it("keeps the testing entry inside the shipped sources, with no body or client code", () => {
     const files = closure(path.join(ROOT, "src/testing/index.ts"));
-    assert.ok(files.includes("src/testing/bot.ts") && files.includes("src/kit/kit.ts"), `closure too small: ${files.join(", ")}`);
-    // The harness ships in dist/, so it may load the kit framework and the shipped kits, and nothing that starts a body or talks to one.
+    assert.ok(files.includes("src/testing/bot.ts") && files.includes("src/routine/invoke.ts"), `closure too small: ${files.join(", ")}`);
+    // The harness ships in dist/, so it may load the routine runtime, and nothing that starts a body or talks to one.
     const outside = files.filter((file) => !file.startsWith("src/") || file.startsWith("src/body/") || file.startsWith("src/host/") || file.startsWith("src/client/") || file === "src/cli.ts");
     assert.deepEqual(outside, [], "the testing entry would ship or crash on body or client code");
     // It runs routines through the routine runtime's one call (invoke, and define for the metadata it reads); the bot host's routine loader and library stay out (src/host/ is refused above).
     assert.deepEqual(files.filter((file) => file.startsWith("src/routine/")), ["src/routine/define.ts", "src/routine/invoke.ts"]);
   });
 
-  it("keeps the supervisor free of the bot host, the kits, the programs, the wiki, and the Minecraft libraries", () => {
+  it("keeps the supervisor free of the bot host, the built-in routines, the programs, the wiki, and the Minecraft libraries", () => {
     const files = closure(path.join(ROOT, "src/body/main.ts"));
     assert.ok(files.includes("src/body/daemon.ts") && files.includes("src/body/host-process.ts") && files.includes("src/protocol/index.ts"), `closure too small: ${files.join(", ")}`);
-    const hostSide = files.filter((file) => ["src/host/", "src/kit/", "src/program/", "src/wiki/"].some((dir) => file.startsWith(dir)));
+    const hostSide = files.filter((file) => ["src/host/", "src/routines/", "src/program/", "src/wiki/"].some((dir) => file.startsWith(dir)));
     assert.deepEqual(hostSide, [], "the supervisor would load code that belongs to the bot host");
     const libraries = files.flatMap((file) =>
       bareImports(path.join(ROOT, file))

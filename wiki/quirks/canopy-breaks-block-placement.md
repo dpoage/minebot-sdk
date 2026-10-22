@@ -30,6 +30,6 @@ const ground = bot.findBlocks({
 
 To place where leaf litter or grass is, dig it first.
 
-<!-- kits -->
+<!-- builtins -->
 `kit.crafter.make` and `kit.builder.build` do this search for you (the crafter places a table, the builder places blocks).
-<!-- /kits -->
+<!-- /builtins -->

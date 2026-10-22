@@ -35,6 +35,6 @@ Read what the item got from `item.enchants.enchantments`: a list of `{ id, level
 
 An enchantment that conflicts with another, such as `sharpness` and `smite`, never shares an item with it (`reference/enchantments`, column Excludes).
 
-<!-- kits -->
+<!-- builtins -->
 No kit action enchants yet; use the code above.
-<!-- /kits -->
+<!-- /builtins -->

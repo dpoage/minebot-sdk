@@ -1,0 +1,3485 @@
+[
+  {
+    "name": "move",
+    "description": "Walk the player with the pathfinder, with a time limit and a fallback for stuck paths.",
+    "uses": [],
+    "actions": [
+      {
+        "name": "to",
+        "doc": "Walk within `range` blocks of `position` ({x,y,z} or [x,y,z]) and stop. Gives up (and stops pathfinding) after `timeoutMs`. Returns where the player then stands.",
+        "args": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "position": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "x": {
+                      "type": "number"
+                    },
+                    "y": {
+                      "type": "number"
+                    },
+                    "z": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "x",
+                    "y",
+                    "z"
+                  ]
+                },
+                {
+                  "type": "array",
+                  "prefixItems": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "number"
+                    }
+                  ],
+                  "items": false,
+                  "minItems": 3,
+                  "maxItems": 3
+                }
+              ]
+            },
+            "range": {
+              "default": 1,
+              "type": "number",
+              "minimum": 0
+            },
+            "timeoutMs": {
+              "default": 60000,
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            }
+          },
+          "required": [
+            "position"
+          ]
+        },
+        "returns": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "x": {
+              "type": "number"
+            },
+            "y": {
+              "type": "number"
+            },
+            "z": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "x",
+            "y",
+            "z"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "stop",
+        "doc": "Stop pathfinding and clear the movement keys.",
+        "args": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {}
+        },
+        "returns": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema"
+        }
+      }
+    ],
+    "calls": []
+  },
+  {
+    "name": "sense",
+    "description": "Find blocks by name pattern and face a position, without changing anything.",
+    "uses": [],
+    "actions": [
+      {
+        "name": "find",
+        "doc": "Positions ({x,y,z}) of blocks matching `blocks` ('oak_log', '*_ore', or a list), nearest first. `radius` limits the search, `count` the number of results. Fails when no block type matches.",
+        "args": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "blocks": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1
+                },
+                {
+                  "minItems": 1,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                }
+              ]
+            },
+            "radius": {
+              "default": 32,
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "count": {
+              "default": 16,
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            }
+          },
+          "required": [
+            "blocks"
+          ]
+        },
+        "returns": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "x": {
+                "type": "number"
+              },
+              "y": {
+                "type": "number"
+              },
+              "z": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "x",
+              "y",
+              "z"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      {
+        "name": "look",
+        "doc": "Turn the player's head to face `at` ({x,y,z} or [x,y,z]).",
+        "args": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "at": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "x": {
+                      "type": "number"
+                    },
+                    "y": {
+                      "type": "number"
+                    },
+                    "z": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "x",
+                    "y",
+                    "z"
+                  ]
+                },
+                {
+                  "type": "array",
+                  "prefixItems": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "number"
+                    }
+                  ],
+                  "items": false,
+                  "minItems": 3,
+                  "maxItems": 3
+                }
+              ]
+            }
+          },
+          "required": [
+            "at"
+          ]
+        },
+        "returns": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema"
+        }
+      }
+    ],
+    "calls": []
+  },
+  {
+    "name": "dig",
+    "description": "Dig one block with the right tool; falling blocks that refill the hole are dug too.",
+    "uses": [],
+    "actions": [
+      {
+        "name": "dig",
+        "doc": "Dig the block at `at` ({x,y,z} or [x,y,z]), equipping the best tool and failing with the tools it needs when the inventory lacks them. Digs on while gravel or sand refills the position. Returns { block } — the last block dug, or null when the position was already clear.",
+        "args": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "at": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "x": {
+                      "type": "number"
+                    },
+                    "y": {
+                      "type": "number"
+                    },
+                    "z": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "x",
+                    "y",
+                    "z"
+                  ]
+                },
+                {
+                  "type": "array",
+                  "prefixItems": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "number"
+                    }
+                  ],
+                  "items": false,
+                  "minItems": 3,
+                  "maxItems": 3
+                }
+              ]
+            }
+          },
+          "required": [
+            "at"
+          ]
+        },
+        "returns": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "block": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "block"
+          ],
+          "additionalProperties": false
+        }
+      }
+    ],
+    "calls": []
+  },
+  {
+    "name": "place",
+    "description": "Place one block from the inventory, digging out a different solid block first.",
+    "uses": [],
+    "actions": [
+      {
+        "name": "place",
+        "doc": "Place one block of `item` at `at` ({x,y,z} or [x,y,z]), walking close and digging out a different solid block first. Needs a solid neighbor to place against. Returns false if the block was already there, true otherwise.",
+        "args": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "at": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "x": {
+                      "type": "number"
+                    },
+                    "y": {
+                      "type": "number"
+                    },
+                    "z": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "x",
+                    "y",
+                    "z"
+                  ]
+                },
+                {
+                  "type": "array",
+                  "prefixItems": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "number"
+                    }
+                  ],
+                  "items": false,
+                  "minItems": 3,
+                  "maxItems": 3
+                }
+              ]
+            },
+            "item": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "at",
+            "item"
+          ]
+        },
+        "returns": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "boolean"
+        }
+      }
+    ],
+    "calls": []
+  },
+  {
+    "name": "inventory",
+    "description": "Count and list what the inventory holds, equip an item, and toss items out.",
+    "uses": [],
+    "actions": [
+      {
+        "name": "list",
+        "doc": "Inventory totals by item name, e.g. { oak_log: 3, stick: 12 }.",
+        "args": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {}
+        },
+        "returns": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {
+            "type": "number"
+          }
+        }
+      },
+      {
+        "name": "count",
+        "doc": "How many items matching `items` ('stick', '*_log', or a list) the inventory holds.",
+        "args": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1
+                },
+                {
+                  "minItems": 1,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                }
+              ]
+            }
+          },
+          "required": [
+            "items"
+          ]
+        },
+        "returns": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "number"
+        }
+      },
+      {
+        "name": "equip",
+        "doc": "Hold or wear an item from the inventory. `slot`: 'hand' (default), 'off-hand', 'head', 'torso', 'legs', 'feet'.",
+        "args": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "item": {
+              "type": "string",
+              "minLength": 1
+            },
+            "slot": {
+              "default": "hand",
+              "type": "string",
+              "enum": [
+                "hand",
+                "off-hand",
+                "head",
+                "torso",
+                "legs",
+                "feet"
+              ]
+            }
+          },
+          "required": [
+            "item"
+          ]
+        },
+        "returns": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema"
+        }
+      },
+      {
+        "name": "toss",
+        "doc": "Toss `count` of `item` out of the inventory (a tossed stack lands about two blocks away).",
+        "args": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "item": {
+              "type": "string",
+              "minLength": 1
+            },
+            "count": {
+              "default": 1,
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            }
+          },
+          "required": [
+            "item"
+          ]
+        },
+        "returns": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema"
+        }
+      }
+    ],
+    "calls": []
+  },
+  {
+    "name": "craft",
+    "description": "Craft items from the inventory at a table within reach.",
+    "uses": [],
+    "actions": [
+      {
+        "name": "craft",
+        "doc": "Craft at least `count` (default 1) more of `item` from the inventory. A recipe that needs a crafting table uses one within 4 blocks, and the call fails when there is none. Returns how many were made.",
+        "args": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "item": {
+              "type": "string",
+              "minLength": 1
+            },
+            "count": {
+              "default": 1,
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            }
+          },
+          "required": [
+            "item"
+          ]
+        },
+        "returns": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "number"
+        }
+      },
+      {
+        "name": "table",
+        "doc": "The position of a crafting table within 4 blocks, so programs can stand next to it. Fails when there is none nearby.",
+        "args": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {}
+        },
+        "returns": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "x": {
+              "type": "number"
+            },
+            "y": {
+              "type": "number"
+            },
+            "z": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "x",
+            "y",
+            "z"
+          ],
+          "additionalProperties": false
+        }
+      }
+    ],
+    "calls": []
+  },
+  {
+    "name": "items",
+    "description": "Look up recipes, and find the items lying on the ground.",
+    "uses": [],
+    "actions": [
+      {
+        "name": "recipes",
+        "doc": "Up to 3 recipes for `item`: [{ makes, requiresTable, ingredients: { name: count } }]. Fails for an unknown item.",
+        "args": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "item": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "item"
+          ]
+        },
+        "returns": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "makes": {
+                "type": "number"
+              },
+              "requiresTable": {
+                "type": "boolean"
+              },
+              "ingredients": {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": {
+                  "type": "number"
+                }
+              }
+            },
+            "required": [
+              "makes",
+              "requiresTable",
+              "ingredients"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      {
+        "name": "drops",
+        "doc": "Positions ({x,y,z}) of dropped item entities within `radius`, nearest first — what a dig has left to pick up.",
+        "args": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "radius": {
+              "default": 8,
+              "type": "number",
+              "exclusiveMinimum": 0
+            }
+          }
+        },
+        "returns": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "x": {
+                "type": "number"
+              },
+              "y": {
+                "type": "number"
+              },
+              "z": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "x",
+              "y",
+              "z"
+            ],
+            "additionalProperties": false
+          }
+        }
+      }
+    ],
+    "calls": []
+  },
+  {
+    "name": "furnace",
+    "description": "Smelt at a furnace within reach: load fuel and input, wait, take the output.",
+    "uses": [],
+    "actions": [
+      {
+        "name": "smelt",
+        "doc": "Smelt `count` (default 1) of `item` (an input such as raw_iron, sand, cobblestone, beef, or a log) at the nearest furnace within 4.5 blocks, or at `at` ({x,y,z} or [x,y,z]), walking next to it first. Loads `fuel` (an item name) or else the first of charcoal, coal, planks, logs, sticks that the inventory holds in enough quantity; waits 10 s per item; takes the output. Fails with the missing item or fuel, or when no furnace is there. Returns { input, output, count, fuel, at }.",
+        "args": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "item": {
+              "type": "string",
+              "minLength": 1
+            },
+            "count": {
+              "default": 1,
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            },
+            "fuel": {
+              "type": "string",
+              "minLength": 1
+            },
+            "at": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "x": {
+                      "type": "number"
+                    },
+                    "y": {
+                      "type": "number"
+                    },
+                    "z": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "x",
+                    "y",
+                    "z"
+                  ]
+                },
+                {
+                  "type": "array",
+                  "prefixItems": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "number"
+                    }
+                  ],
+                  "items": false,
+                  "minItems": 3,
+                  "maxItems": 3
+                }
+              ]
+            }
+          },
+          "required": [
+            "item"
+          ]
+        },
+        "returns": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "input": {
+              "type": "string"
+            },
+            "output": {
+              "type": "string"
+            },
+            "count": {
+              "type": "number"
+            },
+            "fuel": {
+              "type": "object",
+              "propertyNames": {
+                "type": "string"
+              },
+              "additionalProperties": {
+                "type": "number"
+              }
+            },
+            "at": {
+              "type": "object",
+              "properties": {
+                "x": {
+                  "type": "number"
+                },
+                "y": {
+                  "type": "number"
+                },
+                "z": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "x",
+                "y",
+                "z"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "input",
+            "output",
+            "count",
+            "fuel",
+            "at"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "take",
+        "doc": "Collect the output of the furnace within 4.5 blocks, or at `at`, without waiting for it. Returns { item, count, smelting }: what was taken (item null when the slot was empty) and what the furnace is still smelting, or null.",
+        "args": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "at": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "x": {
+                      "type": "number"
+                    },
+                    "y": {
+                      "type": "number"
+                    },
+                    "z": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "x",
+                    "y",
+                    "z"
+                  ]
+                },
+                {
+                  "type": "array",
+                  "prefixItems": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "number"
+                    }
+                  ],
+                  "items": false,
+                  "minItems": 3,
+                  "maxItems": 3
+                }
+              ]
+            }
+          }
+        },
+        "returns": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "item": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "count": {
+              "type": "number"
+            },
+            "smelting": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "item": {
+                      "type": "string"
+                    },
+                    "count": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "item",
+                    "count"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "item",
+            "count",
+            "smelting"
+          ],
+          "additionalProperties": false
+        }
+      }
+    ],
+    "calls": []
+  },
+  {
+    "name": "container",
+    "description": "Look into chests, barrels, and shulker boxes, and move items between them and the inventory.",
+    "uses": [],
+    "actions": [
+      {
+        "name": "list",
+        "doc": "What the chest, barrel, shulker box, hopper, dispenser, or dropper at `at` ({x,y,z} or [x,y,z]) holds, walking next to it first. Returns { block, items: { name: count }, emptySlots }.",
+        "args": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "at": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "x": {
+                      "type": "number"
+                    },
+                    "y": {
+                      "type": "number"
+                    },
+                    "z": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "x",
+                    "y",
+                    "z"
+                  ]
+                },
+                {
+                  "type": "array",
+                  "prefixItems": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "number"
+                    }
+                  ],
+                  "items": false,
+                  "minItems": 3,
+                  "maxItems": 3
+                }
+              ]
+            }
+          },
+          "required": [
+            "at"
+          ]
+        },
+        "returns": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "block": {
+              "type": "string"
+            },
+            "items": {
+              "type": "object",
+              "propertyNames": {
+                "type": "string"
+              },
+              "additionalProperties": {
+                "type": "number"
+              }
+            },
+            "emptySlots": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "block",
+            "items",
+            "emptySlots"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "deposit",
+        "doc": "Put inventory items matching `items` ('cobblestone', '*_log', or a list) into the container at `at`, up to `count` in total (default all that match), as many as fit. Returns { deposited: { name: count }, total, full }; `full` is true when the container had no room for some of it. Fails when nothing in the inventory matches.",
+        "args": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "at": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "x": {
+                      "type": "number"
+                    },
+                    "y": {
+                      "type": "number"
+                    },
+                    "z": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "x",
+                    "y",
+                    "z"
+                  ]
+                },
+                {
+                  "type": "array",
+                  "prefixItems": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "number"
+                    }
+                  ],
+                  "items": false,
+                  "minItems": 3,
+                  "maxItems": 3
+                }
+              ]
+            },
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1
+                },
+                {
+                  "minItems": 1,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                }
+              ]
+            },
+            "count": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            }
+          },
+          "required": [
+            "at",
+            "items"
+          ]
+        },
+        "returns": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "deposited": {
+              "type": "object",
+              "propertyNames": {
+                "type": "string"
+              },
+              "additionalProperties": {
+                "type": "number"
+              }
+            },
+            "total": {
+              "type": "number"
+            },
+            "full": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "deposited",
+            "total",
+            "full"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "withdraw",
+        "doc": "Take items matching `items` ('iron_ingot', '*_planks', or a list) out of the container at `at` into the inventory, up to `count` in total (default all that match), as many as fit. Returns { withdrawn: { name: count }, total, full }; `full` is true when the inventory had no room for some of it. Fails when the container holds nothing that matches.",
+        "args": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "at": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "x": {
+                      "type": "number"
+                    },
+                    "y": {
+                      "type": "number"
+                    },
+                    "z": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "x",
+                    "y",
+                    "z"
+                  ]
+                },
+                {
+                  "type": "array",
+                  "prefixItems": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "number"
+                    }
+                  ],
+                  "items": false,
+                  "minItems": 3,
+                  "maxItems": 3
+                }
+              ]
+            },
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1
+                },
+                {
+                  "minItems": 1,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                }
+              ]
+            },
+            "count": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            }
+          },
+          "required": [
+            "at",
+            "items"
+          ]
+        },
+        "returns": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "withdrawn": {
+              "type": "object",
+              "propertyNames": {
+                "type": "string"
+              },
+              "additionalProperties": {
+                "type": "number"
+              }
+            },
+            "total": {
+              "type": "number"
+            },
+            "full": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "withdrawn",
+            "total",
+            "full"
+          ],
+          "additionalProperties": false
+        }
+      }
+    ],
+    "calls": []
+  },
+  {
+    "name": "survival",
+    "description": "Eat, sleep in a bed, wake up, and wear the best armor in the inventory.",
+    "uses": [],
+    "actions": [
+      {
+        "name": "eat",
+        "doc": "Eat `item`, or the best safe food in the inventory when omitted: the one that restores the most without overshooting the missing food points. Rotten flesh, spider eyes, pufferfish, poisonous potatoes, raw chicken, suspicious stew, chorus fruit, and golden apples are never picked on their own; name one to eat it. Fails when the food bar is full. Returns { item, food, saturation } after the meal.",
+        "args": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "item": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "returns": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "item": {
+              "type": "string"
+            },
+            "food": {
+              "type": "number"
+            },
+            "saturation": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "item",
+            "food",
+            "saturation"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "sleep",
+        "doc": "Go to bed at `at` ({x,y,z} or [x,y,z]), or the nearest bed within 16 blocks, and sleep. Works at night (time of day 12541 to 23458) and in thunderstorms; fails with the reason otherwise, or when monsters are near the bed or the bed is occupied. Returns { sleeping, at } once asleep. Call `wake` or wait for morning to get up.",
+        "args": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "at": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "x": {
+                      "type": "number"
+                    },
+                    "y": {
+                      "type": "number"
+                    },
+                    "z": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "x",
+                    "y",
+                    "z"
+                  ]
+                },
+                {
+                  "type": "array",
+                  "prefixItems": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "number"
+                    }
+                  ],
+                  "items": false,
+                  "minItems": 3,
+                  "maxItems": 3
+                }
+              ]
+            }
+          }
+        },
+        "returns": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "sleeping": {
+              "type": "boolean"
+            },
+            "at": {
+              "type": "object",
+              "properties": {
+                "x": {
+                  "type": "number"
+                },
+                "y": {
+                  "type": "number"
+                },
+                "z": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "x",
+                "y",
+                "z"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "sleeping",
+            "at"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "wake",
+        "doc": "Get out of bed. Fails when the player is not sleeping. Returns { sleeping } after waking.",
+        "args": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {}
+        },
+        "returns": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "sleeping": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "sleeping"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "armor",
+        "doc": "Wear the best armor the inventory holds in each slot, by material: leather, copper, golden, chainmail, iron, diamond, netherite (turtle helmets rank between golden and chainmail). Leaves better armor already worn, and an elytra, on. Returns { equipped: { slot: item }, wearing: { head, torso, legs, feet } }.",
+        "args": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {}
+        },
+        "returns": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "equipped": {
+              "type": "object",
+              "propertyNames": {
+                "type": "string"
+              },
+              "additionalProperties": {
+                "type": "string"
+              }
+            },
+            "wearing": {
+              "type": "object",
+              "propertyNames": {
+                "type": "string"
+              },
+              "additionalProperties": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            }
+          },
+          "required": [
+            "equipped",
+            "wearing"
+          ],
+          "additionalProperties": false
+        }
+      }
+    ],
+    "calls": []
+  },
+  {
+    "name": "combat",
+    "description": "Attack creatures with the best weapon, fight hostiles until none are near, and back away.",
+    "uses": [],
+    "actions": [
+      {
+        "name": "attack",
+        "doc": "Hit one creature until it dies. `target` is an entity id or a name ('zombie'; the nearest match, a player's username works too). Walks up to it, holds the best sword or axe from the inventory, and hits once per weapon cooldown. Gives up after `timeoutMs` (default 20000). Returns { target, killed, damageTaken, weapon }.",
+        "args": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "target": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                },
+                {
+                  "type": "string",
+                  "minLength": 1
+                }
+              ]
+            },
+            "timeoutMs": {
+              "default": 20000,
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            }
+          },
+          "required": [
+            "target"
+          ]
+        },
+        "returns": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "target": {
+              "type": "string"
+            },
+            "killed": {
+              "type": "boolean"
+            },
+            "damageTaken": {
+              "type": "number"
+            },
+            "weapon": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "target",
+            "killed",
+            "damageTaken",
+            "weapon"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "fight",
+        "doc": "Fight until no target is left within `radius` (default 16) or `timeoutMs` (default 60000) passes. Targets default to hostile mobs: the registry category 'Hostile mobs', which includes slimes, magma cubes, phantoms, and ghasts, minus endermen, zombified piglins, striders, and end crystals, which are no threat until provoked. `targets` ('zombie', '*_skeleton', or a list) names others, endermen included. Takes the nearest first, holds the best sword or axe from the inventory, skips a target it cannot kill in 20 seconds, and fails if the player dies. Creepers explode when close: retreat from them first. Returns { kills, damageTaken, weapon, remaining, timedOut }.",
+        "args": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "radius": {
+              "default": 16,
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "targets": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1
+                },
+                {
+                  "minItems": 1,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                }
+              ]
+            },
+            "timeoutMs": {
+              "default": 60000,
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            }
+          }
+        },
+        "returns": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "kills": {
+              "type": "number"
+            },
+            "damageTaken": {
+              "type": "number"
+            },
+            "weapon": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "remaining": {
+              "type": "number"
+            },
+            "timedOut": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "kills",
+            "damageTaken",
+            "weapon",
+            "remaining",
+            "timedOut"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "retreat",
+        "doc": "Walk away until more than `distance` (default 16) blocks from `from`: a position ({x,y,z} or [x,y,z]), an entity id, or a creature name. Without `from`, away from the nearest hostile mob within 32 blocks; fails when there is none. Gives up after `timeoutMs` (default 20000). Returns { position, distance } — where the player stopped and how far that is from `from`.",
+        "args": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "from": {
+              "anyOf": [
+                {
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "x": {
+                          "type": "number"
+                        },
+                        "y": {
+                          "type": "number"
+                        },
+                        "z": {
+                          "type": "number"
+                        }
+                      },
+                      "required": [
+                        "x",
+                        "y",
+                        "z"
+                      ]
+                    },
+                    {
+                      "type": "array",
+                      "prefixItems": [
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "number"
+                        }
+                      ],
+                      "items": false,
+                      "minItems": 3,
+                      "maxItems": 3
+                    }
+                  ]
+                },
+                {
+                  "anyOf": [
+                    {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    },
+                    {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  ]
+                }
+              ]
+            },
+            "distance": {
+              "default": 16,
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "timeoutMs": {
+              "default": 20000,
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            }
+          }
+        },
+        "returns": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "position": {
+              "type": "object",
+              "properties": {
+                "x": {
+                  "type": "number"
+                },
+                "y": {
+                  "type": "number"
+                },
+                "z": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "x",
+                "y",
+                "z"
+              ],
+              "additionalProperties": false
+            },
+            "distance": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "position",
+            "distance"
+          ],
+          "additionalProperties": false
+        }
+      }
+    ],
+    "calls": []
+  },
+  {
+    "name": "farm",
+    "description": "Till soil, plant seeds, harvest ripe crops, and breed animals.",
+    "uses": [],
+    "actions": [
+      {
+        "name": "till",
+        "doc": "Hoe the dirt, grass_block, or dirt_path block at `at` ({x,y,z} or [x,y,z]) into farmland, walking close and holding a hoe from the inventory. Digs out wild plants above it (grass, ferns, dead bush, flowers); fails when any other block is above, such as a torch, a sapling, or a crop. Farmland dries out and turns back to dirt unless water lies within 4 blocks. Returns { tilled, hydrated } — tilled is false when it already was farmland.",
+        "args": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "at": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "x": {
+                      "type": "number"
+                    },
+                    "y": {
+                      "type": "number"
+                    },
+                    "z": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "x",
+                    "y",
+                    "z"
+                  ]
+                },
+                {
+                  "type": "array",
+                  "prefixItems": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "number"
+                    }
+                  ],
+                  "items": false,
+                  "minItems": 3,
+                  "maxItems": 3
+                }
+              ]
+            }
+          },
+          "required": [
+            "at"
+          ]
+        },
+        "returns": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "tilled": {
+              "type": "boolean"
+            },
+            "hydrated": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "tilled",
+            "hydrated"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "plant",
+        "doc": "Plant `seed` ('wheat_seeds', 'carrot', 'potato', 'beetroot_seeds', 'melon_seeds', 'pumpkin_seeds', 'torchflower_seeds', 'pitcher_pod', 'nether_wart', or the crop name such as 'wheat') on the farmland at `at` ({x,y,z} or [x,y,z]); `at` may also be the empty block above the farmland. Nether wart needs soul_sand. Walks close and takes the seed from the inventory. Returns true when it planted, false when that crop already grows there.",
+        "args": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "at": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "x": {
+                      "type": "number"
+                    },
+                    "y": {
+                      "type": "number"
+                    },
+                    "z": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "x",
+                    "y",
+                    "z"
+                  ]
+                },
+                {
+                  "type": "array",
+                  "prefixItems": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "number"
+                    }
+                  ],
+                  "items": false,
+                  "minItems": 3,
+                  "maxItems": 3
+                }
+              ]
+            },
+            "seed": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "at",
+            "seed"
+          ]
+        },
+        "returns": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "boolean"
+        }
+      },
+      {
+        "name": "harvest",
+        "doc": "Dig the ripe crops within `radius` (default 16), nearest first, collect the drops, and replant each (`replant`, default true) when the inventory has its seed. `crops` limits it to some of wheat, carrots, potatoes, beetroots, nether_wart (a seed name matches too); default all. Stops after `timeoutMs` (default 120000). Returns { harvested, replanted, skipped, gained } — gained is the inventory change, e.g. { wheat: 3, wheat_seeds: 2 }.",
+        "args": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "radius": {
+              "default": 16,
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "crops": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1
+                },
+                {
+                  "minItems": 1,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                }
+              ]
+            },
+            "replant": {
+              "default": true,
+              "type": "boolean"
+            },
+            "timeoutMs": {
+              "default": 120000,
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            }
+          }
+        },
+        "returns": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "harvested": {
+              "type": "number"
+            },
+            "replanted": {
+              "type": "number"
+            },
+            "skipped": {
+              "type": "number"
+            },
+            "gained": {
+              "type": "object",
+              "propertyNames": {
+                "type": "string"
+              },
+              "additionalProperties": {
+                "type": "number"
+              }
+            }
+          },
+          "required": [
+            "harvested",
+            "replanted",
+            "skipped",
+            "gained"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "breed",
+        "doc": "Feed the two adult `animal`s ('cow', 'sheep', 'pig', 'chicken', ...) nearest each other within `radius` (default 16) and wait up to `timeoutMs` (default 30000) for the baby. `food` defaults to what that animal eats and the inventory holds (cow, sheep, goat: wheat; pig: carrot, potato, beetroot; chicken: seeds). Fails when fewer than two adults are near, there is no food, or an animal refuses it (it bred in the last 5 minutes). Returns { fed, baby, babyId } — baby is false when none appeared in time.",
+        "args": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "animal": {
+              "type": "string",
+              "minLength": 1
+            },
+            "food": {
+              "type": "string",
+              "minLength": 1
+            },
+            "radius": {
+              "default": 16,
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "timeoutMs": {
+              "default": 30000,
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            }
+          },
+          "required": [
+            "animal"
+          ]
+        },
+        "returns": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "fed": {
+              "type": "number"
+            },
+            "baby": {
+              "type": "boolean"
+            },
+            "babyId": {
+              "type": [
+                "number",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "fed",
+            "baby",
+            "babyId"
+          ],
+          "additionalProperties": false
+        }
+      }
+    ],
+    "calls": []
+  },
+  {
+    "name": "bucket",
+    "description": "Fill a bucket from a water or lava source, and pour it out.",
+    "uses": [],
+    "actions": [
+      {
+        "name": "fill",
+        "doc": "Fill an empty bucket from a `fluid` ('water' or 'lava') source: the one at `at` ({x,y,z} or [x,y,z]), or the nearest within `radius` (default 16). Walks within reach and tries up to 3 sources. Flowing fluid is not a source and cannot be taken. Returns { filled, at } — the bucket item now held, and the source's position.",
+        "args": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "fluid": {
+              "type": "string",
+              "enum": [
+                "water",
+                "lava"
+              ]
+            },
+            "at": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "x": {
+                      "type": "number"
+                    },
+                    "y": {
+                      "type": "number"
+                    },
+                    "z": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "x",
+                    "y",
+                    "z"
+                  ]
+                },
+                {
+                  "type": "array",
+                  "prefixItems": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "number"
+                    }
+                  ],
+                  "items": false,
+                  "minItems": 3,
+                  "maxItems": 3
+                }
+              ]
+            },
+            "radius": {
+              "default": 16,
+              "type": "number",
+              "exclusiveMinimum": 0
+            }
+          },
+          "required": [
+            "fluid"
+          ]
+        },
+        "returns": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "filled": {
+              "type": "string"
+            },
+            "at": {
+              "type": "object",
+              "properties": {
+                "x": {
+                  "type": "number"
+                },
+                "y": {
+                  "type": "number"
+                },
+                "z": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "x",
+                "y",
+                "z"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "filled",
+            "at"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "empty",
+        "doc": "Pour a full bucket so its fluid source lands in the block at `at` ({x,y,z} or [x,y,z]), which must be air or a non-solid block next to a solid one. `fluid` ('water' or 'lava') picks the bucket; default whichever the inventory holds, water first. Walks within reach. Water evaporates in the Nether. Returns true when it poured, false when that source was already there.",
+        "args": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "at": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "x": {
+                      "type": "number"
+                    },
+                    "y": {
+                      "type": "number"
+                    },
+                    "z": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "x",
+                    "y",
+                    "z"
+                  ]
+                },
+                {
+                  "type": "array",
+                  "prefixItems": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "number"
+                    }
+                  ],
+                  "items": false,
+                  "minItems": 3,
+                  "maxItems": 3
+                }
+              ]
+            },
+            "fluid": {
+              "type": "string",
+              "enum": [
+                "water",
+                "lava"
+              ]
+            }
+          },
+          "required": [
+            "at"
+          ]
+        },
+        "returns": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "boolean"
+        }
+      }
+    ],
+    "calls": []
+  },
+  {
+    "name": "gatherer",
+    "description": "Collect resources: walk to matching blocks, dig them with the right tool, pick up the drops.",
+    "uses": [
+      "move",
+      "sense",
+      "dig",
+      "inventory",
+      "items"
+    ],
+    "actions": [
+      {
+        "name": "gather",
+        "doc": "Dig `count` blocks matching `blocks` ('*_log', 'stone', ['coal_ore','deepslate_coal_ore']) and pick up the drops, within `radius` (default 48). Equips the best tool and fails if a required tool is missing. `gained` is the inventory change, e.g. { oak_log: 4 }; `skipped` counts blocks it could not reach.",
+        "args": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "blocks": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1
+                },
+                {
+                  "minItems": 1,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                }
+              ]
+            },
+            "count": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            },
+            "radius": {
+              "default": 48,
+              "type": "number",
+              "exclusiveMinimum": 0
+            }
+          },
+          "required": [
+            "blocks",
+            "count"
+          ]
+        },
+        "returns": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "dug": {
+              "type": "number"
+            },
+            "gained": {
+              "type": "object",
+              "propertyNames": {
+                "type": "string"
+              },
+              "additionalProperties": {
+                "type": "number"
+              }
+            },
+            "skipped": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "dug",
+            "gained",
+            "skipped"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "collectDrops",
+        "doc": "Walk over dropped items within `radius` (default 8) to pick them up. Returns how many drops it tried to reach.",
+        "args": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "radius": {
+              "default": 8,
+              "type": "number",
+              "exclusiveMinimum": 0
+            }
+          }
+        },
+        "returns": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "number"
+        }
+      }
+    ],
+    "calls": [
+      "dig.dig",
+      "inventory.list",
+      "inventory.list",
+      "items.drops",
+      "move.to",
+      "move.to",
+      "sense.find"
+    ]
+  },
+  {
+    "name": "crafter",
+    "description": "Craft and smelt item chains from the inventory, finding or placing a crafting table or furnace when needed.",
+    "uses": [
+      "move",
+      "sense",
+      "place",
+      "inventory",
+      "craft",
+      "items",
+      "furnace"
+    ],
+    "actions": [
+      {
+        "name": "make",
+        "doc": "Make sure the inventory holds at least `count` (default 1) of `item`, crafting intermediate items (planks, sticks, tables) as needed and finding or placing a crafting table. An item that a furnace makes (iron_ingot, glass, stone, charcoal, cooked food) is smelted from the matching input the inventory holds, at a furnace within 32 blocks, else one placed from the inventory, else one crafted from 8 cobblestone; fuel is coal, charcoal, planks, or logs from the inventory. Fails with the missing raw material, which you must gather. Returns the count held.",
+        "args": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "item": {
+              "type": "string",
+              "minLength": 1
+            },
+            "count": {
+              "default": 1,
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            }
+          },
+          "required": [
+            "item"
+          ]
+        },
+        "returns": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "number"
+        }
+      }
+    ],
+    "calls": [
+      "craft.craft",
+      "furnace.smelt",
+      "inventory.count",
+      "move.to",
+      "move.to"
+    ]
+  },
+  {
+    "name": "builder",
+    "description": "Place blocks and build structures from blueprints. Blueprints: { palette: { '#': 'oak_planks' }, layers: [layer, ...] }; layers go bottom to top, rows run along +z, characters along +x, '.' or space skips.",
+    "uses": [
+      "move",
+      "sense",
+      "dig",
+      "place",
+      "inventory"
+    ],
+    "actions": [
+      {
+        "name": "materials",
+        "doc": "Block counts the `blueprint` needs, e.g. { oak_planks: 24 }.",
+        "args": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "blueprint": {
+              "type": "object",
+              "properties": {
+                "palette": {
+                  "type": "object",
+                  "propertyNames": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1
+                  },
+                  "additionalProperties": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "layers": {
+                  "minItems": 1,
+                  "type": "array",
+                  "items": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      }
+                    ]
+                  }
+                }
+              },
+              "required": [
+                "palette",
+                "layers"
+              ]
+            }
+          },
+          "required": [
+            "blueprint"
+          ]
+        },
+        "returns": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {
+            "type": "number"
+          }
+        }
+      },
+      {
+        "name": "build",
+        "doc": "Build the `blueprint` with its first layer's first row's first character at `origin`. Skips blocks already correct, places bottom-up. Fails up front on missing materials unless `partial`. Returns { placed, alreadyCorrect, failed }.",
+        "args": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "blueprint": {
+              "type": "object",
+              "properties": {
+                "palette": {
+                  "type": "object",
+                  "propertyNames": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1
+                  },
+                  "additionalProperties": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "layers": {
+                  "minItems": 1,
+                  "type": "array",
+                  "items": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      }
+                    ]
+                  }
+                }
+              },
+              "required": [
+                "palette",
+                "layers"
+              ]
+            },
+            "origin": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "x": {
+                      "type": "number"
+                    },
+                    "y": {
+                      "type": "number"
+                    },
+                    "z": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "x",
+                    "y",
+                    "z"
+                  ]
+                },
+                {
+                  "type": "array",
+                  "prefixItems": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "number"
+                    }
+                  ],
+                  "items": false,
+                  "minItems": 3,
+                  "maxItems": 3
+                }
+              ]
+            },
+            "partial": {
+              "default": false,
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "blueprint",
+            "origin"
+          ]
+        },
+        "returns": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "placed": {
+              "type": "number"
+            },
+            "alreadyCorrect": {
+              "type": "number"
+            },
+            "failed": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "position": {
+                    "type": "object",
+                    "properties": {
+                      "x": {
+                        "type": "number"
+                      },
+                      "y": {
+                        "type": "number"
+                      },
+                      "z": {
+                        "type": "number"
+                      }
+                    },
+                    "required": [
+                      "x",
+                      "y",
+                      "z"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "block": {
+                    "type": "string"
+                  },
+                  "reason": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "position",
+                  "block",
+                  "reason"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": [
+            "placed",
+            "alreadyCorrect",
+            "failed"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "check",
+        "doc": "Compare the world with the `blueprint` at `origin`: { correct, total, mismatches (first 20) }.",
+        "args": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "blueprint": {
+              "type": "object",
+              "properties": {
+                "palette": {
+                  "type": "object",
+                  "propertyNames": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1
+                  },
+                  "additionalProperties": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "layers": {
+                  "minItems": 1,
+                  "type": "array",
+                  "items": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      }
+                    ]
+                  }
+                }
+              },
+              "required": [
+                "palette",
+                "layers"
+              ]
+            },
+            "origin": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "x": {
+                      "type": "number"
+                    },
+                    "y": {
+                      "type": "number"
+                    },
+                    "z": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "x",
+                    "y",
+                    "z"
+                  ]
+                },
+                {
+                  "type": "array",
+                  "prefixItems": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "number"
+                    }
+                  ],
+                  "items": false,
+                  "minItems": 3,
+                  "maxItems": 3
+                }
+              ]
+            }
+          },
+          "required": [
+            "blueprint",
+            "origin"
+          ]
+        },
+        "returns": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "correct": {
+              "type": "number"
+            },
+            "total": {
+              "type": "number"
+            },
+            "mismatches": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "position": {
+                    "type": "object",
+                    "properties": {
+                      "x": {
+                        "type": "number"
+                      },
+                      "y": {
+                        "type": "number"
+                      },
+                      "z": {
+                        "type": "number"
+                      }
+                    },
+                    "required": [
+                      "x",
+                      "y",
+                      "z"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "expected": {
+                    "type": "string"
+                  },
+                  "actual": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "position",
+                  "expected",
+                  "actual"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": [
+            "correct",
+            "total",
+            "mismatches"
+          ],
+          "additionalProperties": false
+        }
+      }
+    ],
+    "calls": [
+      "inventory.count",
+      "place.place"
+    ]
+  },
+  {
+    "name": "explorer",
+    "description": "Explore new ground, summarize surroundings, remember named places, and climb out of holes to open sky.",
+    "uses": [
+      "move",
+      "sense",
+      "dig"
+    ],
+    "actions": [
+      {
+        "name": "scan",
+        "doc": "Summarize the area within `radius` (default 16): biome, uncommon blocks with counts and nearest positions (ores, logs, water, chests...), and nearby entities.",
+        "args": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "radius": {
+              "default": 16,
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 32
+            }
+          }
+        },
+        "returns": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "position": {
+              "type": "object",
+              "properties": {
+                "x": {
+                  "type": "number"
+                },
+                "y": {
+                  "type": "number"
+                },
+                "z": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "x",
+                "y",
+                "z"
+              ],
+              "additionalProperties": false
+            },
+            "biome": {
+              "type": "string"
+            },
+            "blocks": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "count": {
+                    "type": "number"
+                  },
+                  "nearest": {
+                    "type": "object",
+                    "properties": {
+                      "x": {
+                        "type": "number"
+                      },
+                      "y": {
+                        "type": "number"
+                      },
+                      "z": {
+                        "type": "number"
+                      }
+                    },
+                    "required": [
+                      "x",
+                      "y",
+                      "z"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "required": [
+                  "name",
+                  "count",
+                  "nearest"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "entities": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "count": {
+                    "type": "number"
+                  },
+                  "nearestDistance": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "name",
+                  "count",
+                  "nearestDistance"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": [
+            "position",
+            "biome",
+            "blocks",
+            "entities"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "explore",
+        "doc": "Walk about `distance` blocks (default 48) toward the least-explored direction. Remembers visited 16x16 cells across calls. Gives up (and stops pathfinding) after `timeoutMs` (default 90000). Returns { from, to, reached, cellsVisited }.",
+        "args": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "distance": {
+              "default": 48,
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "timeoutMs": {
+              "default": 90000,
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            }
+          }
+        },
+        "returns": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "from": {
+              "type": "object",
+              "properties": {
+                "x": {
+                  "type": "number"
+                },
+                "y": {
+                  "type": "number"
+                },
+                "z": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "x",
+                "y",
+                "z"
+              ],
+              "additionalProperties": false
+            },
+            "to": {
+              "type": "object",
+              "properties": {
+                "x": {
+                  "type": "number"
+                },
+                "y": {
+                  "type": "number"
+                },
+                "z": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "x",
+                "y",
+                "z"
+              ],
+              "additionalProperties": false
+            },
+            "reached": {
+              "type": "boolean"
+            },
+            "cellsVisited": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "from",
+            "to",
+            "reached",
+            "cellsVisited"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "remember",
+        "doc": "Save a named place at `at` (default: where the player stands) and return it. `kind` is one of chest, bed, farm, ore, base, portal, other (default other); `tags` and `note` describe it; `contents` maps item names to counts for a chest. Remembering a name again keeps the kind, tags, note, and contents you do not pass. Places survive programs, kit swaps, and body restarts.",
+        "args": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            },
+            "at": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "x": {
+                      "type": "number"
+                    },
+                    "y": {
+                      "type": "number"
+                    },
+                    "z": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "x",
+                    "y",
+                    "z"
+                  ]
+                },
+                {
+                  "type": "array",
+                  "prefixItems": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "number"
+                    }
+                  ],
+                  "items": false,
+                  "minItems": 3,
+                  "maxItems": 3
+                }
+              ]
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "chest",
+                "bed",
+                "farm",
+                "ore",
+                "base",
+                "portal",
+                "other"
+              ]
+            },
+            "tags": {
+              "maxItems": 16,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 32
+              }
+            },
+            "note": {
+              "type": "string",
+              "maxLength": 500
+            },
+            "contents": {
+              "type": "object",
+              "propertyNames": {
+                "type": "string"
+              },
+              "additionalProperties": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              }
+            }
+          },
+          "required": [
+            "name"
+          ]
+        },
+        "returns": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "chest",
+                "bed",
+                "farm",
+                "ore",
+                "base",
+                "portal",
+                "other"
+              ]
+            },
+            "tags": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "note": {
+              "type": "string"
+            },
+            "contents": {
+              "type": "object",
+              "propertyNames": {
+                "type": "string"
+              },
+              "additionalProperties": {
+                "type": "number"
+              }
+            },
+            "position": {
+              "type": "object",
+              "properties": {
+                "x": {
+                  "type": "number"
+                },
+                "y": {
+                  "type": "number"
+                },
+                "z": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "x",
+                "y",
+                "z"
+              ],
+              "additionalProperties": false
+            },
+            "dimension": {
+              "type": "string"
+            },
+            "updatedAt": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "name",
+            "kind",
+            "tags",
+            "note",
+            "position",
+            "dimension",
+            "updatedAt"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "places",
+        "doc": "List saved places, nearest first. `kind` keeps one kind; `near` is the point distances are measured from (default: the player); `radius` drops places farther than that from `near` or in another dimension; `limit` (default 20) caps the list. Places in other dimensions come last without a `distance`. Returns places with name, kind, tags, note, contents, position, dimension, updatedAt, and distance.",
+        "args": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "chest",
+                "bed",
+                "farm",
+                "ore",
+                "base",
+                "portal",
+                "other"
+              ]
+            },
+            "near": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "x": {
+                      "type": "number"
+                    },
+                    "y": {
+                      "type": "number"
+                    },
+                    "z": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "x",
+                    "y",
+                    "z"
+                  ]
+                },
+                {
+                  "type": "array",
+                  "prefixItems": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "number"
+                    }
+                  ],
+                  "items": false,
+                  "minItems": 3,
+                  "maxItems": 3
+                }
+              ]
+            },
+            "radius": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "limit": {
+              "default": 20,
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            }
+          }
+        },
+        "returns": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "chest",
+                  "bed",
+                  "farm",
+                  "ore",
+                  "base",
+                  "portal",
+                  "other"
+                ]
+              },
+              "tags": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "note": {
+                "type": "string"
+              },
+              "contents": {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": {
+                  "type": "number"
+                }
+              },
+              "position": {
+                "type": "object",
+                "properties": {
+                  "x": {
+                    "type": "number"
+                  },
+                  "y": {
+                    "type": "number"
+                  },
+                  "z": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "x",
+                  "y",
+                  "z"
+                ],
+                "additionalProperties": false
+              },
+              "dimension": {
+                "type": "string"
+              },
+              "updatedAt": {
+                "type": "string"
+              },
+              "distance": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "name",
+              "kind",
+              "tags",
+              "note",
+              "position",
+              "dimension",
+              "updatedAt"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      {
+        "name": "waypoints",
+        "doc": "Every saved place by name as { x, y, z, dimension }. `places` lists them with their kind, tags, note, and contents.",
+        "args": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {}
+        },
+        "returns": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "x": {
+                "type": "number"
+              },
+              "y": {
+                "type": "number"
+              },
+              "z": {
+                "type": "number"
+              },
+              "dimension": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "x",
+              "y",
+              "z",
+              "dimension"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      {
+        "name": "travel",
+        "doc": "Walk to a saved place, stopping within `range` (default 2) blocks. Gives up after `timeoutMs` (default 120000). Returns where the player then stands.",
+        "args": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string",
+              "minLength": 1
+            },
+            "range": {
+              "default": 2,
+              "type": "number",
+              "minimum": 0
+            },
+            "timeoutMs": {
+              "default": 120000,
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            }
+          },
+          "required": [
+            "name"
+          ]
+        },
+        "returns": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "x": {
+              "type": "number"
+            },
+            "y": {
+              "type": "number"
+            },
+            "z": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "x",
+            "y",
+            "z"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "surface",
+        "doc": "Climb to open sky by digging a staircase; use it when trapped underground or in a pit. Needs no blocks; slow without a pickaxe, so pass a long program timeout (e.g. --timeout 600000). Under water it checks the air supply: it does not dig what the air cannot cover and swims to air first. `maxSteps` (default 120) bounds the climb. Returns { surfaced, from, to, steps }.",
+        "args": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "maxSteps": {
+              "default": 120,
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            }
+          }
+        },
+        "returns": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "surfaced": {
+              "type": "boolean"
+            },
+            "from": {
+              "type": "object",
+              "properties": {
+                "x": {
+                  "type": "number"
+                },
+                "y": {
+                  "type": "number"
+                },
+                "z": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "x",
+                "y",
+                "z"
+              ],
+              "additionalProperties": false
+            },
+            "to": {
+              "type": "object",
+              "properties": {
+                "x": {
+                  "type": "number"
+                },
+                "y": {
+                  "type": "number"
+                },
+                "z": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "x",
+                "y",
+                "z"
+              ],
+              "additionalProperties": false
+            },
+            "steps": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "surfaced",
+            "from",
+            "to",
+            "steps"
+          ],
+          "additionalProperties": false
+        }
+      }
+    ],
+    "calls": [
+      "dig.dig",
+      "move.to",
+      "move.to",
+      "move.to",
+      "move.to"
+    ]
+  },
+  {
+    "name": "social",
+    "description": "Talk to, wait for, follow, and hand items to other players.",
+    "uses": [
+      "move",
+      "sense",
+      "inventory"
+    ],
+    "actions": [
+      {
+        "name": "say",
+        "doc": "Send a public chat `message`. Other players and agents read chat.",
+        "args": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "message": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            }
+          },
+          "required": [
+            "message"
+          ]
+        },
+        "returns": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema"
+        }
+      },
+      {
+        "name": "waitForChat",
+        "doc": "Wait for the next chat message from another player. `from` (username), `match` (regex, case-insensitive), `timeoutMs` (default 60000).",
+        "args": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "from": {
+              "type": "string"
+            },
+            "match": {
+              "type": "string"
+            },
+            "timeoutMs": {
+              "default": 60000,
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            }
+          }
+        },
+        "returns": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "from": {
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "from",
+            "message"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "players",
+        "doc": "Other online players: [{ username, distance, position }] (distance and position are null when out of view).",
+        "args": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {}
+        },
+        "returns": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "username": {
+                "type": "string"
+              },
+              "distance": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "position": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "x": {
+                        "type": "number"
+                      },
+                      "y": {
+                        "type": "number"
+                      },
+                      "z": {
+                        "type": "number"
+                      }
+                    },
+                    "required": [
+                      "x",
+                      "y",
+                      "z"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "username",
+              "distance",
+              "position"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      {
+        "name": "follow",
+        "doc": "Follow a `player` for `durationMs` (default 30000), staying within `distance` (default 2) blocks.",
+        "args": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "player": {
+              "type": "string",
+              "minLength": 1
+            },
+            "distance": {
+              "default": 2,
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "durationMs": {
+              "default": 30000,
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            }
+          },
+          "required": [
+            "player"
+          ]
+        },
+        "returns": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema"
+        }
+      },
+      {
+        "name": "give",
+        "doc": "Walk to a `player` and toss them `count` (default 1) of `item`.",
+        "args": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "player": {
+              "type": "string",
+              "minLength": 1
+            },
+            "item": {
+              "type": "string",
+              "minLength": 1
+            },
+            "count": {
+              "default": 1,
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            }
+          },
+          "required": [
+            "player",
+            "item"
+          ]
+        },
+        "returns": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema"
+        }
+      }
+    ],
+    "calls": [
+      "inventory.toss",
+      "move.to"
+    ]
+  }
+]

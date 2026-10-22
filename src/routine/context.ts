@@ -1,12 +1,11 @@
 import type { Bot } from "mineflayer";
-import type { KitRegistry } from "../kit/registry.ts";
 import type { LessonInput, Note, PageSummary, SearchHit, StatusResponse } from "../protocol/index.ts";
 
 /**
  * What a routine's default export receives: the live bot, this run's log, sleep, signal and event
- * subscription, and the body's facilities. `kit` is present when the body offers kits and `wiki`
- * when its wiki is on; no other member exists. A context may also carry the observer of routine
- * calls (see `withObserver`), which is not a member routines use.
+ * subscription, and the body's facilities. `wiki` is present when the body's wiki is on; no other
+ * optional member exists. A context may also carry the observer of routine calls (see `withObserver`),
+ * which is not a member routines use.
  */
 export interface RoutineContext {
   readonly bot: Bot;
@@ -39,8 +38,6 @@ export interface RoutineContext {
   };
   /** Deaths, reconnects, and milestone progress. */
   status(): Promise<StatusResponse>;
-  /** The active kits' actions, namespaced by kit: `await ctx.kit.move.to({ position })`. */
-  readonly kit?: Readonly<KitRegistry>;
   readonly wiki?: {
     search(query: string, limit?: number): SearchHit[];
     read(id: string): string;

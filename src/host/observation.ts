@@ -33,7 +33,7 @@ function standingOn(bot: Bot): string | null {
 /** The observation of a spawned bot. */
 export function observation(
   bot: Bot,
-  extras: { programsWithoutChange: number; activeKits?: string[]; program: { running: boolean; elapsedMs?: number } },
+  extras: { programsWithoutChange: number; program: { running: boolean; elapsedMs?: number } },
 ): Observation {
   const self = bot.entity;
   const feet = self.position.floored();
@@ -86,7 +86,6 @@ export function observation(
     program: extras.program,
     sky,
     programsWithoutChange: extras.programsWithoutChange,
-    ...(extras.activeKits && { kits: extras.activeKits }),
   };
 }
 

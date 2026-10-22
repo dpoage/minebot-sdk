@@ -3,96 +3,13 @@ import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, it } from "node:test";
 import { PACKAGE_ROOT } from "../src/package.ts";
-import { typeCheckKit } from "../src/host/typecheck.ts";
-import type { KitSchema } from "../src/protocol/index.ts";
 import { execFile } from "node:child_process";
 import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { after } from "node:test";
 import { promisify } from "node:util";
 import { typeCheckRoutine } from "../src/host/typecheck.ts";
-import type { KitTypeCheck } from "../src/protocol/index.ts";
-
-const kit = (body: string, uses = '["move"]') => `import { action, defineKit, z } from "minebot-sdk/kit";
-
-export default defineKit(
-  { name: "woodcutter", description: "Chops logs.", uses: ${uses} },
-  {
-    chop: action({
-      doc: "Chops.",
-      args: z.object({ times: z.number().default(1) }),
-      returns: z.object({ chopped: z.number() }),
-      run: async (ctx, { times }) => {
-${body}
-        return { chopped: times };
-      },
-    }),
-  },
-);
-`;
-
-/** An agent kit the body offers, as its schema describes it. */
-const HELPER: KitSchema = {
-  name: "helper",
-  description: "Counts things.",
-  uses: [],
-  active: true,
-  agent: true,
-  actions: {
-    count: {
-      doc: "Counts.",
-      args: { type: "object", properties: { what: { type: "string" } }, required: ["what"], additionalProperties: false },
-      returns: { type: "number" },
-    },
-  },
-};
-
-describe("typeCheckKit", () => {
-  it("passes a kit whose calls fit the kits it uses", async () => {
-    assert.deepEqual(await typeCheckKit(kit("        await ctx.kits.move.to({ position: [0, 64, 0] });"), "woodcutter", []), { status: "passed" });
-  });
-
-  it("reports each error with the kit's file, line, and column", async () => {
-    const check = await typeCheckKit(kit('        await ctx.kits.move.to({ position: "home" });'), "woodcutter", []);
-    assert.ok(check.status === "failed", JSON.stringify(check));
-    assert.equal(check.errors.length, 1);
-    assert.match(check.errors[0]!, /^woodcutter\.ts\(11,\d+\): error TS2322: /);
-  });
-
-  it("types ctx.kits from the schemas of the body's agent kits", async () => {
-    const source = kit('        const n: string = await ctx.kits.helper.count({ what: "logs" });', '["helper"]');
-    const check = await typeCheckKit(source, "woodcutter", [HELPER]);
-    assert.ok(check.status === "failed", JSON.stringify(check));
-    assert.match(check.errors.join("\n"), /Type 'number' is not assignable to type 'string'/);
-    const fixed = kit('        const n: number = await ctx.kits.helper.count({ what: "logs" });', '["helper"]');
-    assert.deepEqual(await typeCheckKit(fixed, "woodcutter", [HELPER]), { status: "passed" });
-  });
-
-  it("does not type a kit against an older schema of itself", async () => {
-    const stale: KitSchema = { ...HELPER, name: "woodcutter" };
-    assert.deepEqual(await typeCheckKit(kit("        await ctx.kits.move.stop();"), "woodcutter", [stale]), { status: "passed" });
-  });
-
-  it("passes the source of every built-in kit, the model agents copy", async () => {
-    const dir = path.join(PACKAGE_ROOT, "src/kit/kits");
-    const files = (await readdir(dir)).filter((file) => file.endsWith(".ts"));
-    const checks = await Promise.all(files.map(async (file) => [file, await typeCheckKit(await readFile(path.join(dir, file), "utf8"), file.slice(0, -3), [])] as const));
-    assert.deepEqual(checks.filter(([, check]) => check.status !== "passed"), []);
-  });
-
-  it("skips, without throwing, when it cannot set up the check", async () => {
-    const saved = process.env.TMPDIR;
-    process.env.TMPDIR = path.join(PACKAGE_ROOT, "no-such-dir", "tmp");
-    try {
-      const check = await typeCheckKit(kit("        await ctx.kits.move.stop();"), "woodcutter", []);
-      assert.ok(check.status === "skipped", JSON.stringify(check));
-      assert.match(check.reason, /could not run/);
-    } finally {
-      if (saved === undefined) delete process.env.TMPDIR;
-      else process.env.TMPDIR = saved;
-    }
-  });
-});
+import type { TypeCheck } from "../src/protocol/index.ts";
 
 describe("typeCheckRoutine", () => {
   const roots: string[] = [];
@@ -110,7 +27,7 @@ describe("typeCheckRoutine", () => {
     return { dir, root };
   }
 
-  const failing = (check: KitTypeCheck): string[] => {
+  const failing = (check: TypeCheck): string[] => {
     assert.ok(check.status === "failed", JSON.stringify(check));
     return check.errors;
   };
@@ -121,7 +38,7 @@ describe("typeCheckRoutine", () => {
 import type { Bot } from "mineflayer";
 import { Vec3 } from "vec3";
 import { z } from "zod";
-import { z as kitZ } from "minebot-sdk/kit";
+import { z as routineZ } from "minebot-sdk/routine";
 import { double } from "./helper.ts";
 
 const Args = z.object({ n: z.number() });
@@ -129,7 +46,7 @@ const origin = new Vec3(0, 64, 0);
 
 export default async function (bot: Bot, args: z.infer<typeof Args>): Promise<number> {
   await new Promise((resolve) => setTimeout(resolve, 1));
-  return double(Args.parse(args).n + origin.y + os.cpus().length + kitZ.number().parse(1)) + bot.health;
+  return double(Args.parse(args).n + origin.y + os.cpus().length + routineZ.number().parse(1)) + bot.health;
 }
 `,
       helper: "export const double = (n: number): number => n * 2;\n",
@@ -220,7 +137,7 @@ console.log(JSON.stringify(checks));`;
           cwd: workDir,
           env: { ...process.env, TMPDIR: tempDir, PWD: workDir },
         });
-        return { where: `TMPDIR=${tempDir} cwd=${workDir}`, checks: JSON.parse(stdout) as Record<string, KitTypeCheck> };
+        return { where: `TMPDIR=${tempDir} cwd=${workDir}`, checks: JSON.parse(stdout) as Record<string, TypeCheck> };
       }),
     );
     for (const { where, checks } of results) {
@@ -249,7 +166,7 @@ console.log(JSON.stringify(checks));`;
     const script = `import { typeCheckRoutine } from ${JSON.stringify(new URL("../src/host/typecheck.ts", import.meta.url).href)};
 console.log(JSON.stringify(await typeCheckRoutine(${JSON.stringify(dir)}, "walk")));`;
     const { stdout } = await promisify(execFile)(process.execPath, ["--conditions=minebot-sdk:source", "--require", hide, "--input-type=module", "--eval", script]);
-    const check = JSON.parse(stdout) as KitTypeCheck;
+    const check = JSON.parse(stdout) as TypeCheck;
     assert.ok(check.status === "skipped", stdout);
     assert.match(check.reason, /typescript is not installed/);
   });
@@ -259,5 +176,28 @@ console.log(JSON.stringify(await typeCheckRoutine(${JSON.stringify(dir)}, "walk"
     const check = await typeCheckRoutine(dir, "walk", AbortSignal.abort());
     assert.ok(check.status === "skipped", JSON.stringify(check));
     assert.match(check.reason, /aborted/);
+  });
+
+  it("passes the source of every built-in routine module, the model agents copy", { timeout: 180_000 }, async () => {
+    const dir = path.join(PACKAGE_ROOT, "src/routines");
+    const files = (await readdir(dir)).filter((file) => file.endsWith(".ts") && file !== "index.ts");
+    const names = files.map((file) => file.slice(0, -3));
+    const { dir: copy } = await library(Object.fromEntries(await Promise.all(files.map(async (file) => [file.slice(0, -3), await readFile(path.join(dir, file), "utf8")] as const))));
+    const checks = await Promise.all(names.map(async (name) => [name, await typeCheckRoutine(copy, name)] as const));
+    assert.deepEqual(checks.filter(([, check]) => check.status !== "passed"), []);
+  });
+
+  it("skips, without throwing, when it cannot set up the check", async () => {
+    const { dir } = await library({ walk: "export default 1;\n" });
+    const saved = process.env.TMPDIR;
+    process.env.TMPDIR = path.join(PACKAGE_ROOT, "no-such-dir", "tmp");
+    try {
+      const check = await typeCheckRoutine(dir, "walk");
+      assert.ok(check.status === "skipped", JSON.stringify(check));
+      assert.match(check.reason, /could not run/);
+    } finally {
+      if (saved === undefined) delete process.env.TMPDIR;
+      else process.env.TMPDIR = saved;
+    }
   });
 });

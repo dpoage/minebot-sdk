@@ -22,6 +22,6 @@ Find blazes with:
 const blaze = bot.nearestEntity((e) => e.name === "blaze");
 ```
 
-<!-- kits -->
+<!-- builtins -->
 `kit.combat.fight({ radius: 16, targets: ["blaze"] })` fights blazes in range.
-<!-- /kits -->
+<!-- /builtins -->

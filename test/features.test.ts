@@ -7,45 +7,48 @@ import { setTimeout } from "node:timers/promises";
 import { after, before, describe, it } from "node:test";
 import { promisify } from "node:util";
 import { BodyClient } from "../src/client/client.ts";
-import { type BodyFeatures, kitsOffered, programApiDoc } from "../src/protocol/index.ts";
+import { type BodyFeatures, programApiDoc } from "../src/protocol/index.ts";
 import { usageFor } from "../src/client/usage.ts";
 import { OPERATOR_FLAG_HELP } from "../src/client/body-flags.ts";
 
 const exec = promisify(execFile);
 
-const ROUTINE_KITS = ["gatherer", "crafter", "builder", "explorer", "social"];
-/** What --locks with the routine kits offers: their used primitives come along automatically. */
-const OFFERED_KITS = ["move", "sense", "dig", "place", "inventory", "craft", "items", "furnace", ...ROUTINE_KITS];
-const raw: BodyFeatures = { kits: [], kitsLocked: true, agentKits: false, wiki: "off", lessons: false, milestones: false, reflexes: false, routines: false, builtins: [] };
-const kitsTier: BodyFeatures = { ...raw, kits: OFFERED_KITS, agentKits: true };
+const ROUTINE_MODULES = ["gatherer", "crafter", "builder", "explorer", "social"];
+/** What --builtins with the routine modules offers: the modules they use come along automatically. */
+const OFFERED_MODULES = ["move", "sense", "dig", "place", "inventory", "craft", "items", "furnace", ...ROUTINE_MODULES];
+const raw: BodyFeatures = { wiki: "off", lessons: false, milestones: false, reflexes: false, routines: false, builtins: [] };
+const builtinsTier: BodyFeatures = { ...raw, builtins: OFFERED_MODULES };
 const wikiTier: BodyFeatures = { ...raw, wiki: "read" };
-const full: BodyFeatures = { ...kitsTier, wiki: "read" };
+const full: BodyFeatures = { ...builtinsTier, wiki: "read" };
 
+/** The kits are gone: no tier, on any surface, says the word. */
 const KIT_WORDS = /\bkits?\b/i;
+const BUILTIN_WORDS = /built-in|builtin/i;
 const WIKI_WORDS = /\bwiki\b|\blessons?\b/i;
 const MILESTONE_WORDS = /milestone/i;
 
 describe("tier visibility in the usage text", () => {
-  it("shows a raw body nothing about kits, the wiki, lessons, or milestones", () => {
+  it("shows a raw body nothing about built-ins, the wiki, lessons, or milestones", () => {
     for (const hasBody of [false, true]) {
       const text = usageFor(raw, hasBody);
-      assert.doesNotMatch(text, KIT_WORDS);
+      assert.doesNotMatch(text, BUILTIN_WORDS);
       assert.doesNotMatch(text, WIKI_WORDS);
       assert.doesNotMatch(text, MILESTONE_WORDS);
       assert.doesNotMatch(text, /trigger/i);
       assert.doesNotMatch(text, /routine|\bbind\b|unbind|call <name>|--args/i);
-      assert.doesNotMatch(text, /--kits|--lock-kits|--wiki|--lessons|--milestones|body:/);
+      assert.doesNotMatch(text, /--wiki|--lessons|--milestones|body:/);
     }
   });
 
   it("shows each tier only its own features", () => {
-    assert.match(usageFor(kitsTier, false), /kits docs/);
-    assert.doesNotMatch(usageFor(kitsTier, false), /kits use|wiki|lesson/i);
+    assert.match(usageFor(builtinsTier, false), /builtins docs/);
+    assert.doesNotMatch(usageFor(builtinsTier, false), /wiki|lesson/i);
     assert.match(usageFor(wikiTier, false), /wiki search/);
-    assert.doesNotMatch(usageFor(wikiTier, false), /kits?\b|lesson/i);
-    assert.match(usageFor(full, false), /kits docs/);
+    assert.doesNotMatch(usageFor(wikiTier, false), /built-in|builtins|lesson/i);
+    assert.match(usageFor(full, false), /builtins docs/);
     assert.match(usageFor(full, false), /wiki read/);
     assert.doesNotMatch(usageFor(full, false), /wiki lesson/);
+    for (const tier of [raw, builtinsTier, wikiTier, full]) assert.doesNotMatch(usageFor(tier, false), KIT_WORDS);
   });
 
   it("lists the routine commands exactly when the body offers routines, and `bind reflex` only with reflexes too", () => {
@@ -70,42 +73,35 @@ describe("tier visibility in the usage text", () => {
 
   it("shows an operator everything when no body can be asked", () => {
     const text = usageFor(null, true, OPERATOR_FLAG_HELP);
-    for (const word of ["body ", "--no-agent-kits", "--no-milestones", "--no-reflexes", "--no-routines", "kits use", "wiki lesson", "--lock-kits"]) {
+    for (const word of ["body ", "--no-milestones", "--no-reflexes", "--no-routines", "--builtins", "wiki lesson"]) {
       assert.match(text, new RegExp(word.replace(/[-]/g, "\\-")));
     }
-    assert.doesNotMatch(usageFor(null, false), /kits|wiki|milestones/i);
+    assert.doesNotMatch(text, KIT_WORDS);
+    assert.doesNotMatch(text, /--kits|--lock-kits|--agent-kits|--no-agent-kits/);
+    assert.doesNotMatch(usageFor(null, false), /built-in|wiki|milestones/i);
   });
 });
 
 describe("tier visibility in the program reference", () => {
   it("lists only the globals the body offers", () => {
     const rawDoc = programApiDoc(raw);
-    assert.doesNotMatch(rawDoc, KIT_WORDS);
+    assert.doesNotMatch(rawDoc, BUILTIN_WORDS);
     assert.doesNotMatch(rawDoc, WIKI_WORDS);
     assert.doesNotMatch(rawDoc, MILESTONE_WORDS);
     assert.match(rawDoc, /status\(\): resolves to \{ deaths, reconnects \}\./);
-    assert.match(programApiDoc(kitsTier), /- kit: the active kits' actions, namespaced by kit \(move, sense/);
-    assert.match(programApiDoc(kitsTier), /await kit\.move\.to\(\{ position: \[x, y, z\] \}\)/);
-    assert.doesNotMatch(programApiDoc(kitsTier), /wiki/);
+    assert.match(programApiDoc(builtinsTier), /^Built-in routines: move, sense/m);
+    assert.doesNotMatch(programApiDoc(builtinsTier), /wiki/);
     assert.match(programApiDoc(wikiTier), /- wiki: .*wiki\.read\(id\)/);
-    assert.doesNotMatch(programApiDoc(wikiTier), KIT_WORDS);
+    assert.doesNotMatch(programApiDoc(wikiTier), BUILTIN_WORDS);
     assert.doesNotMatch(programApiDoc(wikiTier), /lessons|addLesson/);
     assert.match(programApiDoc({ ...wikiTier, wiki: "write", lessons: true }), /lessons that agents wrote.*addLesson/);
-    assert.match(programApiDoc({ ...raw, kitsLocked: false, kits: ["move"] }), /kits\.use\("gatherer"\) to swap the active kits/);
-    assert.doesNotMatch(programApiDoc({ ...kitsTier, agentKits: false }), /kits\.save|kits\.remove|kits\.source|your own kits/i);
-    assert.match(programApiDoc({ ...kitsTier }), /kits\.save\(source\)/);
+    for (const tier of [raw, builtinsTier, wikiTier, full]) assert.doesNotMatch(programApiDoc(tier), /\bkits?\b|\bkit\./i);
     assert.match(programApiDoc({ ...raw, milestones: true }), /progress toward this body's milestones/);
-  });
-
-  it("offers kits when some are active or the set can change", () => {
-    assert.equal(kitsOffered(raw), false);
-    assert.equal(kitsOffered(kitsTier), true);
-    assert.equal(kitsOffered({ kits: [], kitsLocked: false }), true);
   });
 });
 
 describe("tier visibility on a running body", () => {
-  /** The node arguments that run the CLI: this run's own flags (`--conditions=minebot-sdk:source`) carry over, so the CLI resolves `minebot-sdk/kit` to the source tree too. */
+  /** The node arguments that run the CLI: this run's own flags (`--conditions=minebot-sdk:source`) carry over, so the CLI resolves `minebot-sdk/routine` to the source tree too. */
   const CLI = [...process.execArgv, path.join(import.meta.dirname, "..", "src", "cli.ts")];
   const runtime = mkdtempSync(path.join(tmpdir(), "minebot-features-"));
   const children: ChildProcess[] = [];
@@ -116,7 +112,7 @@ describe("tier visibility on a running body", () => {
     const stateDir = path.join(runtime, `${name}-state`);
     const child = spawn(
       "node",
-      [...CLI, "body", "--bot", name, "--host", "127.0.0.1", "--port", "1", "--state", stateDir, "--lessons", path.join(stateDir, "lessons"), "--lock-kits", ...flags],
+      [...CLI, "body", "--bot", name, "--host", "127.0.0.1", "--port", "1", "--state", stateDir, "--lessons", path.join(stateDir, "lessons"), ...flags],
       { env, stdio: "ignore" },
     );
     children.push(child);
@@ -139,28 +135,33 @@ describe("tier visibility on a running body", () => {
 
   let rawBody: BodyClient;
   let fullBody: BodyClient;
-  let plainKitsBody: BodyClient;
   before(async () => {
-    [rawBody, fullBody, plainKitsBody] = await Promise.all([
-      start("features-raw", "--wiki", "off", "--no-milestones", "--no-agent-kits", "--no-reflexes", "--no-routines", "--kits", "", "--builtins", "none"),
-      start("features-full", "--wiki", "read", "--kits", ROUTINE_KITS.join(","), "--no-milestones"),
-      start("features-plainkits", "--wiki", "off", "--no-agent-kits", "--no-milestones", "--no-reflexes", "--kits", ROUTINE_KITS.join(","), "--builtins", "none"),
+    [rawBody, fullBody] = await Promise.all([
+      start("features-raw", "--wiki", "off", "--no-milestones", "--no-reflexes", "--no-routines", "--builtins", "none"),
+      start("features-full", "--wiki", "read", "--builtins", ROUTINE_MODULES.join(","), "--no-milestones"),
     ]);
   });
   after(() => {
     for (const child of children) child.kill("SIGTERM");
   });
 
-  it("lists in the CLI's unknown-kits-action error only the verbs the body offers", async () => {
-    // Locked kits with agent kits: no `use`.
-    const full = await cli(fullBody, "kits", "frobnicate");
-    assert.equal(full.code, 1);
-    assert.match(full.out, /unknown kits action "frobnicate"; use "docs", "search", "save", "try", "rm", "source", "versions", or "revert"/);
-    // Locked kits without agent kits: only docs and search, and the agent verbs answer as unknown.
-    const plain = await cli(plainKitsBody, "kits", "frobnicate");
-    assert.match(plain.out, /unknown kits action "frobnicate"; use "docs", or "search"/);
-    for (const verb of ["save", "try", "rm", "source", "versions", "revert"]) {
-      assert.match((await cli(plainKitsBody, "kits", verb)).out, new RegExp(`unknown kits action "${verb}"; use "docs", or "search"`), verb);
+  it("has no kits command, on a body with every feature or none: the word is an unknown command like any other", async () => {
+    for (const body of [rawBody, fullBody]) {
+      for (const args of [["kits"], ["kits", "docs"], ["kits", "use", "move"], ["kits", "save", "k.ts"]]) {
+        const result = await cli(body, ...args);
+        assert.equal(result.code, 1, args.join(" "));
+        assert.match(result.out, /^unknown command: kits\n/, args.join(" "));
+      }
+    }
+  });
+
+  it("refuses the flags of the kits as unknown flags, with no alias", async () => {
+    for (const flag of [["--kits", "move"], ["--lock-kits"], ["--agent-kits", "./kits"], ["--no-agent-kits"]]) {
+      await assert.rejects(
+        exec("node", [...CLI, "body", "--bot", "features-old-flag", ...flag], { env: { ...process.env, MINEBOT_RUNTIME_DIR: runtime } }),
+        (err: { stderr: string }) => err.stderr.includes(`Unknown option '${flag[0]}'`),
+        flag.join(" "),
+      );
     }
   });
 
@@ -172,12 +173,12 @@ describe("tier visibility on a running body", () => {
       assert.equal(res.status, 404, route);
       assert.equal(((await res.json()) as { error: string }).error, `no route for GET ${route.split("?")[0]}`);
     }
-    const post = await fetch(new URL("/kits", rawBody.endpoint.url), {
+    const post = await fetch(new URL("/kits", fullBody.endpoint.url), {
       method: "POST",
-      headers: { authorization: `Bearer ${rawBody.endpoint.token}`, "content-type": "application/json" },
+      headers: { authorization: `Bearer ${fullBody.endpoint.token}`, "content-type": "application/json" },
       body: JSON.stringify({ use: ["gatherer"] }),
     });
-    assert.equal(post.status, 404);
+    assert.equal(post.status, 404, "the kits' routes are unknown on a body that offers everything too");
     await assert.rejects(rawBody.setMilestones({ milestones: [] }), /no route for PUT \/milestones/);
     await assert.rejects(rawBody.bind({ kind: "reflex", name: "t", routine: "act", on: ["hurt"] }), /no route for POST \/bind/);
     await assert.rejects(rawBody.addLesson({ title: "A lesson", body: "Some text here." }), /no route for POST \/wiki\/lessons/);
@@ -251,7 +252,7 @@ describe("tier visibility on a running body", () => {
     assert.doesNotMatch(JSON.stringify(await rawBody.status()), /milestone|kit|wiki/i);
     assert.doesNotMatch(JSON.stringify(await rawBody.observe()), /kits/);
     const { doc } = await rawBody.apiDoc();
-    assert.doesNotMatch(doc, KIT_WORDS);
+    assert.doesNotMatch(doc, BUILTIN_WORDS);
     assert.doesNotMatch(doc, WIKI_WORDS);
     assert.doesNotMatch(doc, MILESTONE_WORDS);
     assert.doesNotMatch(doc, /trigger/i);
@@ -261,7 +262,7 @@ describe("tier visibility on a running body", () => {
   it("gives the CLI of a raw body no commands for features it lacks", async () => {
     const help = await cli(rawBody, "--help");
     assert.equal(help.code, 0);
-    assert.doesNotMatch(help.out, KIT_WORDS);
+    assert.doesNotMatch(help.out, BUILTIN_WORDS);
     assert.doesNotMatch(help.out, /wiki|lesson|milestone|trigger/i);
     assert.doesNotMatch(help.out, /routine|\bbind\b|unbind/i);
     for (const command of ["kits", "kits docs", "wiki search logs", "milestones", "triggers", "routines", "routines save act.ts", "bind action act act", "unbind act", "call act"]) {
@@ -274,13 +275,13 @@ describe("tier visibility on a running body", () => {
     assert.match((await cli(rawBody, "status")).out, /^disconnected; body started \S+; deaths 0; reconnects \d+\n?$/);
   });
 
-  it("serves a full body its kits and wiki, and nothing about milestones", async () => {
-    assert.deepEqual((await fullBody.features()).kits, OFFERED_KITS);
-    assert.deepEqual((await fullBody.kits()).kits.map((k) => k.name), OFFERED_KITS);
+  it("serves a full body its built-ins and wiki, and nothing about milestones", async () => {
+    assert.deepEqual((await fullBody.features()).builtins, OFFERED_MODULES);
+    assert.deepEqual((await fullBody.builtins()).builtins.map((module) => module.name), OFFERED_MODULES);
     assert.ok((await fullBody.wikiSearch("pickaxe")).hits.length > 0);
-    assert.match((await cli(fullBody, "--help")).out, /kits docs[\s\S]*wiki search/);
+    assert.match((await cli(fullBody, "--help")).out, /builtins docs[\s\S]*wiki search/);
     assert.doesNotMatch((await cli(fullBody, "--help")).out, /milestone/i);
-    assert.match((await cli(fullBody, "kits", "docs")).out, /## gatherer/);
+    assert.match((await cli(fullBody, "builtins", "docs")).out, /## gatherer/);
     assert.match((await cli(fullBody, "wiki", "read", "flows/first-day")).out, /collect\(isLog/);
   });
 
@@ -315,8 +316,8 @@ describe("tier visibility on a running body", () => {
     assert.deepEqual(await fullBody.unbind("react"), { unbound: "react" });
   });
 
-  it("serves a body without kits no kit content in the wiki", async () => {
-    const wikiBody = await start("features-wiki", "--wiki", "read", "--no-milestones", "--no-agent-kits", "--kits", "");
+  it("serves a body without built-ins and routines none of their content in the wiki", async () => {
+    const wikiBody = await start("features-wiki", "--wiki", "read", "--no-milestones", "--builtins", "none", "--no-routines");
     const first = (await cli(wikiBody, "wiki", "read", "flows/first-day")).out;
     assert.match(first, /collect\(isLog/);
     assert.doesNotMatch(first, KIT_WORDS);
@@ -326,12 +327,12 @@ describe("tier visibility on a running body", () => {
     assert.match((await cli(wikiBody, "wiki", "read", "minebot/kits")).out, /no wiki page/);
   });
 
-  it("shows a body with kits only the kits it offers", async () => {
-    const some = await start("features-some", "--wiki", "off", "--no-milestones", "--no-agent-kits", "--kits", "gatherer");
+  it("shows a body with built-ins only the modules it offers", async () => {
+    const some = await start("features-some", "--wiki", "off", "--no-milestones", "--builtins", "gatherer");
     const offered = ["move", "sense", "dig", "inventory", "items", "gatherer"];
-    assert.deepEqual((await some.kits()).kits.map((k) => k.name), offered);
-    await assert.rejects(some.kitDocs(["social"]), /unknown kit "social"$/);
+    assert.deepEqual((await some.builtins()).builtins.map((module) => module.name), offered);
+    await assert.rejects(some.builtinDocs(["social"]), /unknown built-in module "social"/);
     const { doc } = await some.apiDoc();
-    assert.match(doc, new RegExp(`namespaced by kit \\(${offered.join(", ")}\\)`));
+    assert.match(doc, new RegExp(`^Built-in routines: ${offered.join(", ")}\\.`, "m"));
   });
 });

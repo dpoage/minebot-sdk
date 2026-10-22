@@ -29,6 +29,6 @@ You need a hoe, seeds, and a bucket of water. A hoe is 2 head material and 2 sti
 
 Check the inventory after each step: `bot.inventory.items()`.
 
-<!-- kits -->
+<!-- builtins -->
 `kit.farm.till({ at })`, `kit.farm.plant({ at, seed: "wheat_seeds" })`, and `kit.farm.harvest({ radius: 8, replant: true })` do steps 2, 3, and 5.
-<!-- /kits -->
+<!-- /builtins -->

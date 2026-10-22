@@ -16,13 +16,13 @@ const ctx: RoutineContext = {
 };
 
 // The context offers exactly these members; adding or dropping one fails to compile here.
-const MEMBERS: Record<keyof RoutineContext, true> = { bot: true, log: true, sleep: true, signal: true, on: true, notes: true, store: true, status: true, kit: true, wiki: true };
+const MEMBERS: Record<keyof RoutineContext, true> = { bot: true, log: true, sleep: true, signal: true, on: true, notes: true, store: true, status: true, wiki: true };
 
 describe("RoutineContext", () => {
-  it("offers the bot, the run's tools, and the body's facilities, kit and wiki optionally", () => {
-    assert.deepEqual(Object.keys(MEMBERS).sort(), ["bot", "kit", "log", "notes", "on", "signal", "sleep", "status", "store", "wiki"]);
-    const withOptional: RoutineContext = { ...ctx, kit: {} as NonNullable<RoutineContext["kit"]>, wiki: { search: () => [], read: () => "", list: () => [] } };
-    assert.ok(withOptional.wiki && withOptional.kit);
+  it("offers the bot, the run's tools, and the body's facilities, wiki optionally", () => {
+    assert.deepEqual(Object.keys(MEMBERS).sort(), ["bot", "log", "notes", "on", "signal", "sleep", "status", "store", "wiki"]);
+    const withOptional: RoutineContext = { ...ctx, wiki: { search: () => [], read: () => "", list: () => [] } };
+    assert.ok(withOptional.wiki);
     // The handler of the run-scoped subscription is the one a program's `on` takes, so the host assigns its scope's `on` without a cast.
     ctx.on("chat", (...args) => void args);
   });

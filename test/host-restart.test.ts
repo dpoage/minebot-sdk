@@ -95,7 +95,7 @@ async function scripted(script: Script = {}, entry = FIXTURE, carried: Partial<H
   mkdirSync(dir);
   const events = new EventLog();
   const history = path.join(dir, "history.jsonl");
-  const init = { stateDir: dir, startedAt: "t0", deaths: 2, reconnects: 5, active: ["a", "b"], applyMilestones: true, ...carried, script: { graceMs: GRACE_MS, ...script } } as unknown as HostInit;
+  const init = { stateDir: dir, startedAt: "t0", deaths: 2, reconnects: 5, applyMilestones: true, ...carried, script: { graceMs: GRACE_MS, ...script } } as unknown as HostInit;
   const host = new HostProcess({ init, events, history: wrap(new ProgramHistory({ file: history })), entry, graceMs: GRACE_MS });
   hosts.push(host);
   await host.start();
@@ -272,11 +272,9 @@ describe("restart: the supervisor keeps serving across a host's death", () => {
       port,
       apiHost: "127.0.0.1",
       apiPort: 0,
-      lockKits: false,
       wikiMode: "off",
       stateDir: path.join(ROOT, "state-real"),
       milestonesEnabled: false,
-      agentKits: false,
     });
     try {
       const api = async <T>(url: string): Promise<T> => {
@@ -320,7 +318,7 @@ describe("restart: the supervisor keeps serving across a host's death", () => {
 });
 
 describe("restart: what a replacement host carries over", () => {
-  it("is started with the counters, the active kits, and the start time of the one it replaces, and without the milestones", { timeout: 40_000 }, async () => {
+  it("is started with the counters and the start time of the one it replaces, and without the milestones", { timeout: 40_000 }, async () => {
     const initLog = path.join(ROOT, "carry-init.log");
     const t = await scripted({ mirrorState: true, initLog });
     await killHost(t);
@@ -329,13 +327,15 @@ describe("restart: what a replacement host carries over", () => {
     await get(t, "/ping");
     const inits = readFileSync(initLog, "utf8").trim().split("\n").map((line) => JSON.parse(line) as HostInit);
     assert.deepEqual(
-      inits.map(({ deaths, reconnects, active, applyMilestones, startedAt }) => ({ deaths, reconnects, active, applyMilestones, startedAt })),
+      inits.map(({ deaths, reconnects, applyMilestones, startedAt }) => ({ deaths, reconnects, applyMilestones, startedAt })),
       [
-        { deaths: 2, reconnects: 5, active: ["a", "b"], applyMilestones: true, startedAt: "t0" },
-        { deaths: 2, reconnects: 6, active: ["a", "b"], applyMilestones: false, startedAt: "t0" },
-        { deaths: 2, reconnects: 7, active: ["a", "b"], applyMilestones: false, startedAt: "t0" },
+        { deaths: 2, reconnects: 5, applyMilestones: true, startedAt: "t0" },
+        { deaths: 2, reconnects: 6, applyMilestones: false, startedAt: "t0" },
+        { deaths: 2, reconnects: 7, applyMilestones: false, startedAt: "t0" },
       ],
     );
+    // What the body does not offer any more is not carried: no active set, and none of the kit options.
+    for (const init of inits) assert.deepEqual(Object.keys(init).filter((key) => /active|kit/i.test(key)), []);
   });
 
   describe("in the host's world", () => {
@@ -345,10 +345,8 @@ describe("restart: what a replacement host carries over", () => {
       auth: "offline" as const,
       host: "127.0.0.1",
       port: 1,
-      lockKits: false,
       wikiMode: "off" as const,
       milestonesEnabled: true,
-      agentKits: false,
       triggers: false,
       startedAt: "2026-01-01T00:00:00.000Z",
       deaths: 2,
@@ -357,12 +355,9 @@ describe("restart: what a replacement host carries over", () => {
     };
     const io = { events: new HostEvents(() => {}), recorder: { record: async () => assert.fail("no run"), deliver: () => assert.fail("no run"), counts: () => {}, preempt: () => false, register: async () => {} } };
 
-    it("starts from the counters and the start time, with the carried kits less the ones the catalog does not offer, and without the milestones", async () => {
-      const world = buildWorld({ ...base, stateDir: path.join(ROOT, "world-a"), active: ["deleted-agent-kit", "move"], applyMilestones: false }, io);
+    it("starts from the counters and the start time, and without the milestones", async () => {
+      const world = buildWorld({ ...base, stateDir: path.join(ROOT, "world-a"), applyMilestones: false }, io);
       try {
-        assert.ok(world.kits.active.includes("move"));
-        assert.ok(!world.kits.active.includes("deleted-agent-kit"));
-        assert.ok(!world.kits.active.includes("combat"), "the carried set replaces the default of every kit");
         assert.deepEqual(await world.body.status(), { connected: false, startedAt: base.startedAt, deaths: 2, reconnects: 3, milestones: null });
         assert.equal(world.body.milestones, null);
       } finally {
@@ -669,15 +664,26 @@ describe("restart: backoff and failure", () => {
   });
 });
 
+describe("restart: the messages the host sends carry no kits", () => {
+  it("sends run_started, register, and state with exactly their own fields", async () => {
+    const sent: FromHost[] = [];
+    const reporter = new RunReporter({ send: (message) => sent.push(message), stop: () => false, running: () => false });
+    const registered = reporter.register("event.data.health < 8", { trigger: "t" });
+    reporter.acknowledge(0);
+    await registered;
+    assert.deepEqual(sent, [{ kind: "register", runId: 0, code: "event.data.health < 8", extra: { trigger: "t" } }]);
+  });
+});
+
 describe("restart: the host's report of a hung run", () => {
   it("is run_finished with hung, the requestId on run_started, and a result without the flag", async () => {
     const sent: FromHost[] = [];
-    const reporter = new RunReporter({ send: (message) => sent.push(message), kits: () => [], stop: () => false, running: () => false });
+    const reporter = new RunReporter({ send: (message) => sent.push(message), stop: () => false, running: () => false });
     const hung = reporter.record({ code: "x", timeoutMs: 5, requestId: 7 }, async () => ({ status: "stopped", error: "e", logs: "partial", durationMs: 1, hung: true }));
     hung.catch(() => {});
     reporter.acknowledge(0);
     while (!sent.some((message) => message.kind === "run_finished")) await sleep(1);
-    assert.deepEqual(sent[0], { kind: "run_started", runId: 0, code: "x", timeoutMs: 5, extra: {}, kits: [], requestId: 7 });
+    assert.deepEqual(sent[0], { kind: "run_started", runId: 0, code: "x", timeoutMs: 5, extra: {}, requestId: 7 });
     assert.deepEqual(sent[1], { kind: "run_finished", runId: 0, result: { status: "stopped", error: "e", logs: "partial", durationMs: 1 }, hung: true });
 
     // A run that ended normally says nothing of it, and a trigger's run has no request.
@@ -693,7 +699,7 @@ describe("restart: the host's report of a hung run", () => {
 
   it("delivers a run after the answer to its request, delivers a firing whose end the history refused, and leaves an end it holds no run for to the caller", async () => {
     const sent: FromHost[] = [];
-    const reporter = new RunReporter({ send: (message) => sent.push(message), kits: () => [], stop: () => false, running: () => false });
+    const reporter = new RunReporter({ send: (message) => sent.push(message), stop: () => false, running: () => false });
     const ended = async (runId: number) => {
       reporter.acknowledge(runId);
       while (!sent.some((message) => message.kind === "run_finished" && message.runId === runId)) await sleep(1);

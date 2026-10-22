@@ -1,5 +1,5 @@
 // The body's state directory: the one owner of where persistent state lives. Notes, milestones,
-// reflexes, action bindings, per-kit stores, agent kits, and routines survive body restarts here, and every file is written atomically.
+// reflexes, action bindings, routine stores, and routines survive body restarts here, and every file is written atomically.
 import path from "node:path";
 import { JsonStore } from "../store.ts";
 import { Notes } from "../notes.ts";
@@ -21,19 +21,19 @@ export class BodyState {
     return new Notes(this.store(BODY_STORES.notes));
   }
 
-  /** The agent's reflexes, one entry per name (and the entries saved before reflexes, which stay until unbound). Apart from the kit stores, which are named by kit. */
+  /** The agent's reflexes, one entry per name (and the entries saved before reflexes, which stay until unbound). Apart from the stores, which are named by namespace. */
   get triggers(): JsonStore {
     this.#triggers ??= new JsonStore(path.join(this.dir, "triggers.json"));
     return this.#triggers;
   }
 
-  /** How often each kit action succeeded and failed on this body. Apart from the kit stores, which are named by kit. */
+  /** How often each built-in routine succeeded and failed on this body. Apart from the stores, which are named by namespace. */
   get kitStats(): JsonStore {
     this.#kitStats ??= new JsonStore(path.join(this.dir, "kit-stats.json"));
     return this.#kitStats;
   }
 
-  /** The agent's action bindings, one entry per bound name. Apart from the kit stores, which are named by kit. */
+  /** The agent's action bindings, one entry per bound name. Apart from the stores, which are named by namespace. */
   get bindings(): JsonStore {
     this.#bindings ??= new JsonStore(path.join(this.dir, "bindings.json"));
     return this.#bindings;
@@ -44,17 +44,12 @@ export class BodyState {
     return path.join(this.dir, "routines");
   }
 
-  /** Where agents' kits live; bodies that share the directory share their kits. */
-  get agentKitsDir(): string {
-    return path.join(this.dir, "agent-kits");
-  }
-
-  /** The persistent JSON store of one kit. Kits never see each other's stores. */
-  store(kit: string): JsonStore {
-    let store = this.#stores.get(kit);
+  /** The persistent JSON store of one namespace: `stores/<namespace>.json`. The body's own stores (`BODY_STORES`) and the routines' share the directory, and only the routines' go through `routineStore`. */
+  store(namespace: string): JsonStore {
+    let store = this.#stores.get(namespace);
     if (!store) {
-      store = new JsonStore(path.join(this.dir, "stores", `${kit}.json`));
-      this.#stores.set(kit, store);
+      store = new JsonStore(path.join(this.dir, "stores", `${namespace}.json`));
+      this.#stores.set(namespace, store);
     }
     return store;
   }

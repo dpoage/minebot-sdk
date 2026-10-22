@@ -37,6 +37,6 @@ You need 10 cobblestone, or any other solid block. A wooden pickaxe digs cobbles
 
 Eat before you seal in (`mechanics/food-sources`): the night lasts about 9 minutes.
 
-<!-- kits -->
+<!-- builtins -->
 `kit.survival.sleep()` skips the night when a bed is in reach.
-<!-- /kits -->
+<!-- /builtins -->

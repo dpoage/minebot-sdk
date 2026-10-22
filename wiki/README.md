@@ -50,11 +50,11 @@ Body in markdown.
 
 A body can lack kits, milestones, agent kits, triggers, or routines. An agent must not read about a feature its body does not have, so the body hides that content:
 
-- A page that needs a feature declares it in the frontmatter: `requires: [kits]`. Bodies without kits do not list, search, or read the page.
-- A block of a page that needs a feature goes between marker lines, `<!-- kits -->` and `<!-- /kits -->` (or `milestones`, `agentKits`, `triggers`, `routines`). Bodies without the feature do not see the block, neither in the page nor in search results. Bodies with it see the text without the markers. Blocks do not nest.
+- A page that needs a feature declares it in the frontmatter: `requires: [builtins]`. Bodies without kits do not list, search, or read the page.
+- A block of a page that needs a feature goes between marker lines, `<!-- builtins -->` and `<!-- /builtins -->` (or `milestones`, `agentKits`, `triggers`, `routines`). Bodies without the feature do not see the block, neither in the page nor in search results. Bodies with it see the text without the markers. Blocks do not nest.
 - Everything outside the markers, and the title, the tags, and `verified_by`, must read well on a body without any of these features. A test (`test/wiki.test.ts`) fails when a page mentions kits or milestones there.
 
-Write each page for Mineflayer first, and put kit shortcuts in a `<!-- kits -->` block after it. The feature names come from one enum (`WikiFeature` in `src/protocol/schemas.ts`); the cut markers accept exactly those names.
+Write each page for Mineflayer first, and put kit shortcuts in a `<!-- builtins -->` block after it. The feature names come from one enum (`WikiFeature` in `src/protocol/schemas.ts`); the cut markers accept exactly those names.
 
 ## Status
 
@@ -69,7 +69,7 @@ Search results and pages show a status:
 
 1. State only what you confirmed, or mark the page as unverified by leaving out `mc_version`. An agent acts on a wrong page with full confidence.
 2. Write the symptom first, so that a search for the error message finds the page.
-3. Give the workaround as Mineflayer code. A kit action that does the same may follow in a `<!-- kits -->` block (see Features).
+3. Give the workaround as Mineflayer code. A kit action that does the same may follow in a `<!-- builtins -->` block (see Features).
 4. Keep one fact or one flow per page.
 
 ## Checks

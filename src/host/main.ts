@@ -145,8 +145,8 @@ function reportState(): void {
   send(state);
 }
 
-function currentState({ body, kits }: World): FromHost {
-  return { kind: "state", connected: body.connected, deaths: body.deaths, reconnects: body.reconnects, active: kits.active };
+function currentState({ body }: World): FromHost {
+  return { kind: "state", connected: body.connected, deaths: body.deaths, reconnects: body.reconnects };
 }
 
 async function handle(message: ToHost): Promise<void> {
@@ -160,7 +160,6 @@ async function handle(message: ToHost): Promise<void> {
       });
       reporter = new RunReporter({
         send,
-        kits: () => world?.kits.active ?? [],
         stop: () => world?.body.runner.stop() ?? false,
         running: () => Boolean(world?.body.runner.running),
       });

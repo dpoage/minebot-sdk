@@ -29,6 +29,6 @@ if (skeleton) {
 
 Armor cuts the arrow damage (`mechanics/armor-tiers`). A fight: `mechanics/combat-basics`.
 
-<!-- kits -->
+<!-- builtins -->
 `kit.combat.attack({ target: "skeleton" })` fights one. `kit.combat.retreat({ from: skeletonId })` backs off.
-<!-- /kits -->
+<!-- /builtins -->

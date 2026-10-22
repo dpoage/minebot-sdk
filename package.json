@@ -5,11 +5,6 @@
   "license": "MIT",
   "type": "module",
   "exports": {
-    "./kit": {
-      "minebot-sdk:source": "./src/kit/public.ts",
-      "types": "./dist/kit/public.d.ts",
-      "default": "./dist/kit/public.js"
-    },
     "./routine": {
       "minebot-sdk:source": "./src/routine/public.ts",
       "types": "./dist/routine/public.d.ts",
@@ -35,7 +30,6 @@
   },
   "files": [
     "dist",
-    "src/kit/kits",
     "src/routines",
     "wiki",
     "LICENSE",

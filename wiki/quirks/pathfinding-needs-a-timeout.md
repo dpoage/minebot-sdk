@@ -28,6 +28,6 @@ await within(45000, "goto", bot.pathfinder.goto(goal), () => bot.pathfinder.stop
 
 When a target times out, skip it and choose another one.
 
-<!-- kits -->
+<!-- builtins -->
 Kit actions use time limits everywhere: `kit.move.to({ position, timeoutMs })` gives up after `timeoutMs`.
-<!-- /kits -->
+<!-- /builtins -->

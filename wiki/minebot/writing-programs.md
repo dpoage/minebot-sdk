@@ -15,9 +15,9 @@ A program is the body of an async function that runs against the live bot. These
 7. **Check `signal.aborted`** in long loops, so that `minebot stop` and timeouts end them.
 8. **Search the wiki on surprises.** Search for the error text: `minebot wiki search "<error words>"`.
 
-<!-- kits -->
+<!-- builtins -->
 When kits are active, prefer a kit action over raw Mineflayer code: `await kit.gatherer.gather({ blocks: "*_log", count: 4 })`. Run `minebot kits docs` for the full list with argument types.
-<!-- /kits -->
+<!-- /builtins -->
 
 <!-- routines -->
 When you run the same code again and again, or it needs `import`, save it as a routine and call it by name. See `minebot/routines`.

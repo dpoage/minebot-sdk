@@ -1,7 +1,7 @@
 // Serves one body's API as MCP tools over stdio. The body endpoint is re-read per call, so body restarts are fine.
 //
 // The default `core` tool set is what an agent needs to drive a body through programs: observe,
-// run, stop, wait, events, and the references. Everything else (notes, status, chat, kit and wiki
+// run, stop, wait, events, and the references. Everything else (notes, status, chat, wiki
 // management) is a program global, so `core` leaves those tools out; `full` serves them
 // as tools too. Tools for optional features exist only while the body offers the feature, so an
 // agent does not learn about features its body lacks. `toolPlan` derives the gated tool set from
@@ -24,15 +24,13 @@ import {
   NoteKey,
   NoteText,
   ReflexInput,
-  RevertKitInput,
   RevertRoutineInput,
   RoutineName,
   RoutineSource,
   UnbindInput,
-  TryKitInput,
   WaitInput,
 } from "../protocol/index.ts";
-import { formatBound, formatBuiltinHits, formatBuiltins, formatHits, formatKitHits, formatKitVersions, formatLibrary, formatNotes, formatRevertedRoutine, formatRoutineVersions, formatRun, formatSavedRoutine, formatStatus } from "./render.ts";
+import { formatBound, formatBuiltinHits, formatBuiltins, formatHits, formatLibrary, formatNotes, formatRevertedRoutine, formatRoutineVersions, formatRun, formatSavedRoutine, formatStatus } from "./render.ts";
 import { BodyClient } from "./client.ts";
 
 type ToolResult = { content: { type: "text"; text: string }[]; isError?: boolean };
@@ -46,7 +44,7 @@ export const TOOL_SETS = ["core", "full"] as const;
 export type ToolSet = (typeof TOOL_SETS)[number];
 
 /** The tools of the core set. Programs reach everything else through their globals. */
-const CORE_TOOLS: Readonly<Record<string, true>> = { observe: true, run_program: true, stop_program: true, wait_for: true, get_events: true, api_reference: true, kit_docs: true, builtin_docs: true, call_routine: true, bind_routine: true };
+const CORE_TOOLS: Readonly<Record<string, true>> = { observe: true, run_program: true, stop_program: true, wait_for: true, get_events: true, api_reference: true, builtin_docs: true, call_routine: true, bind_routine: true };
 
 /** Which kinds of name a call takes: an action's (the body has routines) and a built-in's (it has built-ins). */
 export type CallKinds = Pick<Record<Capability, boolean>, "routines" | "builtins">;
@@ -62,48 +60,6 @@ export function callNameSchema({ routines, builtins }: CallKinds): z.ZodType<str
 export function toolPlan(features: BodyFeatures, toolSet: ToolSet): Record<string, { enabled: boolean; description: string }> {
   const caps = capabilities(features);
   const plan: Record<string, { enabled: boolean; description: string }> = {
-    list_kits: {
-      enabled: caps.kits,
-      description: "Kits (libraries of actions callable as kit.<kit>.<action>({ ... }) in programs), their uses and actions, which are active, and how often each action succeeded and failed on this body (stats).",
-    },
-    kit_docs: {
-      enabled: caps.kits,
-      description: "Reference for kit actions: call shape, arguments with types and defaults, and return values.",
-    },
-    use_kits: {
-      enabled: caps.kitSwitching,
-      description: "Replace the active kits, e.g. ['gatherer', 'crafter']. Used kits are added automatically. Takes effect for the next kit call.",
-    },
-    kit_save: {
-      enabled: caps.agentKits,
-      description:
-        "Save your own kit as TypeScript source: `import { defineKit, action, z } from \"minebot-sdk/kit\";` (the only import allowed; it also exports nameMatcher, Position, goals and the other helpers that the built-in kits rely on), then `export default defineKit({ name, description, uses }, { actionName: action({ doc, args, returns, run }) })`; `returns` is a zod schema of what the action returns, checked on every call. Start from kit_source of a built-in kit, and check it with kit_try first. Nothing is written when the source is rejected. The answer includes `typeCheck`: type errors in the source, which do not stop the save; fix them and save again. Saving over a kit keeps the old source (kit_versions).",
-    },
-    kit_remove: {
-      enabled: caps.agentKits,
-      description: "Delete a kit you saved. Built-in kits cannot be removed.",
-    },
-    kit_source: {
-      enabled: caps.agentKits,
-      description: "Print a kit's source file: a built-in kit (the model for writing your own) or a saved one.",
-    },
-    kit_search: {
-      enabled: caps.kits,
-      description: "Find kits and actions by what they do: ranks the kits this body offers by name, description, and action docs, e.g. 'collect logs'. Each hit says whether the kit is active and how often the action worked on this body.",
-    },
-    kit_try: {
-      enabled: caps.agentKits,
-      description:
-        "Run one action of kit source once without saving it: compiles and audits the source like kit_save, calls the action with args against the live body, and returns the result or the error. Type errors in the source appear in the logs; they do not stop the run. Nothing is written. Try a kit here before you save it.",
-    },
-    kit_versions: {
-      enabled: caps.agentKits,
-      description: "List the saved versions of a kit you wrote: number, time, and which body saved it. Saving over a kit keeps the old source.",
-    },
-    kit_revert: {
-      enabled: caps.agentKits,
-      description: "Save an earlier version of a kit again, as a new version. Validated like kit_save.",
-    },
     wiki_search: {
       enabled: caps.wiki,
       description: `Search the wiki: verified notes on game mechanics, step-by-step flows, and known quirks of this Minecraft version and bot library${caps.lessons ? ", plus lessons other agents wrote" : ""}. Search before guessing how something works.`,
@@ -331,67 +287,6 @@ export async function serveMcp(bodyName: string, toolSet: ToolSet): Promise<void
   );
 
   // Tools of optional features. Each starts disabled; `apply` enables the ones the body offers.
-  const listKits = server.registerTool("list_kits", { description: "", inputSchema: {} }, () => call(async (c) => json(await c.kits())));
-  const kitDocs = server.registerTool(
-    "kit_docs",
-    { description: "", inputSchema: { kits: z.array(z.string().min(1)).optional().describe("Kit names; omit for the active kits") } },
-    ({ kits }) => call(async (c) => (await c.kitDocs(kits ?? [])).docs),
-  );
-  const useKits = server.registerTool(
-    "use_kits",
-    { description: "", inputSchema: { kits: z.array(z.string().min(1)).describe("Kit names") } },
-    ({ kits }) => call(async (c) => json((await c.useKits(kits)).active)),
-  );
-  const kitSave = server.registerTool(
-    "kit_save",
-    { description: "", inputSchema: { source: z.string().min(1).max(128 * 1024).describe("TypeScript source: an import from \"minebot-sdk/kit\", then export default defineKit({ ... }, { ... })") } },
-    ({ source }) => call(async (c) => json(await c.saveKit(source))),
-  );
-  const kitRemove = server.registerTool(
-    "kit_remove",
-    { description: "", inputSchema: { name: z.string().min(1).describe("The saved kit to delete") } },
-    ({ name }) => call(async (c) => json(await c.removeKit(name))),
-  );
-  const kitSource = server.registerTool(
-    "kit_source",
-    { description: "", inputSchema: { name: z.string().min(1).describe("A kit name") } },
-    ({ name }) => call(async (c) => (await c.kitSource(name)).source),
-  );
-  const kitSearch = server.registerTool(
-    "kit_search",
-    {
-      description: "",
-      inputSchema: { query: z.string().min(1).describe("Words to look for, e.g. 'collect logs' or 'walk to'"), limit: z.number().int().positive().max(20).optional() },
-    },
-    ({ query, limit }) =>
-      call(async (c) => {
-        const { hits } = await c.searchKits(query, limit);
-        return hits.length === 0 ? "no matching kits" : formatKitHits(hits);
-      }),
-  );
-  const kitTry = server.registerTool(
-    "kit_try",
-    {
-      description: "",
-      inputSchema: {
-        source: TryKitInput.shape.source.describe("TypeScript source: an import from \"minebot-sdk/kit\", then export default defineKit({ ... }, { ... })"),
-        action: TryKitInput.shape.action.describe("The action to run"),
-        args: TryKitInput.shape.args.describe("The action's argument object"),
-        timeout_ms: TryKitInput.shape.timeoutMs.describe(`Abort after this many milliseconds. Default ${DEFAULT_TIMEOUT_MS}.`),
-      },
-    },
-    ({ source, action, args, timeout_ms }) => call(async (c) => formatRun(await c.tryKit(source, action, args, timeout_ms))),
-  );
-  const kitVersions = server.registerTool(
-    "kit_versions",
-    { description: "", inputSchema: { name: z.string().min(1).describe("The saved kit") } },
-    ({ name }) => call(async (c) => formatKitVersions(name, (await c.kitVersions(name)).versions)),
-  );
-  const kitRevert = server.registerTool(
-    "kit_revert",
-    { description: "", inputSchema: { name: z.string().min(1).describe("The saved kit"), version: RevertKitInput.shape.version.describe("A version from kit_versions") } },
-    ({ name, version }) => call(async (c) => json(await c.revertKit(name, version))),
-  );
   const listBuiltins = server.registerTool("list_builtins", { description: "", inputSchema: {} }, () => call(async (c) => formatBuiltins((await c.builtins()).builtins)));
   const builtinDocs = server.registerTool(
     "builtin_docs",
@@ -547,16 +442,6 @@ export async function serveMcp(bodyName: string, toolSet: ToolSet): Promise<void
   function apply(features: BodyFeatures, apiDoc: string): void {
     const plan = toolPlan(features, toolSet);
     const tools: Record<string, RegisteredTool> = {
-      list_kits: listKits,
-      kit_docs: kitDocs,
-      use_kits: useKits,
-      kit_save: kitSave,
-      kit_remove: kitRemove,
-      kit_source: kitSource,
-      kit_search: kitSearch,
-      kit_try: kitTry,
-      kit_versions: kitVersions,
-      kit_revert: kitRevert,
       list_builtins: listBuiltins,
       builtin_docs: builtinDocs,
       builtin_search: builtinSearch,
@@ -589,7 +474,7 @@ export async function serveMcp(bodyName: string, toolSet: ToolSet): Promise<void
     runProgram.update({ description: runDescription(apiDoc) });
   }
 
-  for (const tool of [listKits, kitDocs, useKits, kitSave, kitRemove, kitSource, kitSearch, kitTry, kitVersions, kitRevert, listBuiltins, builtinDocs, builtinSearch, builtinSource, wikiSearch, wikiRead, wikiList, addLesson, callRoutine, bindRoutine, listRoutines, routineSave, routineSource, routineVersions, routineRevert, unbindRoutine]) tool.disable();
+  for (const tool of [listBuiltins, builtinDocs, builtinSearch, builtinSource, wikiSearch, wikiRead, wikiList, addLesson, callRoutine, bindRoutine, listRoutines, routineSave, routineSource, routineVersions, routineRevert, unbindRoutine]) tool.disable();
   // Ungated tools outside the core set: programs have notes, status(), and bot.chat.
   if (toolSet !== "full") for (const tool of [status, notesList, notesSet, notesDelete, sendChat]) tool.disable();
   await sync();

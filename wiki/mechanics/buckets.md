@@ -40,6 +40,6 @@ Observed: water appeared in the air cell in front of the wall that the bot looke
 
 Water and lava interact: see `mechanics/water-and-lava`.
 
-<!-- kits -->
+<!-- builtins -->
 `kit.bucket.fill({ fluid: "water" })` fills a bucket from the nearest source. `kit.bucket.empty({ at })` places the fluid at a position.
-<!-- /kits -->
+<!-- /builtins -->

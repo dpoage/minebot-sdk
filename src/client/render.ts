@@ -1,6 +1,6 @@
 // Renderers for agent-facing output: program runs, status, notes, wiki hits and pages, routines and their bindings.
 // The CLI and the MCP server share them, so an agent sees the same text through both.
-import type { ActionStats, BindingInfo, BindResponse, BuiltinInfo, BuiltinSearchHit, KitInfo, KitSearchHit, KitTypeCheck, KitVersion, Note, ReflexBindingInfo, RoutineInfo, RoutineVersion, RunResult, SaveRoutineResponse, SearchHit, StatusResponse } from "../protocol/index.ts";
+import type { ActionStats, BindingInfo, BindResponse, BuiltinInfo, BuiltinSearchHit, Note, ReflexBindingInfo, RoutineInfo, RoutineVersion, RunResult, SaveRoutineResponse, SearchHit, StatusResponse, TypeCheck } from "../protocol/index.ts";
 
 const json = (value: unknown) => JSON.stringify(value, null, 2);
 
@@ -29,36 +29,9 @@ export function formatStatus(status: StatusResponse): string {
   return lines.join("\n");
 }
 
-/** `12 ok / 3 failed`: how often an action succeeded and failed on this body. */
+/** `12 ok / 3 failed`: how often a built-in routine succeeded and failed on this body. */
 function formatCounts(stats: ActionStats): string {
   return `${stats.ok} ok / ${stats.failed} failed`;
-}
-
-/** Renders a kit listing for an agent: one line per kit, its uses, its actions, and how often each action worked. */
-export function formatKits(kits: KitInfo[], locked: boolean): string {
-  const lines = kits.map((kit) => {
-    const uses = kit.uses.length > 0 ? ` (uses ${kit.uses.join(", ")})` : "";
-    const author = kit.agent ? ", saved by an agent" : "";
-    const head = `${kit.active ? "*" : " "} ${kit.name}${uses}${author}: ${kit.description}\n    kit.${kit.name}.{${kit.actions.join(", ")}}`;
-    const ran = Object.entries(kit.stats);
-    if (ran.length === 0) return head;
-    const counts = `    calls: ${ran.map(([action, stats]) => `${action}: ${formatCounts(stats)}`).join("; ")}`;
-    const failures = ran.filter(([, stats]) => stats.lastError).map(([action, stats]) => `    last error of ${action}: ${stats.lastError!.split("\n")[0]}`);
-    return [head, counts, ...failures].join("\n");
-  });
-  if (locked) lines.push("\nkits are locked on this body");
-  return lines.join("\n");
-}
-
-/** Renders kit search hits, best first: the call, what it does, and whether it is active and how often it worked. */
-export function formatKitHits(hits: KitSearchHit[]): string {
-  return hits
-    .map((hit) => {
-      const name = hit.action === undefined ? hit.kit : `kit.${hit.kit}.${hit.action}`;
-      const notes = [hit.active ? "active" : "not active", ...(hit.stats ? [formatCounts(hit.stats)] : [])].join(", ");
-      return `${name} [${notes}]\n  ${hit.text}`;
-    })
-    .join("\n");
 }
 
 /** Renders the built-in modules an agent may use: one line per module, its uses, its routines, and how often each routine worked. */
@@ -86,13 +59,6 @@ export function formatBuiltinHits(hits: BuiltinSearchHit[]): string {
     .join("\n");
 }
 
-/** Renders the saved versions of an agent kit, one per line. */
-export function formatKitVersions(name: string, versions: KitVersion[]): string {
-  return versions
-    .map((v) => `${name} v${v.version}${v.current ? " (current)" : ""}  ${v.savedAt}  by ${v.savedBy}${v.revertedFrom === undefined ? "" : `  (revert of v${v.revertedFrom})`}`)
-    .join("\n");
-}
-
 /** Renders a reflex: when it fires, its state, its limits, and what it has done since the body started. */
 function formatFiring(head: string, t: ReflexBindingInfo): string {
   const filters = [t.from && `from ${t.from}`, t.match && `match /${t.match}/`, t.when && `when ${t.when}`, t.preempt && "preempts", t.priority !== 0 && `priority ${t.priority}`]
@@ -113,9 +79,12 @@ function formatRoutines(routines: RoutineInfo[]): string {
   return routines.length === 0 ? "no routines" : routines.map(formatRoutine).join("\n");
 }
 
-/** Renders the saved versions of a routine, one per line: the same as for an agent kit. */
+/** Renders the saved versions of a routine, one per line. */
 export function formatRoutineVersions(name: string, versions: RoutineVersion[]): string {
-  return versions.length === 0 ? `no saved versions of ${name}` : formatKitVersions(name, versions);
+  if (versions.length === 0) return `no saved versions of ${name}`;
+  return versions
+    .map((v) => `${name} v${v.version}${v.current ? " (current)" : ""}  ${v.savedAt}  by ${v.savedBy}${v.revertedFrom === undefined ? "" : `  (revert of v${v.revertedFrom})`}`)
+    .join("\n");
 }
 
 /** Bindings: an action on one line, a reflex with its filters, limits, and what it has done since the body started. */
@@ -131,7 +100,7 @@ export function formatLibrary(routines: RoutineInfo[], bindings: BindingInfo[]):
 }
 
 /** Renders the type check of a routine's source: the verdict, then one line per error. */
-function formatTypeCheck(check: KitTypeCheck): string {
+function formatTypeCheck(check: TypeCheck): string {
   if (check.status === "passed") return "type check: passed";
   if (check.status === "skipped") return `type check: skipped (${check.reason})`;
   return `type check: failed\n${check.errors.map((error) => `  ${error}`).join("\n")}`;

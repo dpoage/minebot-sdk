@@ -7,8 +7,8 @@ import { CAPABILITY_GATES, type BodyFeatures } from "../protocol/index.ts";
 export const HAS_BODY = existsSync(new URL(`../body/daemon${import.meta.url.slice(import.meta.url.lastIndexOf("."))}`, import.meta.url));
 
 /** What the usage text shows when no body can be asked: everything on an install that can start bodies, nothing optional otherwise. */
-const EVERYTHING: BodyFeatures = { kits: ["move"], kitsLocked: false, agentKits: true, wiki: "write", lessons: true, milestones: true, reflexes: true, routines: true, builtins: ["move"] };
-const NOTHING: BodyFeatures = { kits: [], kitsLocked: true, agentKits: false, wiki: "off", lessons: false, milestones: false, reflexes: false, routines: false, builtins: [] };
+const EVERYTHING: BodyFeatures = { wiki: "write", lessons: true, milestones: true, reflexes: true, routines: true, builtins: ["move"] };
+const NOTHING: BodyFeatures = { wiki: "off", lessons: false, milestones: false, reflexes: false, routines: false, builtins: [] };
 
 /**
  * The usage text for a body that offers `features`, or for no body when `features` is null.
@@ -17,7 +17,7 @@ const NOTHING: BodyFeatures = { kits: [], kitsLocked: true, agentKits: false, wi
  */
 export function usageFor(features: BodyFeatures | null, hasBody = HAS_BODY, operatorFlags: readonly string[] = []): string {
   const f = features ?? (hasBody ? EVERYTHING : NOTHING);
-  const caps = { kits: CAPABILITY_GATES.kits(f), kitSwitching: CAPABILITY_GATES.kitSwitching(f), agentKits: CAPABILITY_GATES.agentKits(f), wiki: CAPABILITY_GATES.wiki(f), lessons: CAPABILITY_GATES.lessons(f), milestones: CAPABILITY_GATES.milestones(f), reflexes: CAPABILITY_GATES.reflexes(f), routines: CAPABILITY_GATES.routines(f), builtins: CAPABILITY_GATES.builtins(f), call: CAPABILITY_GATES.call(f) };
+  const caps = { wiki: CAPABILITY_GATES.wiki(f), lessons: CAPABILITY_GATES.lessons(f), milestones: CAPABILITY_GATES.milestones(f), reflexes: CAPABILITY_GATES.reflexes(f), routines: CAPABILITY_GATES.routines(f), builtins: CAPABILITY_GATES.builtins(f), call: CAPABILITY_GATES.call(f) };
   // Starting a body is for whoever runs it. A body that answers is already running, and its agent has no use for the flags.
   const operator = hasBody && features === null;
   const commands = [
@@ -65,25 +65,7 @@ export function usageFor(features: BodyFeatures | null, hasBody = HAS_BODY, oper
     "  events               Print buffered events as JSON.",
     "  wait                 Block until a matching event arrives (chat, nightfall, a death, a hostile nearby, low health...), then print it.",
     "  chat <message>       Send a chat message.",
-    `  types                Print TypeScript declarations for the program globals${caps.kits ? " and kits" : ""} of this body (--out <file> writes them); \`tsc\` then checks what you write.`,
-    ...(caps.kits
-      ? [
-          "  kits                 List kits, their uses, and their actions, marking the active ones.",
-          ...(caps.kitSwitching ? ["  kits use <kit...>    Replace the active kits (used kits are added)."] : []),
-          "  kits docs [kit...]   Print the action reference for kits (default: the active kits).",
-          "  kits search <query>  Find kits and actions by what they do, e.g. \"collect logs\" (--limit <n>, default 5).",
-        ]
-      : []),
-    ...(caps.agentKits
-      ? [
-          "  kits save [file]     Save an agent kit from a TypeScript file (stdin when omitted).",
-          "  kits rm <kit>        Delete a saved agent kit.",
-          "  kits source <kit>    Print a kit's source: a built-in kit's file, or a saved one.",
-          "  kits try [file]      Run one action of kit source once without saving it: --action <name> [--args <json>] [--timeout <ms>].",
-          "  kits versions <kit>  List the saved versions of an agent kit.",
-          "  kits revert <kit> <n>  Save version n of an agent kit again, as a new version.",
-        ]
-      : []),
+    "  types                Print TypeScript declarations for the program globals of this body (--out <file> writes them); `tsc` then checks what you write.",
     ...(caps.wiki
       ? [
           `  wiki search <query>  Search the wiki (game mechanics, flows, quirks${caps.lessons ? ", and agents' lessons" : ""}).`,

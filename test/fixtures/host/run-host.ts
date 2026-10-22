@@ -6,7 +6,7 @@ import type { RunResult } from "../../../src/protocol/index.ts";
 import { RunReporter } from "../../../src/host/channel.ts";
 
 const send = (message: FromHost) => process.send!(message);
-const reporter = new RunReporter({ send, kits: () => [], stop: () => false, running: () => false });
+const reporter = new RunReporter({ send, stop: () => false, running: () => false });
 
 async function record(name: string, execute: () => Promise<RunResult>): Promise<void> {
   try {

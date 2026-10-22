@@ -1,0 +1,2865 @@
+[
+  {
+    "query": "walk",
+    "limit": 1,
+    "hits": [
+      {
+        "module": "move",
+        "score": 2.57,
+        "text": "Walk the player with the pathfinder, with a time limit and a fallback for stuck paths."
+      }
+    ]
+  },
+  {
+    "query": "walk",
+    "limit": 5,
+    "hits": [
+      {
+        "module": "move",
+        "score": 2.57,
+        "text": "Walk the player with the pathfinder, with a time limit and a fallback for stuck paths."
+      },
+      {
+        "module": "move",
+        "routine": "to",
+        "score": 2.57,
+        "text": "Walk within `range` blocks of `position` ({x,y,z} or [x,y,z]) and stop. Gives up (and stops pathfinding) after `timeoutMs`. Returns where the player then stands."
+      },
+      {
+        "module": "gatherer",
+        "score": 2.57,
+        "text": "Collect resources: walk to matching blocks, dig them with the right tool, pick up the drops."
+      },
+      {
+        "module": "gatherer",
+        "routine": "collectDrops",
+        "score": 2.57,
+        "text": "Walk over dropped items within `radius` (default 8) to pick them up. Returns how many drops it tried to reach."
+      },
+      {
+        "module": "combat",
+        "routine": "attack",
+        "score": 1.71,
+        "text": "Hit one creature until it dies. `target` is an entity id or a name ('zombie'; the nearest match, a player's username works too). Walks up to it, holds the best sword or axe from the inventory, and ..."
+      }
+    ]
+  },
+  {
+    "query": "walk",
+    "limit": 20,
+    "hits": [
+      {
+        "module": "move",
+        "score": 2.57,
+        "text": "Walk the player with the pathfinder, with a time limit and a fallback for stuck paths."
+      },
+      {
+        "module": "move",
+        "routine": "to",
+        "score": 2.57,
+        "text": "Walk within `range` blocks of `position` ({x,y,z} or [x,y,z]) and stop. Gives up (and stops pathfinding) after `timeoutMs`. Returns where the player then stands."
+      },
+      {
+        "module": "gatherer",
+        "score": 2.57,
+        "text": "Collect resources: walk to matching blocks, dig them with the right tool, pick up the drops."
+      },
+      {
+        "module": "gatherer",
+        "routine": "collectDrops",
+        "score": 2.57,
+        "text": "Walk over dropped items within `radius` (default 8) to pick them up. Returns how many drops it tried to reach."
+      },
+      {
+        "module": "combat",
+        "routine": "attack",
+        "score": 1.71,
+        "text": "Hit one creature until it dies. `target` is an entity id or a name ('zombie'; the nearest match, a player's username works too). Walks up to it, holds the best sword or axe from the inventory, and ..."
+      },
+      {
+        "module": "combat",
+        "routine": "retreat",
+        "score": 1.71,
+        "text": "Walk away until more than `distance` (default 16) blocks from `from`: a position ({x,y,z} or [x,y,z]), an entity id, or a creature name. Without `from`, away from the nearest hostile mob within 32 ..."
+      },
+      {
+        "module": "farm",
+        "routine": "plant",
+        "score": 1.71,
+        "text": "Plant `seed` ('wheat_seeds', 'carrot', 'potato', 'beetroot_seeds', 'melon_seeds', 'pumpkin_seeds', 'torchflower_seeds', 'pitcher_pod', 'nether_wart', or the crop name such as 'wheat') on the farmla..."
+      },
+      {
+        "module": "bucket",
+        "routine": "fill",
+        "score": 1.71,
+        "text": "Fill an empty bucket from a `fluid` ('water' or 'lava') source: the one at `at` ({x,y,z} or [x,y,z]), or the nearest within `radius` (default 16). Walks within reach and tries up to 3 sources. Flow..."
+      },
+      {
+        "module": "bucket",
+        "routine": "empty",
+        "score": 1.71,
+        "text": "Pour a full bucket so its fluid source lands in the block at `at` ({x,y,z} or [x,y,z]), which must be air or a non-solid block next to a solid one. `fluid` ('water' or 'lava') picks the bucket; def..."
+      },
+      {
+        "module": "explorer",
+        "routine": "explore",
+        "score": 1.71,
+        "text": "Walk about `distance` blocks (default 48) toward the least-explored direction. Remembers visited 16x16 cells across calls. Gives up (and stops pathfinding) after `timeoutMs` (default 90000). Return..."
+      },
+      {
+        "module": "explorer",
+        "routine": "travel",
+        "score": 1.71,
+        "text": "Walk to a saved place, stopping within `range` (default 2) blocks. Gives up after `timeoutMs` (default 120000). Returns where the player then stands."
+      },
+      {
+        "module": "social",
+        "routine": "give",
+        "score": 1.71,
+        "text": "Walk to a `player` and toss them `count` (default 1) of `item`."
+      },
+      {
+        "module": "move",
+        "routine": "stop",
+        "score": 0.86,
+        "text": "Stop pathfinding and clear the movement keys."
+      },
+      {
+        "module": "gatherer",
+        "routine": "gather",
+        "score": 0.86,
+        "text": "Dig `count` blocks matching `blocks` ('*_log', 'stone', ['coal_ore','deepslate_coal_ore']) and pick up the drops, within `radius` (default 48). Equips the best tool and fails if a required tool is ..."
+      },
+      {
+        "module": "social",
+        "score": 0.43,
+        "text": "Talk to, wait for, follow, and hand items to other players."
+      },
+      {
+        "module": "place",
+        "routine": "place",
+        "score": 0.36,
+        "text": "Place one block of `item` at `at` ({x,y,z} or [x,y,z]), walking close and digging out a different solid block first. Needs a solid neighbor to place against. Returns false if the block was already ..."
+      },
+      {
+        "module": "furnace",
+        "routine": "smelt",
+        "score": 0.36,
+        "text": "Smelt `count` (default 1) of `item` (an input such as raw_iron, sand, cobblestone, beef, or a log) at the nearest furnace within 4.5 blocks, or at `at` ({x,y,z} or [x,y,z]), walking next to it firs..."
+      },
+      {
+        "module": "container",
+        "routine": "list",
+        "score": 0.36,
+        "text": "What the chest, barrel, shulker box, hopper, dispenser, or dropper at `at` ({x,y,z} or [x,y,z]) holds, walking next to it first. Returns { block, items: { name: count }, emptySlots }."
+      },
+      {
+        "module": "farm",
+        "routine": "till",
+        "score": 0.36,
+        "text": "Hoe the dirt, grass_block, or dirt_path block at `at` ({x,y,z} or [x,y,z]) into farmland, walking close and holding a hoe from the inventory. Digs out wild plants above it (grass, ferns, dead bush,..."
+      },
+      {
+        "module": "social",
+        "routine": "say",
+        "score": 0.14,
+        "text": "Send a public chat `message`. Other players and agents read chat."
+      }
+    ]
+  },
+  {
+    "query": "collect logs",
+    "limit": 1,
+    "hits": [
+      {
+        "module": "gatherer",
+        "routine": "collectDrops",
+        "score": 6.28,
+        "text": "Walk over dropped items within `radius` (default 8) to pick them up. Returns how many drops it tried to reach."
+      }
+    ]
+  },
+  {
+    "query": "collect logs",
+    "limit": 5,
+    "hits": [
+      {
+        "module": "gatherer",
+        "routine": "collectDrops",
+        "score": 6.28,
+        "text": "Walk over dropped items within `radius` (default 8) to pick them up. Returns how many drops it tried to reach."
+      },
+      {
+        "module": "gatherer",
+        "score": 5.02,
+        "text": "Collect resources: walk to matching blocks, dig them with the right tool, pick up the drops."
+      },
+      {
+        "module": "gatherer",
+        "routine": "gather",
+        "score": 4.12,
+        "text": "Dig `count` blocks matching `blocks` ('*_log', 'stone', ['coal_ore','deepslate_coal_ore']) and pick up the drops, within `radius` (default 48). Equips the best tool and fails if a required tool is ..."
+      },
+      {
+        "module": "furnace",
+        "routine": "smelt",
+        "score": 2.86,
+        "text": "Smelt `count` (default 1) of `item` (an input such as raw_iron, sand, cobblestone, beef, or a log) at the nearest furnace within 4.5 blocks, or at `at` ({x,y,z} or [x,y,z]), walking next to it firs..."
+      },
+      {
+        "module": "furnace",
+        "routine": "take",
+        "score": 2.51,
+        "text": "Collect the output of the furnace within 4.5 blocks, or at `at`, without waiting for it. Returns { item, count, smelting }: what was taken (item null when the slot was empty) and what the furnace i..."
+      }
+    ]
+  },
+  {
+    "query": "collect logs",
+    "limit": 20,
+    "hits": [
+      {
+        "module": "gatherer",
+        "routine": "collectDrops",
+        "score": 6.28,
+        "text": "Walk over dropped items within `radius` (default 8) to pick them up. Returns how many drops it tried to reach."
+      },
+      {
+        "module": "gatherer",
+        "score": 5.02,
+        "text": "Collect resources: walk to matching blocks, dig them with the right tool, pick up the drops."
+      },
+      {
+        "module": "gatherer",
+        "routine": "gather",
+        "score": 4.12,
+        "text": "Dig `count` blocks matching `blocks` ('*_log', 'stone', ['coal_ore','deepslate_coal_ore']) and pick up the drops, within `radius` (default 48). Equips the best tool and fails if a required tool is ..."
+      },
+      {
+        "module": "furnace",
+        "routine": "smelt",
+        "score": 2.86,
+        "text": "Smelt `count` (default 1) of `item` (an input such as raw_iron, sand, cobblestone, beef, or a log) at the nearest furnace within 4.5 blocks, or at `at` ({x,y,z} or [x,y,z]), walking next to it firs..."
+      },
+      {
+        "module": "furnace",
+        "routine": "take",
+        "score": 2.51,
+        "text": "Collect the output of the furnace within 4.5 blocks, or at `at`, without waiting for it. Returns { item, count, smelting }: what was taken (item null when the slot was empty) and what the furnace i..."
+      },
+      {
+        "module": "farm",
+        "routine": "harvest",
+        "score": 2.51,
+        "text": "Dig the ripe crops within `radius` (default 16), nearest first, collect the drops, and replant each (`replant`, default true) when the inventory has its seed. `crops` limits it to some of wheat, ca..."
+      },
+      {
+        "module": "sense",
+        "routine": "find",
+        "score": 2.15,
+        "text": "Positions ({x,y,z}) of blocks matching `blocks` ('oak_log', '*_ore', or a list), nearest first. `radius` limits the search, `count` the number of results. Fails when no block type matches."
+      },
+      {
+        "module": "inventory",
+        "routine": "list",
+        "score": 2.15,
+        "text": "Inventory totals by item name, e.g. { oak_log: 3, stick: 12 }."
+      },
+      {
+        "module": "inventory",
+        "routine": "count",
+        "score": 2.15,
+        "text": "How many items matching `items` ('stick', '*_log', or a list) the inventory holds."
+      },
+      {
+        "module": "container",
+        "routine": "deposit",
+        "score": 2.15,
+        "text": "Put inventory items matching `items` ('cobblestone', '*_log', or a list) into the container at `at`, up to `count` in total (default all that match), as many as fit. Returns { deposited: { name: co..."
+      },
+      {
+        "module": "crafter",
+        "routine": "make",
+        "score": 2.15,
+        "text": "Make sure the inventory holds at least `count` (default 1) of `item`, crafting intermediate items (planks, sticks, tables) as needed and finding or placing a crafting table. An item that a furnace ..."
+      },
+      {
+        "module": "explorer",
+        "routine": "scan",
+        "score": 2.15,
+        "text": "Summarize the area within `radius` (default 16): biome, uncommon blocks with counts and nearest positions (ores, logs, water, chests...), and nearby entities."
+      },
+      {
+        "module": "builder",
+        "routine": "build",
+        "score": 1.2,
+        "text": "Build the `blueprint` with its first layer's first row's first character at `origin`. Skips blocks already correct, places bottom-up. Fails up front on missing materials unless `partial`. Returns {..."
+      },
+      {
+        "module": "builder",
+        "routine": "check",
+        "score": 0.9,
+        "text": "Compare the world with the `blueprint` at `origin`: { correct, total, mismatches (first 20) }."
+      }
+    ]
+  },
+  {
+    "query": "collect drops",
+    "limit": 1,
+    "hits": [
+      {
+        "module": "gatherer",
+        "routine": "collectDrops",
+        "score": 14.16,
+        "text": "Walk over dropped items within `radius` (default 8) to pick them up. Returns how many drops it tried to reach."
+      }
+    ]
+  },
+  {
+    "query": "collect drops",
+    "limit": 5,
+    "hits": [
+      {
+        "module": "gatherer",
+        "routine": "collectDrops",
+        "score": 14.16,
+        "text": "Walk over dropped items within `radius` (default 8) to pick them up. Returns how many drops it tried to reach."
+      },
+      {
+        "module": "gatherer",
+        "score": 9.53,
+        "text": "Collect resources: walk to matching blocks, dig them with the right tool, pick up the drops."
+      },
+      {
+        "module": "farm",
+        "routine": "harvest",
+        "score": 4.76,
+        "text": "Dig the ripe crops within `radius` (default 16), nearest first, collect the drops, and replant each (`replant`, default true) when the inventory has its seed. `crops` limits it to some of wheat, ca..."
+      },
+      {
+        "module": "gatherer",
+        "routine": "gather",
+        "score": 4.63,
+        "text": "Dig `count` blocks matching `blocks` ('*_log', 'stone', ['coal_ore','deepslate_coal_ore']) and pick up the drops, within `radius` (default 48). Equips the best tool and fails if a required tool is ..."
+      },
+      {
+        "module": "items",
+        "routine": "drops",
+        "score": 4.5,
+        "text": "Positions ({x,y,z}) of dropped item entities within `radius`, nearest first — what a dig has left to pick up."
+      }
+    ]
+  },
+  {
+    "query": "collect drops",
+    "limit": 20,
+    "hits": [
+      {
+        "module": "gatherer",
+        "routine": "collectDrops",
+        "score": 14.16,
+        "text": "Walk over dropped items within `radius` (default 8) to pick them up. Returns how many drops it tried to reach."
+      },
+      {
+        "module": "gatherer",
+        "score": 9.53,
+        "text": "Collect resources: walk to matching blocks, dig them with the right tool, pick up the drops."
+      },
+      {
+        "module": "farm",
+        "routine": "harvest",
+        "score": 4.76,
+        "text": "Dig the ripe crops within `radius` (default 16), nearest first, collect the drops, and replant each (`replant`, default true) when the inventory has its seed. `crops` limits it to some of wheat, ca..."
+      },
+      {
+        "module": "gatherer",
+        "routine": "gather",
+        "score": 4.63,
+        "text": "Dig `count` blocks matching `blocks` ('*_log', 'stone', ['coal_ore','deepslate_coal_ore']) and pick up the drops, within `radius` (default 48). Equips the best tool and fails if a required tool is ..."
+      },
+      {
+        "module": "items",
+        "routine": "drops",
+        "score": 4.5,
+        "text": "Positions ({x,y,z}) of dropped item entities within `radius`, nearest first — what a dig has left to pick up."
+      },
+      {
+        "module": "furnace",
+        "routine": "take",
+        "score": 2.51,
+        "text": "Collect the output of the furnace within 4.5 blocks, or at `at`, without waiting for it. Returns { item, count, smelting }: what was taken (item null when the slot was empty) and what the furnace i..."
+      },
+      {
+        "module": "explorer",
+        "routine": "places",
+        "score": 2.25,
+        "text": "List saved places, nearest first. `kind` keeps one kind; `near` is the point distances are measured from (default: the player); `radius` drops places farther than that from `near` or in another dim..."
+      },
+      {
+        "module": "items",
+        "score": 1.13,
+        "text": "Look up recipes, and find the items lying on the ground."
+      },
+      {
+        "module": "farm",
+        "routine": "plant",
+        "score": 0.56,
+        "text": "Plant `seed` ('wheat_seeds', 'carrot', 'potato', 'beetroot_seeds', 'melon_seeds', 'pumpkin_seeds', 'torchflower_seeds', 'pitcher_pod', 'nether_wart', or the crop name such as 'wheat') on the farmla..."
+      },
+      {
+        "module": "farm",
+        "score": 0.46,
+        "text": "Till soil, plant seeds, harvest ripe crops, and breed animals."
+      },
+      {
+        "module": "farm",
+        "routine": "till",
+        "score": 0.46,
+        "text": "Hoe the dirt, grass_block, or dirt_path block at `at` ({x,y,z} or [x,y,z]) into farmland, walking close and holding a hoe from the inventory. Digs out wild plants above it (grass, ferns, dead bush,..."
+      },
+      {
+        "module": "container",
+        "routine": "list",
+        "score": 0.38,
+        "text": "What the chest, barrel, shulker box, hopper, dispenser, or dropper at `at` ({x,y,z} or [x,y,z]) holds, walking next to it first. Returns { block, items: { name: count }, emptySlots }."
+      },
+      {
+        "module": "builder",
+        "routine": "build",
+        "score": 0.34,
+        "text": "Build the `blueprint` with its first layer's first row's first character at `origin`. Skips blocks already correct, places bottom-up. Fails up front on missing materials unless `partial`. Returns {..."
+      },
+      {
+        "module": "builder",
+        "routine": "check",
+        "score": 0.25,
+        "text": "Compare the world with the `blueprint` at `origin`: { correct, total, mismatches (first 20) }."
+      },
+      {
+        "module": "farm",
+        "routine": "breed",
+        "score": 0.15,
+        "text": "Feed the two adult `animal`s ('cow', 'sheep', 'pig', 'chicken', ...) nearest each other within `radius` (default 16) and wait up to `timeoutMs` (default 30000) for the baby. `food` defaults to what..."
+      }
+    ]
+  },
+  {
+    "query": "waypoints",
+    "limit": 1,
+    "hits": [
+      {
+        "module": "explorer",
+        "routine": "waypoints",
+        "score": 6.33,
+        "text": "Every saved place by name as { x, y, z, dimension }. `places` lists them with their kind, tags, note, and contents."
+      }
+    ]
+  },
+  {
+    "query": "waypoints",
+    "limit": 5,
+    "hits": [
+      {
+        "module": "explorer",
+        "routine": "waypoints",
+        "score": 6.33,
+        "text": "Every saved place by name as { x, y, z, dimension }. `places` lists them with their kind, tags, note, and contents."
+      },
+      {
+        "module": "explorer",
+        "score": 1.58,
+        "text": "Explore new ground, summarize surroundings, remember named places, and climb out of holes to open sky."
+      }
+    ]
+  },
+  {
+    "query": "waypoints",
+    "limit": 20,
+    "hits": [
+      {
+        "module": "explorer",
+        "routine": "waypoints",
+        "score": 6.33,
+        "text": "Every saved place by name as { x, y, z, dimension }. `places` lists them with their kind, tags, note, and contents."
+      },
+      {
+        "module": "explorer",
+        "score": 1.58,
+        "text": "Explore new ground, summarize surroundings, remember named places, and climb out of holes to open sky."
+      }
+    ]
+  },
+  {
+    "query": "crafter",
+    "limit": 1,
+    "hits": [
+      {
+        "module": "crafter",
+        "score": 6.33,
+        "text": "Craft and smelt item chains from the inventory, finding or placing a crafting table or furnace when needed."
+      }
+    ]
+  },
+  {
+    "query": "crafter",
+    "limit": 5,
+    "hits": [
+      {
+        "module": "crafter",
+        "score": 6.33,
+        "text": "Craft and smelt item chains from the inventory, finding or placing a crafting table or furnace when needed."
+      },
+      {
+        "module": "crafter",
+        "routine": "make",
+        "score": 1.58,
+        "text": "Make sure the inventory holds at least `count` (default 1) of `item`, crafting intermediate items (planks, sticks, tables) as needed and finding or placing a crafting table. An item that a furnace ..."
+      },
+      {
+        "module": "craft",
+        "score": 0.79,
+        "text": "Craft items from the inventory at a table within reach."
+      },
+      {
+        "module": "craft",
+        "routine": "craft",
+        "score": 0.73,
+        "text": "Craft at least `count` (default 1) more of `item` from the inventory. A recipe that needs a crafting table uses one within 4 blocks, and the call fails when there is none. Returns how many were made."
+      },
+      {
+        "module": "craft",
+        "routine": "table",
+        "score": 0.13,
+        "text": "The position of a crafting table within 4 blocks, so programs can stand next to it. Fails when there is none nearby."
+      }
+    ]
+  },
+  {
+    "query": "crafter",
+    "limit": 20,
+    "hits": [
+      {
+        "module": "crafter",
+        "score": 6.33,
+        "text": "Craft and smelt item chains from the inventory, finding or placing a crafting table or furnace when needed."
+      },
+      {
+        "module": "crafter",
+        "routine": "make",
+        "score": 1.58,
+        "text": "Make sure the inventory holds at least `count` (default 1) of `item`, crafting intermediate items (planks, sticks, tables) as needed and finding or placing a crafting table. An item that a furnace ..."
+      },
+      {
+        "module": "craft",
+        "score": 0.79,
+        "text": "Craft items from the inventory at a table within reach."
+      },
+      {
+        "module": "craft",
+        "routine": "craft",
+        "score": 0.73,
+        "text": "Craft at least `count` (default 1) more of `item` from the inventory. A recipe that needs a crafting table uses one within 4 blocks, and the call fails when there is none. Returns how many were made."
+      },
+      {
+        "module": "craft",
+        "routine": "table",
+        "score": 0.13,
+        "text": "The position of a crafting table within 4 blocks, so programs can stand next to it. Fails when there is none nearby."
+      }
+    ]
+  },
+  {
+    "query": "pickaxe",
+    "limit": 1,
+    "hits": [
+      {
+        "module": "explorer",
+        "routine": "surface",
+        "score": 3.56,
+        "text": "Climb to open sky by digging a staircase; use it when trapped underground or in a pit. Needs no blocks; slow without a pickaxe, so pass a long program timeout (e.g. --timeout 600000). Under water i..."
+      }
+    ]
+  },
+  {
+    "query": "pickaxe",
+    "limit": 5,
+    "hits": [
+      {
+        "module": "explorer",
+        "routine": "surface",
+        "score": 3.56,
+        "text": "Climb to open sky by digging a staircase; use it when trapped underground or in a pit. Needs no blocks; slow without a pickaxe, so pass a long program timeout (e.g. --timeout 600000). Under water i..."
+      },
+      {
+        "module": "gatherer",
+        "score": 2.67,
+        "text": "Collect resources: walk to matching blocks, dig them with the right tool, pick up the drops."
+      },
+      {
+        "module": "gatherer",
+        "routine": "gather",
+        "score": 2.67,
+        "text": "Dig `count` blocks matching `blocks` ('*_log', 'stone', ['coal_ore','deepslate_coal_ore']) and pick up the drops, within `radius` (default 48). Equips the best tool and fails if a required tool is ..."
+      },
+      {
+        "module": "gatherer",
+        "routine": "collectDrops",
+        "score": 2.67,
+        "text": "Walk over dropped items within `radius` (default 8) to pick them up. Returns how many drops it tried to reach."
+      },
+      {
+        "module": "items",
+        "routine": "drops",
+        "score": 1.78,
+        "text": "Positions ({x,y,z}) of dropped item entities within `radius`, nearest first — what a dig has left to pick up."
+      }
+    ]
+  },
+  {
+    "query": "pickaxe",
+    "limit": 20,
+    "hits": [
+      {
+        "module": "explorer",
+        "routine": "surface",
+        "score": 3.56,
+        "text": "Climb to open sky by digging a staircase; use it when trapped underground or in a pit. Needs no blocks; slow without a pickaxe, so pass a long program timeout (e.g. --timeout 600000). Under water i..."
+      },
+      {
+        "module": "gatherer",
+        "score": 2.67,
+        "text": "Collect resources: walk to matching blocks, dig them with the right tool, pick up the drops."
+      },
+      {
+        "module": "gatherer",
+        "routine": "gather",
+        "score": 2.67,
+        "text": "Dig `count` blocks matching `blocks` ('*_log', 'stone', ['coal_ore','deepslate_coal_ore']) and pick up the drops, within `radius` (default 48). Equips the best tool and fails if a required tool is ..."
+      },
+      {
+        "module": "gatherer",
+        "routine": "collectDrops",
+        "score": 2.67,
+        "text": "Walk over dropped items within `radius` (default 8) to pick them up. Returns how many drops it tried to reach."
+      },
+      {
+        "module": "items",
+        "routine": "drops",
+        "score": 1.78,
+        "text": "Positions ({x,y,z}) of dropped item entities within `radius`, nearest first — what a dig has left to pick up."
+      },
+      {
+        "module": "bucket",
+        "routine": "empty",
+        "score": 1.78,
+        "text": "Pour a full bucket so its fluid source lands in the block at `at` ({x,y,z} or [x,y,z]), which must be air or a non-solid block next to a solid one. `fluid` ('water' or 'lava') picks the bucket; def..."
+      }
+    ]
+  },
+  {
+    "query": "xyzzy plugh",
+    "limit": 1,
+    "hits": []
+  },
+  {
+    "query": "xyzzy plugh",
+    "limit": 5,
+    "hits": []
+  },
+  {
+    "query": "xyzzy plugh",
+    "limit": 20,
+    "hits": []
+  },
+  {
+    "query": "   ",
+    "limit": 1,
+    "hits": []
+  },
+  {
+    "query": "   ",
+    "limit": 5,
+    "hits": []
+  },
+  {
+    "query": "   ",
+    "limit": 20,
+    "hits": []
+  },
+  {
+    "query": "smelt iron",
+    "limit": 1,
+    "hits": [
+      {
+        "module": "furnace",
+        "routine": "smelt",
+        "score": 11.47,
+        "text": "Smelt `count` (default 1) of `item` (an input such as raw_iron, sand, cobblestone, beef, or a log) at the nearest furnace within 4.5 blocks, or at `at` ({x,y,z} or [x,y,z]), walking next to it firs..."
+      }
+    ]
+  },
+  {
+    "query": "smelt iron",
+    "limit": 5,
+    "hits": [
+      {
+        "module": "furnace",
+        "routine": "smelt",
+        "score": 11.47,
+        "text": "Smelt `count` (default 1) of `item` (an input such as raw_iron, sand, cobblestone, beef, or a log) at the nearest furnace within 4.5 blocks, or at `at` ({x,y,z} or [x,y,z]), walking next to it firs..."
+      },
+      {
+        "module": "furnace",
+        "score": 5.02,
+        "text": "Smelt at a furnace within reach: load fuel and input, wait, take the output."
+      },
+      {
+        "module": "crafter",
+        "routine": "make",
+        "score": 3.94,
+        "text": "Make sure the inventory holds at least `count` (default 1) of `item`, crafting intermediate items (planks, sticks, tables) as needed and finding or placing a crafting table. An item that a furnace ..."
+      },
+      {
+        "module": "crafter",
+        "score": 3.77,
+        "text": "Craft and smelt item chains from the inventory, finding or placing a crafting table or furnace when needed."
+      },
+      {
+        "module": "container",
+        "routine": "withdraw",
+        "score": 2.68,
+        "text": "Take items matching `items` ('iron_ingot', '*_planks', or a list) out of the container at `at` into the inventory, up to `count` in total (default all that match), as many as fit. Returns { withdra..."
+      }
+    ]
+  },
+  {
+    "query": "smelt iron",
+    "limit": 20,
+    "hits": [
+      {
+        "module": "furnace",
+        "routine": "smelt",
+        "score": 11.47,
+        "text": "Smelt `count` (default 1) of `item` (an input such as raw_iron, sand, cobblestone, beef, or a log) at the nearest furnace within 4.5 blocks, or at `at` ({x,y,z} or [x,y,z]), walking next to it firs..."
+      },
+      {
+        "module": "furnace",
+        "score": 5.02,
+        "text": "Smelt at a furnace within reach: load fuel and input, wait, take the output."
+      },
+      {
+        "module": "crafter",
+        "routine": "make",
+        "score": 3.94,
+        "text": "Make sure the inventory holds at least `count` (default 1) of `item`, crafting intermediate items (planks, sticks, tables) as needed and finding or placing a crafting table. An item that a furnace ..."
+      },
+      {
+        "module": "crafter",
+        "score": 3.77,
+        "text": "Craft and smelt item chains from the inventory, finding or placing a crafting table or furnace when needed."
+      },
+      {
+        "module": "container",
+        "routine": "withdraw",
+        "score": 2.68,
+        "text": "Take items matching `items` ('iron_ingot', '*_planks', or a list) out of the container at `at` into the inventory, up to `count` in total (default all that match), as many as fit. Returns { withdra..."
+      },
+      {
+        "module": "survival",
+        "routine": "armor",
+        "score": 2.68,
+        "text": "Wear the best armor the inventory holds in each slot, by material: leather, copper, golden, chainmail, iron, diamond, netherite (turtle helmets rank between golden and chainmail). Leaves better arm..."
+      },
+      {
+        "module": "furnace",
+        "routine": "take",
+        "score": 1.26,
+        "text": "Collect the output of the furnace within 4.5 blocks, or at `at`, without waiting for it. Returns { item, count, smelting }: what was taken (item null when the slot was empty) and what the furnace i..."
+      }
+    ]
+  },
+  {
+    "query": "eat food",
+    "limit": 1,
+    "hits": [
+      {
+        "module": "survival",
+        "routine": "eat",
+        "score": 13.72,
+        "text": "Eat `item`, or the best safe food in the inventory when omitted: the one that restores the most without overshooting the missing food points. Rotten flesh, spider eyes, pufferfish, poisonous potato..."
+      }
+    ]
+  },
+  {
+    "query": "eat food",
+    "limit": 5,
+    "hits": [
+      {
+        "module": "survival",
+        "routine": "eat",
+        "score": 13.72,
+        "text": "Eat `item`, or the best safe food in the inventory when omitted: the one that restores the most without overshooting the missing food points. Rotten flesh, spider eyes, pufferfish, poisonous potato..."
+      },
+      {
+        "module": "farm",
+        "routine": "breed",
+        "score": 7.67,
+        "text": "Feed the two adult `animal`s ('cow', 'sheep', 'pig', 'chicken', ...) nearest each other within `radius` (default 16) and wait up to `timeoutMs` (default 30000) for the baby. `food` defaults to what..."
+      },
+      {
+        "module": "survival",
+        "score": 4.74,
+        "text": "Eat, sleep in a bed, wake up, and wear the best armor in the inventory."
+      },
+      {
+        "module": "crafter",
+        "routine": "make",
+        "score": 2.89,
+        "text": "Make sure the inventory holds at least `count` (default 1) of `item`, crafting intermediate items (planks, sticks, tables) as needed and finding or placing a crafting table. An item that a furnace ..."
+      },
+      {
+        "module": "survival",
+        "routine": "sleep",
+        "score": 1.19,
+        "text": "Go to bed at `at` ({x,y,z} or [x,y,z]), or the nearest bed within 16 blocks, and sleep. Works at night (time of day 12541 to 23458) and in thunderstorms; fails with the reason otherwise, or when mo..."
+      }
+    ]
+  },
+  {
+    "query": "eat food",
+    "limit": 20,
+    "hits": [
+      {
+        "module": "survival",
+        "routine": "eat",
+        "score": 13.72,
+        "text": "Eat `item`, or the best safe food in the inventory when omitted: the one that restores the most without overshooting the missing food points. Rotten flesh, spider eyes, pufferfish, poisonous potato..."
+      },
+      {
+        "module": "farm",
+        "routine": "breed",
+        "score": 7.67,
+        "text": "Feed the two adult `animal`s ('cow', 'sheep', 'pig', 'chicken', ...) nearest each other within `radius` (default 16) and wait up to `timeoutMs` (default 30000) for the baby. `food` defaults to what..."
+      },
+      {
+        "module": "survival",
+        "score": 4.74,
+        "text": "Eat, sleep in a bed, wake up, and wear the best armor in the inventory."
+      },
+      {
+        "module": "crafter",
+        "routine": "make",
+        "score": 2.89,
+        "text": "Make sure the inventory holds at least `count` (default 1) of `item`, crafting intermediate items (planks, sticks, tables) as needed and finding or placing a crafting table. An item that a furnace ..."
+      },
+      {
+        "module": "survival",
+        "routine": "sleep",
+        "score": 1.19,
+        "text": "Go to bed at `at` ({x,y,z} or [x,y,z]), or the nearest bed within 16 blocks, and sleep. Works at night (time of day 12541 to 23458) and in thunderstorms; fails with the reason otherwise, or when mo..."
+      },
+      {
+        "module": "survival",
+        "routine": "wake",
+        "score": 1.19,
+        "text": "Get out of bed. Fails when the player is not sleeping. Returns { sleeping } after waking."
+      },
+      {
+        "module": "survival",
+        "routine": "armor",
+        "score": 1.19,
+        "text": "Wear the best armor the inventory holds in each slot, by material: leather, copper, golden, chainmail, iron, diamond, netherite (turtle helmets rank between golden and chainmail). Leaves better arm..."
+      }
+    ]
+  },
+  {
+    "query": "place block",
+    "limit": 1,
+    "hits": [
+      {
+        "module": "place",
+        "routine": "place",
+        "score": 9.27,
+        "text": "Place one block of `item` at `at` ({x,y,z} or [x,y,z]), walking close and digging out a different solid block first. Needs a solid neighbor to place against. Returns false if the block was already ..."
+      }
+    ]
+  },
+  {
+    "query": "place block",
+    "limit": 5,
+    "hits": [
+      {
+        "module": "place",
+        "routine": "place",
+        "score": 9.27,
+        "text": "Place one block of `item` at `at` ({x,y,z} or [x,y,z]), walking close and digging out a different solid block first. Needs a solid neighbor to place against. Returns false if the block was already ..."
+      },
+      {
+        "module": "place",
+        "score": 9.08,
+        "text": "Place one block from the inventory, digging out a different solid block first."
+      },
+      {
+        "module": "explorer",
+        "routine": "places",
+        "score": 7.01,
+        "text": "List saved places, nearest first. `kind` keeps one kind; `near` is the point distances are measured from (default: the player); `radius` drops places farther than that from `near` or in another dim..."
+      },
+      {
+        "module": "builder",
+        "score": 4.24,
+        "text": "Place blocks and build structures from blueprints. Blueprints: { palette: { '#': 'oak_planks' }, layers: [layer, ...] }; layers go bottom to top, rows run along +z, characters along +x, '.' or spac..."
+      },
+      {
+        "module": "builder",
+        "routine": "build",
+        "score": 4.24,
+        "text": "Build the `blueprint` with its first layer's first row's first character at `origin`. Skips blocks already correct, places bottom-up. Fails up front on missing materials unless `partial`. Returns {..."
+      }
+    ]
+  },
+  {
+    "query": "place block",
+    "limit": 20,
+    "hits": [
+      {
+        "module": "place",
+        "routine": "place",
+        "score": 9.27,
+        "text": "Place one block of `item` at `at` ({x,y,z} or [x,y,z]), walking close and digging out a different solid block first. Needs a solid neighbor to place against. Returns false if the block was already ..."
+      },
+      {
+        "module": "place",
+        "score": 9.08,
+        "text": "Place one block from the inventory, digging out a different solid block first."
+      },
+      {
+        "module": "explorer",
+        "routine": "places",
+        "score": 7.01,
+        "text": "List saved places, nearest first. `kind` keeps one kind; `near` is the point distances are measured from (default: the player); `radius` drops places farther than that from `near` or in another dim..."
+      },
+      {
+        "module": "builder",
+        "score": 4.24,
+        "text": "Place blocks and build structures from blueprints. Blueprints: { palette: { '#': 'oak_planks' }, layers: [layer, ...] }; layers go bottom to top, rows run along +z, characters along +x, '.' or spac..."
+      },
+      {
+        "module": "builder",
+        "routine": "build",
+        "score": 4.24,
+        "text": "Build the `blueprint` with its first layer's first row's first character at `origin`. Skips blocks already correct, places bottom-up. Fails up front on missing materials unless `partial`. Returns {..."
+      },
+      {
+        "module": "explorer",
+        "routine": "travel",
+        "score": 3.68,
+        "text": "Walk to a saved place, stopping within `range` (default 2) blocks. Gives up after `timeoutMs` (default 120000). Returns where the player then stands."
+      },
+      {
+        "module": "explorer",
+        "score": 3.42,
+        "text": "Explore new ground, summarize surroundings, remember named places, and climb out of holes to open sky."
+      },
+      {
+        "module": "explorer",
+        "routine": "remember",
+        "score": 3.14,
+        "text": "Save a named place at `at` (default: where the player stands) and return it. `kind` is one of chest, bed, farm, ore, base, portal, other (default other); `tags` and `note` describe it; `contents` m..."
+      },
+      {
+        "module": "explorer",
+        "routine": "waypoints",
+        "score": 3.14,
+        "text": "Every saved place by name as { x, y, z, dimension }. `places` lists them with their kind, tags, note, and contents."
+      },
+      {
+        "module": "builder",
+        "routine": "materials",
+        "score": 2.53,
+        "text": "Block counts the `blueprint` needs, e.g. { oak_planks: 24 }."
+      },
+      {
+        "module": "sense",
+        "routine": "find",
+        "score": 2.42,
+        "text": "Positions ({x,y,z}) of blocks matching `blocks` ('oak_log', '*_ore', or a list), nearest first. `radius` limits the search, `count` the number of results. Fails when no block type matches."
+      },
+      {
+        "module": "dig",
+        "routine": "dig",
+        "score": 2.42,
+        "text": "Dig the block at `at` ({x,y,z} or [x,y,z]), equipping the best tool and failing with the tools it needs when the inventory lacks them. Digs on while gravel or sand refills the position. Returns { b..."
+      },
+      {
+        "module": "gatherer",
+        "routine": "gather",
+        "score": 2.42,
+        "text": "Dig `count` blocks matching `blocks` ('*_log', 'stone', ['coal_ore','deepslate_coal_ore']) and pick up the drops, within `radius` (default 48). Equips the best tool and fails if a required tool is ..."
+      },
+      {
+        "module": "crafter",
+        "routine": "make",
+        "score": 2.36,
+        "text": "Make sure the inventory holds at least `count` (default 1) of `item`, crafting intermediate items (planks, sticks, tables) as needed and finding or placing a crafting table. An item that a furnace ..."
+      },
+      {
+        "module": "dig",
+        "score": 2.24,
+        "text": "Dig one block with the right tool; falling blocks that refill the hole are dug too."
+      },
+      {
+        "module": "explorer",
+        "routine": "scan",
+        "score": 1.97,
+        "text": "Summarize the area within `radius` (default 16): biome, uncommon blocks with counts and nearest positions (ores, logs, water, chests...), and nearby entities."
+      },
+      {
+        "module": "explorer",
+        "routine": "explore",
+        "score": 1.97,
+        "text": "Walk about `distance` blocks (default 48) toward the least-explored direction. Remembers visited 16x16 cells across calls. Gives up (and stops pathfinding) after `timeoutMs` (default 90000). Return..."
+      },
+      {
+        "module": "explorer",
+        "routine": "surface",
+        "score": 1.97,
+        "text": "Climb to open sky by digging a staircase; use it when trapped underground or in a pit. Needs no blocks; slow without a pickaxe, so pass a long program timeout (e.g. --timeout 600000). Under water i..."
+      },
+      {
+        "module": "farm",
+        "routine": "till",
+        "score": 1.79,
+        "text": "Hoe the dirt, grass_block, or dirt_path block at `at` ({x,y,z} or [x,y,z]) into farmland, walking close and holding a hoe from the inventory. Digs out wild plants above it (grass, ferns, dead bush,..."
+      },
+      {
+        "module": "sense",
+        "score": 1.68,
+        "text": "Find blocks by name pattern and face a position, without changing anything."
+      }
+    ]
+  },
+  {
+    "query": "chat players",
+    "limit": 1,
+    "hits": [
+      {
+        "module": "social",
+        "routine": "waitForChat",
+        "score": 11.02,
+        "text": "Wait for the next chat message from another player. `from` (username), `match` (regex, case-insensitive), `timeoutMs` (default 60000)."
+      }
+    ]
+  },
+  {
+    "query": "chat players",
+    "limit": 5,
+    "hits": [
+      {
+        "module": "social",
+        "routine": "waitForChat",
+        "score": 11.02,
+        "text": "Wait for the next chat message from another player. `from` (username), `match` (regex, case-insensitive), `timeoutMs` (default 60000)."
+      },
+      {
+        "module": "social",
+        "routine": "say",
+        "score": 6.2,
+        "text": "Send a public chat `message`. Other players and agents read chat."
+      },
+      {
+        "module": "social",
+        "routine": "players",
+        "score": 5.47,
+        "text": "Other online players: [{ username, distance, position }] (distance and position are null when out of view)."
+      },
+      {
+        "module": "social",
+        "score": 4.57,
+        "text": "Talk to, wait for, follow, and hand items to other players."
+      },
+      {
+        "module": "social",
+        "routine": "follow",
+        "score": 2.61,
+        "text": "Follow a `player` for `durationMs` (default 30000), staying within `distance` (default 2) blocks."
+      }
+    ]
+  },
+  {
+    "query": "chat players",
+    "limit": 20,
+    "hits": [
+      {
+        "module": "social",
+        "routine": "waitForChat",
+        "score": 11.02,
+        "text": "Wait for the next chat message from another player. `from` (username), `match` (regex, case-insensitive), `timeoutMs` (default 60000)."
+      },
+      {
+        "module": "social",
+        "routine": "say",
+        "score": 6.2,
+        "text": "Send a public chat `message`. Other players and agents read chat."
+      },
+      {
+        "module": "social",
+        "routine": "players",
+        "score": 5.47,
+        "text": "Other online players: [{ username, distance, position }] (distance and position are null when out of view)."
+      },
+      {
+        "module": "social",
+        "score": 4.57,
+        "text": "Talk to, wait for, follow, and hand items to other players."
+      },
+      {
+        "module": "social",
+        "routine": "follow",
+        "score": 2.61,
+        "text": "Follow a `player` for `durationMs` (default 30000), staying within `distance` (default 2) blocks."
+      },
+      {
+        "module": "social",
+        "routine": "give",
+        "score": 2.61,
+        "text": "Walk to a `player` and toss them `count` (default 1) of `item`."
+      },
+      {
+        "module": "move",
+        "score": 2.35,
+        "text": "Walk the player with the pathfinder, with a time limit and a fallback for stuck paths."
+      },
+      {
+        "module": "move",
+        "routine": "to",
+        "score": 2.35,
+        "text": "Walk within `range` blocks of `position` ({x,y,z} or [x,y,z]) and stop. Gives up (and stops pathfinding) after `timeoutMs`. Returns where the player then stands."
+      },
+      {
+        "module": "combat",
+        "routine": "retreat",
+        "score": 2.34,
+        "text": "Walk away until more than `distance` (default 16) blocks from `from`: a position ({x,y,z} or [x,y,z]), an entity id, or a creature name. Without `from`, away from the nearest hostile mob within 32 ..."
+      },
+      {
+        "module": "explorer",
+        "routine": "places",
+        "score": 2.34,
+        "text": "List saved places, nearest first. `kind` keeps one kind; `near` is the point distances are measured from (default: the player); `radius` drops places farther than that from `near` or in another dim..."
+      },
+      {
+        "module": "sense",
+        "routine": "look",
+        "score": 1.56,
+        "text": "Turn the player's head to face `at` ({x,y,z} or [x,y,z])."
+      },
+      {
+        "module": "survival",
+        "routine": "wake",
+        "score": 1.56,
+        "text": "Get out of bed. Fails when the player is not sleeping. Returns { sleeping } after waking."
+      },
+      {
+        "module": "combat",
+        "routine": "attack",
+        "score": 1.56,
+        "text": "Hit one creature until it dies. `target` is an entity id or a name ('zombie'; the nearest match, a player's username works too). Walks up to it, holds the best sword or axe from the inventory, and ..."
+      },
+      {
+        "module": "combat",
+        "routine": "fight",
+        "score": 1.56,
+        "text": "Fight until no target is left within `radius` (default 16) or `timeoutMs` (default 60000) passes. Targets default to hostile mobs: the registry category 'Hostile mobs', which includes slimes, magma..."
+      },
+      {
+        "module": "explorer",
+        "routine": "remember",
+        "score": 1.56,
+        "text": "Save a named place at `at` (default: where the player stands) and return it. `kind` is one of chest, bed, farm, ore, base, portal, other (default other); `tags` and `note` describe it; `contents` m..."
+      },
+      {
+        "module": "explorer",
+        "routine": "travel",
+        "score": 1.56,
+        "text": "Walk to a saved place, stopping within `range` (default 2) blocks. Gives up after `timeoutMs` (default 120000). Returns where the player then stands."
+      },
+      {
+        "module": "move",
+        "routine": "stop",
+        "score": 0.78,
+        "text": "Stop pathfinding and clear the movement keys."
+      },
+      {
+        "module": "builder",
+        "score": 0.39,
+        "text": "Place blocks and build structures from blueprints. Blueprints: { palette: { '#': 'oak_planks' }, layers: [layer, ...] }; layers go bottom to top, rows run along +z, characters along +x, '.' or spac..."
+      },
+      {
+        "module": "builder",
+        "routine": "build",
+        "score": 0.3,
+        "text": "Build the `blueprint` with its first layer's first row's first character at `origin`. Skips blocks already correct, places bottom-up. Fails up front on missing materials unless `partial`. Returns {..."
+      },
+      {
+        "module": "dig",
+        "score": 0.24,
+        "text": "Dig one block with the right tool; falling blocks that refill the hole are dug too."
+      }
+    ]
+  },
+  {
+    "query": "follow player",
+    "limit": 1,
+    "hits": [
+      {
+        "module": "social",
+        "routine": "follow",
+        "score": 10.91,
+        "text": "Follow a `player` for `durationMs` (default 30000), staying within `distance` (default 2) blocks."
+      }
+    ]
+  },
+  {
+    "query": "follow player",
+    "limit": 5,
+    "hits": [
+      {
+        "module": "social",
+        "routine": "follow",
+        "score": 10.91,
+        "text": "Follow a `player` for `durationMs` (default 30000), staying within `distance` (default 2) blocks."
+      },
+      {
+        "module": "social",
+        "score": 7.87,
+        "text": "Talk to, wait for, follow, and hand items to other players."
+      },
+      {
+        "module": "social",
+        "routine": "players",
+        "score": 6.66,
+        "text": "Other online players: [{ username, distance, position }] (distance and position are null when out of view)."
+      },
+      {
+        "module": "social",
+        "routine": "give",
+        "score": 3.79,
+        "text": "Walk to a `player` and toss them `count` (default 1) of `item`."
+      },
+      {
+        "module": "social",
+        "routine": "say",
+        "score": 3.53,
+        "text": "Send a public chat `message`. Other players and agents read chat."
+      }
+    ]
+  },
+  {
+    "query": "follow player",
+    "limit": 20,
+    "hits": [
+      {
+        "module": "social",
+        "routine": "follow",
+        "score": 10.91,
+        "text": "Follow a `player` for `durationMs` (default 30000), staying within `distance` (default 2) blocks."
+      },
+      {
+        "module": "social",
+        "score": 7.87,
+        "text": "Talk to, wait for, follow, and hand items to other players."
+      },
+      {
+        "module": "social",
+        "routine": "players",
+        "score": 6.66,
+        "text": "Other online players: [{ username, distance, position }] (distance and position are null when out of view)."
+      },
+      {
+        "module": "social",
+        "routine": "give",
+        "score": 3.79,
+        "text": "Walk to a `player` and toss them `count` (default 1) of `item`."
+      },
+      {
+        "module": "social",
+        "routine": "say",
+        "score": 3.53,
+        "text": "Send a public chat `message`. Other players and agents read chat."
+      },
+      {
+        "module": "social",
+        "routine": "waitForChat",
+        "score": 3.53,
+        "text": "Wait for the next chat message from another player. `from` (username), `match` (regex, case-insensitive), `timeoutMs` (default 60000)."
+      },
+      {
+        "module": "move",
+        "score": 2.35,
+        "text": "Walk the player with the pathfinder, with a time limit and a fallback for stuck paths."
+      },
+      {
+        "module": "move",
+        "routine": "to",
+        "score": 2.35,
+        "text": "Walk within `range` blocks of `position` ({x,y,z} or [x,y,z]) and stop. Gives up (and stops pathfinding) after `timeoutMs`. Returns where the player then stands."
+      },
+      {
+        "module": "sense",
+        "routine": "look",
+        "score": 1.56,
+        "text": "Turn the player's head to face `at` ({x,y,z} or [x,y,z])."
+      },
+      {
+        "module": "survival",
+        "routine": "wake",
+        "score": 1.56,
+        "text": "Get out of bed. Fails when the player is not sleeping. Returns { sleeping } after waking."
+      },
+      {
+        "module": "combat",
+        "routine": "attack",
+        "score": 1.56,
+        "text": "Hit one creature until it dies. `target` is an entity id or a name ('zombie'; the nearest match, a player's username works too). Walks up to it, holds the best sword or axe from the inventory, and ..."
+      },
+      {
+        "module": "combat",
+        "routine": "fight",
+        "score": 1.56,
+        "text": "Fight until no target is left within `radius` (default 16) or `timeoutMs` (default 60000) passes. Targets default to hostile mobs: the registry category 'Hostile mobs', which includes slimes, magma..."
+      },
+      {
+        "module": "combat",
+        "routine": "retreat",
+        "score": 1.56,
+        "text": "Walk away until more than `distance` (default 16) blocks from `from`: a position ({x,y,z} or [x,y,z]), an entity id, or a creature name. Without `from`, away from the nearest hostile mob within 32 ..."
+      },
+      {
+        "module": "explorer",
+        "routine": "remember",
+        "score": 1.56,
+        "text": "Save a named place at `at` (default: where the player stands) and return it. `kind` is one of chest, bed, farm, ore, base, portal, other (default other); `tags` and `note` describe it; `contents` m..."
+      },
+      {
+        "module": "explorer",
+        "routine": "places",
+        "score": 1.56,
+        "text": "List saved places, nearest first. `kind` keeps one kind; `near` is the point distances are measured from (default: the player); `radius` drops places farther than that from `near` or in another dim..."
+      },
+      {
+        "module": "explorer",
+        "routine": "travel",
+        "score": 1.56,
+        "text": "Walk to a saved place, stopping within `range` (default 2) blocks. Gives up after `timeoutMs` (default 120000). Returns where the player then stands."
+      },
+      {
+        "module": "move",
+        "routine": "stop",
+        "score": 0.78,
+        "text": "Stop pathfinding and clear the movement keys."
+      },
+      {
+        "module": "builder",
+        "score": 0.39,
+        "text": "Place blocks and build structures from blueprints. Blueprints: { palette: { '#': 'oak_planks' }, layers: [layer, ...] }; layers go bottom to top, rows run along +z, characters along +x, '.' or spac..."
+      },
+      {
+        "module": "builder",
+        "routine": "build",
+        "score": 0.3,
+        "text": "Build the `blueprint` with its first layer's first row's first character at `origin`. Skips blocks already correct, places bottom-up. Fails up front on missing materials unless `partial`. Returns {..."
+      },
+      {
+        "module": "builder",
+        "routine": "materials",
+        "score": 0.13,
+        "text": "Block counts the `blueprint` needs, e.g. { oak_planks: 24 }."
+      }
+    ]
+  },
+  {
+    "query": "bucket water",
+    "limit": 1,
+    "hits": [
+      {
+        "module": "bucket",
+        "score": 13.67,
+        "text": "Fill a bucket from a water or lava source, and pour it out."
+      }
+    ]
+  },
+  {
+    "query": "bucket water",
+    "limit": 5,
+    "hits": [
+      {
+        "module": "bucket",
+        "score": 13.67,
+        "text": "Fill a bucket from a water or lava source, and pour it out."
+      },
+      {
+        "module": "bucket",
+        "routine": "empty",
+        "score": 10.52,
+        "text": "Pour a full bucket so its fluid source lands in the block at `at` ({x,y,z} or [x,y,z]), which must be air or a non-solid block next to a solid one. `fluid` ('water' or 'lava') picks the bucket; def..."
+      },
+      {
+        "module": "bucket",
+        "routine": "fill",
+        "score": 9.34,
+        "text": "Fill an empty bucket from a `fluid` ('water' or 'lava') source: the one at `at` ({x,y,z} or [x,y,z]), or the nearest within `radius` (default 16). Walks within reach and tries up to 3 sources. Flow..."
+      },
+      {
+        "module": "farm",
+        "routine": "till",
+        "score": 2.37,
+        "text": "Hoe the dirt, grass_block, or dirt_path block at `at` ({x,y,z} or [x,y,z]) into farmland, walking close and holding a hoe from the inventory. Digs out wild plants above it (grass, ferns, dead bush,..."
+      },
+      {
+        "module": "explorer",
+        "routine": "scan",
+        "score": 2.37,
+        "text": "Summarize the area within `radius` (default 16): biome, uncommon blocks with counts and nearest positions (ores, logs, water, chests...), and nearby entities."
+      }
+    ]
+  },
+  {
+    "query": "bucket water",
+    "limit": 20,
+    "hits": [
+      {
+        "module": "bucket",
+        "score": 13.67,
+        "text": "Fill a bucket from a water or lava source, and pour it out."
+      },
+      {
+        "module": "bucket",
+        "routine": "empty",
+        "score": 10.52,
+        "text": "Pour a full bucket so its fluid source lands in the block at `at` ({x,y,z} or [x,y,z]), which must be air or a non-solid block next to a solid one. `fluid` ('water' or 'lava') picks the bucket; def..."
+      },
+      {
+        "module": "bucket",
+        "routine": "fill",
+        "score": 9.34,
+        "text": "Fill an empty bucket from a `fluid` ('water' or 'lava') source: the one at `at` ({x,y,z} or [x,y,z]), or the nearest within `radius` (default 16). Walks within reach and tries up to 3 sources. Flow..."
+      },
+      {
+        "module": "farm",
+        "routine": "till",
+        "score": 2.37,
+        "text": "Hoe the dirt, grass_block, or dirt_path block at `at` ({x,y,z} or [x,y,z]) into farmland, walking close and holding a hoe from the inventory. Digs out wild plants above it (grass, ferns, dead bush,..."
+      },
+      {
+        "module": "explorer",
+        "routine": "scan",
+        "score": 2.37,
+        "text": "Summarize the area within `radius` (default 16): biome, uncommon blocks with counts and nearest positions (ores, logs, water, chests...), and nearby entities."
+      },
+      {
+        "module": "explorer",
+        "routine": "surface",
+        "score": 2.37,
+        "text": "Climb to open sky by digging a staircase; use it when trapped underground or in a pit. Needs no blocks; slow without a pickaxe, so pass a long program timeout (e.g. --timeout 600000). Under water i..."
+      }
+    ]
+  },
+  {
+    "query": "dig down",
+    "limit": 1,
+    "hits": [
+      {
+        "module": "dig",
+        "score": 8.22,
+        "text": "Dig one block with the right tool; falling blocks that refill the hole are dug too."
+      }
+    ]
+  },
+  {
+    "query": "dig down",
+    "limit": 5,
+    "hits": [
+      {
+        "module": "dig",
+        "score": 8.22,
+        "text": "Dig one block with the right tool; falling blocks that refill the hole are dug too."
+      },
+      {
+        "module": "dig",
+        "routine": "dig",
+        "score": 8.22,
+        "text": "Dig the block at `at` ({x,y,z} or [x,y,z]), equipping the best tool and failing with the tools it needs when the inventory lacks them. Digs on while gravel or sand refills the position. Returns { b..."
+      },
+      {
+        "module": "gatherer",
+        "score": 3.08,
+        "text": "Collect resources: walk to matching blocks, dig them with the right tool, pick up the drops."
+      },
+      {
+        "module": "gatherer",
+        "routine": "gather",
+        "score": 3.08,
+        "text": "Dig `count` blocks matching `blocks` ('*_log', 'stone', ['coal_ore','deepslate_coal_ore']) and pick up the drops, within `radius` (default 48). Equips the best tool and fails if a required tool is ..."
+      },
+      {
+        "module": "items",
+        "routine": "drops",
+        "score": 2.05,
+        "text": "Positions ({x,y,z}) of dropped item entities within `radius`, nearest first — what a dig has left to pick up."
+      }
+    ]
+  },
+  {
+    "query": "dig down",
+    "limit": 20,
+    "hits": [
+      {
+        "module": "dig",
+        "score": 8.22,
+        "text": "Dig one block with the right tool; falling blocks that refill the hole are dug too."
+      },
+      {
+        "module": "dig",
+        "routine": "dig",
+        "score": 8.22,
+        "text": "Dig the block at `at` ({x,y,z} or [x,y,z]), equipping the best tool and failing with the tools it needs when the inventory lacks them. Digs on while gravel or sand refills the position. Returns { b..."
+      },
+      {
+        "module": "gatherer",
+        "score": 3.08,
+        "text": "Collect resources: walk to matching blocks, dig them with the right tool, pick up the drops."
+      },
+      {
+        "module": "gatherer",
+        "routine": "gather",
+        "score": 3.08,
+        "text": "Dig `count` blocks matching `blocks` ('*_log', 'stone', ['coal_ore','deepslate_coal_ore']) and pick up the drops, within `radius` (default 48). Equips the best tool and fails if a required tool is ..."
+      },
+      {
+        "module": "items",
+        "routine": "drops",
+        "score": 2.05,
+        "text": "Positions ({x,y,z}) of dropped item entities within `radius`, nearest first — what a dig has left to pick up."
+      },
+      {
+        "module": "farm",
+        "routine": "till",
+        "score": 2.05,
+        "text": "Hoe the dirt, grass_block, or dirt_path block at `at` ({x,y,z} or [x,y,z]) into farmland, walking close and holding a hoe from the inventory. Digs out wild plants above it (grass, ferns, dead bush,..."
+      },
+      {
+        "module": "farm",
+        "routine": "harvest",
+        "score": 2.05,
+        "text": "Dig the ripe crops within `radius` (default 16), nearest first, collect the drops, and replant each (`replant`, default true) when the inventory has its seed. `crops` limits it to some of wheat, ca..."
+      },
+      {
+        "module": "explorer",
+        "routine": "surface",
+        "score": 2.05,
+        "text": "Climb to open sky by digging a staircase; use it when trapped underground or in a pit. Needs no blocks; slow without a pickaxe, so pass a long program timeout (e.g. --timeout 600000). Under water i..."
+      },
+      {
+        "module": "gatherer",
+        "routine": "collectDrops",
+        "score": 1.03,
+        "text": "Walk over dropped items within `radius` (default 8) to pick them up. Returns how many drops it tried to reach."
+      },
+      {
+        "module": "place",
+        "score": 0.51,
+        "text": "Place one block from the inventory, digging out a different solid block first."
+      },
+      {
+        "module": "place",
+        "routine": "place",
+        "score": 0.51,
+        "text": "Place one block of `item` at `at` ({x,y,z} or [x,y,z]), walking close and digging out a different solid block first. Needs a solid neighbor to place against. Returns false if the block was already ..."
+      }
+    ]
+  },
+  {
+    "query": "attack hostile",
+    "limit": 1,
+    "hits": [
+      {
+        "module": "combat",
+        "score": 9.38,
+        "text": "Attack creatures with the best weapon, fight hostiles until none are near, and back away."
+      }
+    ]
+  },
+  {
+    "query": "attack hostile",
+    "limit": 5,
+    "hits": [
+      {
+        "module": "combat",
+        "score": 9.38,
+        "text": "Attack creatures with the best weapon, fight hostiles until none are near, and back away."
+      },
+      {
+        "module": "combat",
+        "routine": "attack",
+        "score": 8.04,
+        "text": "Hit one creature until it dies. `target` is an entity id or a name ('zombie'; the nearest match, a player's username works too). Walks up to it, holds the best sword or axe from the inventory, and ..."
+      },
+      {
+        "module": "combat",
+        "routine": "fight",
+        "score": 6.26,
+        "text": "Fight until no target is left within `radius` (default 16) or `timeoutMs` (default 60000) passes. Targets default to hostile mobs: the registry category 'Hostile mobs', which includes slimes, magma..."
+      },
+      {
+        "module": "combat",
+        "routine": "retreat",
+        "score": 5.36,
+        "text": "Walk away until more than `distance` (default 16) blocks from `from`: a position ({x,y,z} or [x,y,z]), an entity id, or a creature name. Without `from`, away from the nearest hostile mob within 32 ..."
+      }
+    ]
+  },
+  {
+    "query": "attack hostile",
+    "limit": 20,
+    "hits": [
+      {
+        "module": "combat",
+        "score": 9.38,
+        "text": "Attack creatures with the best weapon, fight hostiles until none are near, and back away."
+      },
+      {
+        "module": "combat",
+        "routine": "attack",
+        "score": 8.04,
+        "text": "Hit one creature until it dies. `target` is an entity id or a name ('zombie'; the nearest match, a player's username works too). Walks up to it, holds the best sword or axe from the inventory, and ..."
+      },
+      {
+        "module": "combat",
+        "routine": "fight",
+        "score": 6.26,
+        "text": "Fight until no target is left within `radius` (default 16) or `timeoutMs` (default 60000) passes. Targets default to hostile mobs: the registry category 'Hostile mobs', which includes slimes, magma..."
+      },
+      {
+        "module": "combat",
+        "routine": "retreat",
+        "score": 5.36,
+        "text": "Walk away until more than `distance` (default 16) blocks from `from`: a position ({x,y,z} or [x,y,z]), an entity id, or a creature name. Without `from`, away from the nearest hostile mob within 32 ..."
+      }
+    ]
+  },
+  {
+    "query": "craft table",
+    "limit": 1,
+    "hits": [
+      {
+        "module": "craft",
+        "score": 14.79,
+        "text": "Craft items from the inventory at a table within reach."
+      }
+    ]
+  },
+  {
+    "query": "craft table",
+    "limit": 5,
+    "hits": [
+      {
+        "module": "craft",
+        "score": 14.79,
+        "text": "Craft items from the inventory at a table within reach."
+      },
+      {
+        "module": "craft",
+        "routine": "craft",
+        "score": 12.77,
+        "text": "Craft at least `count` (default 1) more of `item` from the inventory. A recipe that needs a crafting table uses one within 4 blocks, and the call fails when there is none. Returns how many were made."
+      },
+      {
+        "module": "craft",
+        "routine": "table",
+        "score": 9.98,
+        "text": "The position of a crafting table within 4 blocks, so programs can stand next to it. Fails when there is none nearby."
+      },
+      {
+        "module": "crafter",
+        "score": 7.33,
+        "text": "Craft and smelt item chains from the inventory, finding or placing a crafting table or furnace when needed."
+      },
+      {
+        "module": "crafter",
+        "routine": "make",
+        "score": 5.6,
+        "text": "Make sure the inventory holds at least `count` (default 1) of `item`, crafting intermediate items (planks, sticks, tables) as needed and finding or placing a crafting table. An item that a furnace ..."
+      }
+    ]
+  },
+  {
+    "query": "craft table",
+    "limit": 20,
+    "hits": [
+      {
+        "module": "craft",
+        "score": 14.79,
+        "text": "Craft items from the inventory at a table within reach."
+      },
+      {
+        "module": "craft",
+        "routine": "craft",
+        "score": 12.77,
+        "text": "Craft at least `count` (default 1) more of `item` from the inventory. A recipe that needs a crafting table uses one within 4 blocks, and the call fails when there is none. Returns how many were made."
+      },
+      {
+        "module": "craft",
+        "routine": "table",
+        "score": 9.98,
+        "text": "The position of a crafting table within 4 blocks, so programs can stand next to it. Fails when there is none nearby."
+      },
+      {
+        "module": "crafter",
+        "score": 7.33,
+        "text": "Craft and smelt item chains from the inventory, finding or placing a crafting table or furnace when needed."
+      },
+      {
+        "module": "crafter",
+        "routine": "make",
+        "score": 5.6,
+        "text": "Make sure the inventory holds at least `count` (default 1) of `item`, crafting intermediate items (planks, sticks, tables) as needed and finding or placing a crafting table. An item that a furnace ..."
+      },
+      {
+        "module": "items",
+        "routine": "recipes",
+        "score": 2.37,
+        "text": "Up to 3 recipes for `item`: [{ makes, requiresTable, ingredients: { name: count } }]. Fails for an unknown item."
+      }
+    ]
+  },
+  {
+    "query": "inventory",
+    "limit": 1,
+    "hits": [
+      {
+        "module": "inventory",
+        "score": 3.99,
+        "text": "Count and list what the inventory holds, equip an item, and toss items out."
+      }
+    ]
+  },
+  {
+    "query": "inventory",
+    "limit": 5,
+    "hits": [
+      {
+        "module": "inventory",
+        "score": 3.99,
+        "text": "Count and list what the inventory holds, equip an item, and toss items out."
+      },
+      {
+        "module": "crafter",
+        "routine": "make",
+        "score": 2.39,
+        "text": "Make sure the inventory holds at least `count` (default 1) of `item`, crafting intermediate items (planks, sticks, tables) as needed and finding or placing a crafting table. An item that a furnace ..."
+      },
+      {
+        "module": "container",
+        "routine": "deposit",
+        "score": 2.09,
+        "text": "Put inventory items matching `items` ('cobblestone', '*_log', or a list) into the container at `at`, up to `count` in total (default all that match), as many as fit. Returns { deposited: { name: co..."
+      },
+      {
+        "module": "container",
+        "routine": "withdraw",
+        "score": 2.09,
+        "text": "Take items matching `items` ('iron_ingot', '*_planks', or a list) out of the container at `at` into the inventory, up to `count` in total (default all that match), as many as fit. Returns { withdra..."
+      },
+      {
+        "module": "inventory",
+        "routine": "list",
+        "score": 1.9,
+        "text": "Inventory totals by item name, e.g. { oak_log: 3, stick: 12 }."
+      }
+    ]
+  },
+  {
+    "query": "inventory",
+    "limit": 20,
+    "hits": [
+      {
+        "module": "inventory",
+        "score": 3.99,
+        "text": "Count and list what the inventory holds, equip an item, and toss items out."
+      },
+      {
+        "module": "crafter",
+        "routine": "make",
+        "score": 2.39,
+        "text": "Make sure the inventory holds at least `count` (default 1) of `item`, crafting intermediate items (planks, sticks, tables) as needed and finding or placing a crafting table. An item that a furnace ..."
+      },
+      {
+        "module": "container",
+        "routine": "deposit",
+        "score": 2.09,
+        "text": "Put inventory items matching `items` ('cobblestone', '*_log', or a list) into the container at `at`, up to `count` in total (default all that match), as many as fit. Returns { deposited: { name: co..."
+      },
+      {
+        "module": "container",
+        "routine": "withdraw",
+        "score": 2.09,
+        "text": "Take items matching `items` ('iron_ingot', '*_planks', or a list) out of the container at `at` into the inventory, up to `count` in total (default all that match), as many as fit. Returns { withdra..."
+      },
+      {
+        "module": "inventory",
+        "routine": "list",
+        "score": 1.9,
+        "text": "Inventory totals by item name, e.g. { oak_log: 3, stick: 12 }."
+      },
+      {
+        "module": "inventory",
+        "routine": "count",
+        "score": 1.9,
+        "text": "How many items matching `items` ('stick', '*_log', or a list) the inventory holds."
+      },
+      {
+        "module": "inventory",
+        "routine": "equip",
+        "score": 1.9,
+        "text": "Hold or wear an item from the inventory. `slot`: 'hand' (default), 'off-hand', 'head', 'torso', 'legs', 'feet'."
+      },
+      {
+        "module": "inventory",
+        "routine": "toss",
+        "score": 1.9,
+        "text": "Toss `count` of `item` out of the inventory (a tossed stack lands about two blocks away)."
+      },
+      {
+        "module": "place",
+        "score": 1.71,
+        "text": "Place one block from the inventory, digging out a different solid block first."
+      },
+      {
+        "module": "craft",
+        "score": 1.71,
+        "text": "Craft items from the inventory at a table within reach."
+      },
+      {
+        "module": "craft",
+        "routine": "craft",
+        "score": 1.71,
+        "text": "Craft at least `count` (default 1) more of `item` from the inventory. A recipe that needs a crafting table uses one within 4 blocks, and the call fails when there is none. Returns how many were made."
+      },
+      {
+        "module": "container",
+        "score": 1.71,
+        "text": "Look into chests, barrels, and shulker boxes, and move items between them and the inventory."
+      },
+      {
+        "module": "survival",
+        "score": 1.71,
+        "text": "Eat, sleep in a bed, wake up, and wear the best armor in the inventory."
+      },
+      {
+        "module": "survival",
+        "routine": "eat",
+        "score": 1.71,
+        "text": "Eat `item`, or the best safe food in the inventory when omitted: the one that restores the most without overshooting the missing food points. Rotten flesh, spider eyes, pufferfish, poisonous potato..."
+      },
+      {
+        "module": "survival",
+        "routine": "armor",
+        "score": 1.71,
+        "text": "Wear the best armor the inventory holds in each slot, by material: leather, copper, golden, chainmail, iron, diamond, netherite (turtle helmets rank between golden and chainmail). Leaves better arm..."
+      },
+      {
+        "module": "crafter",
+        "score": 1.71,
+        "text": "Craft and smelt item chains from the inventory, finding or placing a crafting table or furnace when needed."
+      },
+      {
+        "module": "farm",
+        "routine": "harvest",
+        "score": 1.52,
+        "text": "Dig the ripe crops within `radius` (default 16), nearest first, collect the drops, and replant each (`replant`, default true) when the inventory has its seed. `crops` limits it to some of wheat, ca..."
+      },
+      {
+        "module": "dig",
+        "routine": "dig",
+        "score": 1.14,
+        "text": "Dig the block at `at` ({x,y,z} or [x,y,z]), equipping the best tool and failing with the tools it needs when the inventory lacks them. Digs on while gravel or sand refills the position. Returns { b..."
+      },
+      {
+        "module": "furnace",
+        "routine": "smelt",
+        "score": 1.14,
+        "text": "Smelt `count` (default 1) of `item` (an input such as raw_iron, sand, cobblestone, beef, or a log) at the nearest furnace within 4.5 blocks, or at `at` ({x,y,z} or [x,y,z]), walking next to it firs..."
+      },
+      {
+        "module": "combat",
+        "routine": "attack",
+        "score": 1.14,
+        "text": "Hit one creature until it dies. `target` is an entity id or a name ('zombie'; the nearest match, a player's username works too). Walks up to it, holds the best sword or axe from the inventory, and ..."
+      }
+    ]
+  },
+  {
+    "query": "items",
+    "limit": 1,
+    "hits": [
+      {
+        "module": "items",
+        "score": 3.99,
+        "text": "Look up recipes, and find the items lying on the ground."
+      }
+    ]
+  },
+  {
+    "query": "items",
+    "limit": 5,
+    "hits": [
+      {
+        "module": "items",
+        "score": 3.99,
+        "text": "Look up recipes, and find the items lying on the ground."
+      },
+      {
+        "module": "crafter",
+        "routine": "make",
+        "score": 2.47,
+        "text": "Make sure the inventory holds at least `count` (default 1) of `item`, crafting intermediate items (planks, sticks, tables) as needed and finding or placing a crafting table. An item that a furnace ..."
+      },
+      {
+        "module": "furnace",
+        "routine": "smelt",
+        "score": 2.39,
+        "text": "Smelt `count` (default 1) of `item` (an input such as raw_iron, sand, cobblestone, beef, or a log) at the nearest furnace within 4.5 blocks, or at `at` ({x,y,z} or [x,y,z]), walking next to it firs..."
+      },
+      {
+        "module": "inventory",
+        "routine": "count",
+        "score": 2.37,
+        "text": "How many items matching `items` ('stick', '*_log', or a list) the inventory holds."
+      },
+      {
+        "module": "items",
+        "routine": "recipes",
+        "score": 2.37,
+        "text": "Up to 3 recipes for `item`: [{ makes, requiresTable, ingredients: { name: count } }]. Fails for an unknown item."
+      }
+    ]
+  },
+  {
+    "query": "items",
+    "limit": 20,
+    "hits": [
+      {
+        "module": "items",
+        "score": 3.99,
+        "text": "Look up recipes, and find the items lying on the ground."
+      },
+      {
+        "module": "crafter",
+        "routine": "make",
+        "score": 2.47,
+        "text": "Make sure the inventory holds at least `count` (default 1) of `item`, crafting intermediate items (planks, sticks, tables) as needed and finding or placing a crafting table. An item that a furnace ..."
+      },
+      {
+        "module": "furnace",
+        "routine": "smelt",
+        "score": 2.39,
+        "text": "Smelt `count` (default 1) of `item` (an input such as raw_iron, sand, cobblestone, beef, or a log) at the nearest furnace within 4.5 blocks, or at `at` ({x,y,z} or [x,y,z]), walking next to it firs..."
+      },
+      {
+        "module": "inventory",
+        "routine": "count",
+        "score": 2.37,
+        "text": "How many items matching `items` ('stick', '*_log', or a list) the inventory holds."
+      },
+      {
+        "module": "items",
+        "routine": "recipes",
+        "score": 2.37,
+        "text": "Up to 3 recipes for `item`: [{ makes, requiresTable, ingredients: { name: count } }]. Fails for an unknown item."
+      },
+      {
+        "module": "inventory",
+        "score": 2.28,
+        "text": "Count and list what the inventory holds, equip an item, and toss items out."
+      },
+      {
+        "module": "container",
+        "routine": "deposit",
+        "score": 2.28,
+        "text": "Put inventory items matching `items` ('cobblestone', '*_log', or a list) into the container at `at`, up to `count` in total (default all that match), as many as fit. Returns { deposited: { name: co..."
+      },
+      {
+        "module": "container",
+        "routine": "withdraw",
+        "score": 2.28,
+        "text": "Take items matching `items` ('iron_ingot', '*_planks', or a list) out of the container at `at` into the inventory, up to `count` in total (default all that match), as many as fit. Returns { withdra..."
+      },
+      {
+        "module": "survival",
+        "routine": "eat",
+        "score": 2.09,
+        "text": "Eat `item`, or the best safe food in the inventory when omitted: the one that restores the most without overshooting the missing food points. Rotten flesh, spider eyes, pufferfish, poisonous potato..."
+      },
+      {
+        "module": "inventory",
+        "routine": "equip",
+        "score": 1.99,
+        "text": "Hold or wear an item from the inventory. `slot`: 'hand' (default), 'off-hand', 'head', 'torso', 'legs', 'feet'."
+      },
+      {
+        "module": "inventory",
+        "routine": "toss",
+        "score": 1.99,
+        "text": "Toss `count` of `item` out of the inventory (a tossed stack lands about two blocks away)."
+      },
+      {
+        "module": "inventory",
+        "routine": "list",
+        "score": 1.9,
+        "text": "Inventory totals by item name, e.g. { oak_log: 3, stick: 12 }."
+      },
+      {
+        "module": "craft",
+        "routine": "craft",
+        "score": 1.9,
+        "text": "Craft at least `count` (default 1) more of `item` from the inventory. A recipe that needs a crafting table uses one within 4 blocks, and the call fails when there is none. Returns how many were made."
+      },
+      {
+        "module": "items",
+        "routine": "drops",
+        "score": 1.9,
+        "text": "Positions ({x,y,z}) of dropped item entities within `radius`, nearest first — what a dig has left to pick up."
+      },
+      {
+        "module": "social",
+        "routine": "give",
+        "score": 1.9,
+        "text": "Walk to a `player` and toss them `count` (default 1) of `item`."
+      },
+      {
+        "module": "place",
+        "routine": "place",
+        "score": 1.71,
+        "text": "Place one block of `item` at `at` ({x,y,z} or [x,y,z]), walking close and digging out a different solid block first. Needs a solid neighbor to place against. Returns false if the block was already ..."
+      },
+      {
+        "module": "craft",
+        "score": 1.71,
+        "text": "Craft items from the inventory at a table within reach."
+      },
+      {
+        "module": "container",
+        "score": 1.71,
+        "text": "Look into chests, barrels, and shulker boxes, and move items between them and the inventory."
+      },
+      {
+        "module": "container",
+        "routine": "list",
+        "score": 1.71,
+        "text": "What the chest, barrel, shulker box, hopper, dispenser, or dropper at `at` ({x,y,z} or [x,y,z]) holds, walking next to it first. Returns { block, items: { name: count }, emptySlots }."
+      },
+      {
+        "module": "crafter",
+        "score": 1.71,
+        "text": "Craft and smelt item chains from the inventory, finding or placing a crafting table or furnace when needed."
+      }
+    ]
+  },
+  {
+    "query": "gather",
+    "limit": 1,
+    "hits": [
+      {
+        "module": "gatherer",
+        "routine": "gather",
+        "score": 5.78,
+        "text": "Dig `count` blocks matching `blocks` ('*_log', 'stone', ['coal_ore','deepslate_coal_ore']) and pick up the drops, within `radius` (default 48). Equips the best tool and fails if a required tool is ..."
+      }
+    ]
+  },
+  {
+    "query": "gather",
+    "limit": 5,
+    "hits": [
+      {
+        "module": "gatherer",
+        "routine": "gather",
+        "score": 5.78,
+        "text": "Dig `count` blocks matching `blocks` ('*_log', 'stone', ['coal_ore','deepslate_coal_ore']) and pick up the drops, within `radius` (default 48). Equips the best tool and fails if a required tool is ..."
+      },
+      {
+        "module": "crafter",
+        "routine": "make",
+        "score": 2.89,
+        "text": "Make sure the inventory holds at least `count` (default 1) of `item`, crafting intermediate items (planks, sticks, tables) as needed and finding or placing a crafting table. An item that a furnace ..."
+      },
+      {
+        "module": "gatherer",
+        "score": 1.45,
+        "text": "Collect resources: walk to matching blocks, dig them with the right tool, pick up the drops."
+      },
+      {
+        "module": "gatherer",
+        "routine": "collectDrops",
+        "score": 1.01,
+        "text": "Walk over dropped items within `radius` (default 8) to pick them up. Returns how many drops it tried to reach."
+      }
+    ]
+  },
+  {
+    "query": "gather",
+    "limit": 20,
+    "hits": [
+      {
+        "module": "gatherer",
+        "routine": "gather",
+        "score": 5.78,
+        "text": "Dig `count` blocks matching `blocks` ('*_log', 'stone', ['coal_ore','deepslate_coal_ore']) and pick up the drops, within `radius` (default 48). Equips the best tool and fails if a required tool is ..."
+      },
+      {
+        "module": "crafter",
+        "routine": "make",
+        "score": 2.89,
+        "text": "Make sure the inventory holds at least `count` (default 1) of `item`, crafting intermediate items (planks, sticks, tables) as needed and finding or placing a crafting table. An item that a furnace ..."
+      },
+      {
+        "module": "gatherer",
+        "score": 1.45,
+        "text": "Collect resources: walk to matching blocks, dig them with the right tool, pick up the drops."
+      },
+      {
+        "module": "gatherer",
+        "routine": "collectDrops",
+        "score": 1.01,
+        "text": "Walk over dropped items within `radius` (default 8) to pick them up. Returns how many drops it tried to reach."
+      }
+    ]
+  },
+  {
+    "query": "make",
+    "limit": 1,
+    "hits": [
+      {
+        "module": "crafter",
+        "routine": "make",
+        "score": 9.63,
+        "text": "Make sure the inventory holds at least `count` (default 1) of `item`, crafting intermediate items (planks, sticks, tables) as needed and finding or placing a crafting table. An item that a furnace ..."
+      }
+    ]
+  },
+  {
+    "query": "make",
+    "limit": 5,
+    "hits": [
+      {
+        "module": "crafter",
+        "routine": "make",
+        "score": 9.63,
+        "text": "Make sure the inventory holds at least `count` (default 1) of `item`, crafting intermediate items (planks, sticks, tables) as needed and finding or placing a crafting table. An item that a furnace ..."
+      },
+      {
+        "module": "items",
+        "routine": "recipes",
+        "score": 2.89,
+        "text": "Up to 3 recipes for `item`: [{ makes, requiresTable, ingredients: { name: count } }]. Fails for an unknown item."
+      },
+      {
+        "module": "crafter",
+        "score": 1.45,
+        "text": "Craft and smelt item chains from the inventory, finding or placing a crafting table or furnace when needed."
+      },
+      {
+        "module": "furnace",
+        "routine": "take",
+        "score": 0.72,
+        "text": "Collect the output of the furnace within 4.5 blocks, or at `at`, without waiting for it. Returns { item, count, smelting }: what was taken (item null when the slot was empty) and what the furnace i..."
+      },
+      {
+        "module": "survival",
+        "routine": "wake",
+        "score": 0.72,
+        "text": "Get out of bed. Fails when the player is not sleeping. Returns { sleeping } after waking."
+      }
+    ]
+  },
+  {
+    "query": "make",
+    "limit": 20,
+    "hits": [
+      {
+        "module": "crafter",
+        "routine": "make",
+        "score": 9.63,
+        "text": "Make sure the inventory holds at least `count` (default 1) of `item`, crafting intermediate items (planks, sticks, tables) as needed and finding or placing a crafting table. An item that a furnace ..."
+      },
+      {
+        "module": "items",
+        "routine": "recipes",
+        "score": 2.89,
+        "text": "Up to 3 recipes for `item`: [{ makes, requiresTable, ingredients: { name: count } }]. Fails for an unknown item."
+      },
+      {
+        "module": "crafter",
+        "score": 1.45,
+        "text": "Craft and smelt item chains from the inventory, finding or placing a crafting table or furnace when needed."
+      },
+      {
+        "module": "furnace",
+        "routine": "take",
+        "score": 0.72,
+        "text": "Collect the output of the furnace within 4.5 blocks, or at `at`, without waiting for it. Returns { item, count, smelting }: what was taken (item null when the slot was empty) and what the furnace i..."
+      },
+      {
+        "module": "survival",
+        "routine": "wake",
+        "score": 0.72,
+        "text": "Get out of bed. Fails when the player is not sleeping. Returns { sleeping } after waking."
+      },
+      {
+        "module": "furnace",
+        "score": 0.58,
+        "text": "Smelt at a furnace within reach: load fuel and input, wait, take the output."
+      },
+      {
+        "module": "survival",
+        "score": 0.58,
+        "text": "Eat, sleep in a bed, wake up, and wear the best armor in the inventory."
+      },
+      {
+        "module": "furnace",
+        "routine": "smelt",
+        "score": 0.43,
+        "text": "Smelt `count` (default 1) of `item` (an input such as raw_iron, sand, cobblestone, beef, or a log) at the nearest furnace within 4.5 blocks, or at `at` ({x,y,z} or [x,y,z]), walking next to it firs..."
+      },
+      {
+        "module": "survival",
+        "routine": "sleep",
+        "score": 0.43,
+        "text": "Go to bed at `at` ({x,y,z} or [x,y,z]), or the nearest bed within 16 blocks, and sleep. Works at night (time of day 12541 to 23458) and in thunderstorms; fails with the reason otherwise, or when mo..."
+      },
+      {
+        "module": "craft",
+        "routine": "craft",
+        "score": 0.29,
+        "text": "Craft at least `count` (default 1) more of `item` from the inventory. A recipe that needs a crafting table uses one within 4 blocks, and the call fails when there is none. Returns how many were made."
+      },
+      {
+        "module": "container",
+        "routine": "withdraw",
+        "score": 0.29,
+        "text": "Take items matching `items` ('iron_ingot', '*_planks', or a list) out of the container at `at` into the inventory, up to `count` in total (default all that match), as many as fit. Returns { withdra..."
+      },
+      {
+        "module": "combat",
+        "routine": "fight",
+        "score": 0.29,
+        "text": "Fight until no target is left within `radius` (default 16) or `timeoutMs` (default 60000) passes. Targets default to hostile mobs: the registry category 'Hostile mobs', which includes slimes, magma..."
+      },
+      {
+        "module": "farm",
+        "routine": "plant",
+        "score": 0.29,
+        "text": "Plant `seed` ('wheat_seeds', 'carrot', 'potato', 'beetroot_seeds', 'melon_seeds', 'pumpkin_seeds', 'torchflower_seeds', 'pitcher_pod', 'nether_wart', or the crop name such as 'wheat') on the farmla..."
+      },
+      {
+        "module": "survival",
+        "routine": "eat",
+        "score": 0.14,
+        "text": "Eat `item`, or the best safe food in the inventory when omitted: the one that restores the most without overshooting the missing food points. Rotten flesh, spider eyes, pufferfish, poisonous potato..."
+      },
+      {
+        "module": "survival",
+        "routine": "armor",
+        "score": 0.14,
+        "text": "Wear the best armor the inventory holds in each slot, by material: leather, copper, golden, chainmail, iron, diamond, netherite (turtle helmets rank between golden and chainmail). Leaves better arm..."
+      }
+    ]
+  },
+  {
+    "query": "list",
+    "limit": 1,
+    "hits": [
+      {
+        "module": "inventory",
+        "routine": "list",
+        "score": 4.42,
+        "text": "Inventory totals by item name, e.g. { oak_log: 3, stick: 12 }."
+      }
+    ]
+  },
+  {
+    "query": "list",
+    "limit": 5,
+    "hits": [
+      {
+        "module": "inventory",
+        "routine": "list",
+        "score": 4.42,
+        "text": "Inventory totals by item name, e.g. { oak_log: 3, stick: 12 }."
+      },
+      {
+        "module": "inventory",
+        "score": 3.54,
+        "text": "Count and list what the inventory holds, equip an item, and toss items out."
+      },
+      {
+        "module": "container",
+        "routine": "list",
+        "score": 3.54,
+        "text": "What the chest, barrel, shulker box, hopper, dispenser, or dropper at `at` ({x,y,z} or [x,y,z]) holds, walking next to it first. Returns { block, items: { name: count }, emptySlots }."
+      },
+      {
+        "module": "inventory",
+        "routine": "count",
+        "score": 2.65,
+        "text": "How many items matching `items` ('stick', '*_log', or a list) the inventory holds."
+      },
+      {
+        "module": "explorer",
+        "routine": "places",
+        "score": 2.36,
+        "text": "List saved places, nearest first. `kind` keeps one kind; `near` is the point distances are measured from (default: the player); `radius` drops places farther than that from `near` or in another dim..."
+      }
+    ]
+  },
+  {
+    "query": "list",
+    "limit": 20,
+    "hits": [
+      {
+        "module": "inventory",
+        "routine": "list",
+        "score": 4.42,
+        "text": "Inventory totals by item name, e.g. { oak_log: 3, stick: 12 }."
+      },
+      {
+        "module": "inventory",
+        "score": 3.54,
+        "text": "Count and list what the inventory holds, equip an item, and toss items out."
+      },
+      {
+        "module": "container",
+        "routine": "list",
+        "score": 3.54,
+        "text": "What the chest, barrel, shulker box, hopper, dispenser, or dropper at `at` ({x,y,z} or [x,y,z]) holds, walking next to it first. Returns { block, items: { name: count }, emptySlots }."
+      },
+      {
+        "module": "inventory",
+        "routine": "count",
+        "score": 2.65,
+        "text": "How many items matching `items` ('stick', '*_log', or a list) the inventory holds."
+      },
+      {
+        "module": "explorer",
+        "routine": "places",
+        "score": 2.36,
+        "text": "List saved places, nearest first. `kind` keeps one kind; `near` is the point distances are measured from (default: the player); `radius` drops places farther than that from `near` or in another dim..."
+      },
+      {
+        "module": "sense",
+        "routine": "find",
+        "score": 1.77,
+        "text": "Positions ({x,y,z}) of blocks matching `blocks` ('oak_log', '*_ore', or a list), nearest first. `radius` limits the search, `count` the number of results. Fails when no block type matches."
+      },
+      {
+        "module": "container",
+        "routine": "deposit",
+        "score": 1.77,
+        "text": "Put inventory items matching `items` ('cobblestone', '*_log', or a list) into the container at `at`, up to `count` in total (default all that match), as many as fit. Returns { deposited: { name: co..."
+      },
+      {
+        "module": "container",
+        "routine": "withdraw",
+        "score": 1.77,
+        "text": "Take items matching `items` ('iron_ingot', '*_planks', or a list) out of the container at `at` into the inventory, up to `count` in total (default all that match), as many as fit. Returns { withdra..."
+      },
+      {
+        "module": "combat",
+        "routine": "fight",
+        "score": 1.77,
+        "text": "Fight until no target is left within `radius` (default 16) or `timeoutMs` (default 60000) passes. Targets default to hostile mobs: the registry category 'Hostile mobs', which includes slimes, magma..."
+      },
+      {
+        "module": "explorer",
+        "routine": "waypoints",
+        "score": 1.77,
+        "text": "Every saved place by name as { x, y, z, dimension }. `places` lists them with their kind, tags, note, and contents."
+      },
+      {
+        "module": "inventory",
+        "routine": "equip",
+        "score": 0.88,
+        "text": "Hold or wear an item from the inventory. `slot`: 'hand' (default), 'off-hand', 'head', 'torso', 'legs', 'feet'."
+      },
+      {
+        "module": "inventory",
+        "routine": "toss",
+        "score": 0.88,
+        "text": "Toss `count` of `item` out of the inventory (a tossed stack lands about two blocks away)."
+      },
+      {
+        "module": "container",
+        "score": 0.88,
+        "text": "Look into chests, barrels, and shulker boxes, and move items between them and the inventory."
+      },
+      {
+        "module": "dig",
+        "routine": "dig",
+        "score": 0.44,
+        "text": "Dig the block at `at` ({x,y,z} or [x,y,z]), equipping the best tool and failing with the tools it needs when the inventory lacks them. Digs on while gravel or sand refills the position. Returns { b..."
+      },
+      {
+        "module": "farm",
+        "routine": "breed",
+        "score": 0.44,
+        "text": "Feed the two adult `animal`s ('cow', 'sheep', 'pig', 'chicken', ...) nearest each other within `radius` (default 16) and wait up to `timeoutMs` (default 30000) for the baby. `food` defaults to what..."
+      }
+    ]
+  },
+  {
+    "query": "scan",
+    "limit": 1,
+    "hits": [
+      {
+        "module": "explorer",
+        "routine": "scan",
+        "score": 6.33,
+        "text": "Summarize the area within `radius` (default 16): biome, uncommon blocks with counts and nearest positions (ores, logs, water, chests...), and nearby entities."
+      }
+    ]
+  },
+  {
+    "query": "scan",
+    "limit": 5,
+    "hits": [
+      {
+        "module": "explorer",
+        "routine": "scan",
+        "score": 6.33,
+        "text": "Summarize the area within `radius` (default 16): biome, uncommon blocks with counts and nearest positions (ores, logs, water, chests...), and nearby entities."
+      },
+      {
+        "module": "explorer",
+        "score": 1.58,
+        "text": "Explore new ground, summarize surroundings, remember named places, and climb out of holes to open sky."
+      }
+    ]
+  },
+  {
+    "query": "scan",
+    "limit": 20,
+    "hits": [
+      {
+        "module": "explorer",
+        "routine": "scan",
+        "score": 6.33,
+        "text": "Summarize the area within `radius` (default 16): biome, uncommon blocks with counts and nearest positions (ores, logs, water, chests...), and nearby entities."
+      },
+      {
+        "module": "explorer",
+        "score": 1.58,
+        "text": "Explore new ground, summarize surroundings, remember named places, and climb out of holes to open sky."
+      }
+    ]
+  },
+  {
+    "query": "stop",
+    "limit": 1,
+    "hits": [
+      {
+        "module": "move",
+        "routine": "stop",
+        "score": 7.54,
+        "text": "Stop pathfinding and clear the movement keys."
+      }
+    ]
+  },
+  {
+    "query": "stop",
+    "limit": 5,
+    "hits": [
+      {
+        "module": "move",
+        "routine": "stop",
+        "score": 7.54,
+        "text": "Stop pathfinding and clear the movement keys."
+      },
+      {
+        "module": "move",
+        "routine": "to",
+        "score": 3.35,
+        "text": "Walk within `range` blocks of `position` ({x,y,z} or [x,y,z]) and stop. Gives up (and stops pathfinding) after `timeoutMs`. Returns where the player then stands."
+      },
+      {
+        "module": "farm",
+        "routine": "harvest",
+        "score": 2.51,
+        "text": "Dig the ripe crops within `radius` (default 16), nearest first, collect the drops, and replant each (`replant`, default true) when the inventory has its seed. `crops` limits it to some of wheat, ca..."
+      },
+      {
+        "module": "explorer",
+        "routine": "explore",
+        "score": 2.51,
+        "text": "Walk about `distance` blocks (default 48) toward the least-explored direction. Remembers visited 16x16 cells across calls. Gives up (and stops pathfinding) after `timeoutMs` (default 90000). Return..."
+      },
+      {
+        "module": "move",
+        "score": 1.26,
+        "text": "Walk the player with the pathfinder, with a time limit and a fallback for stuck paths."
+      }
+    ]
+  },
+  {
+    "query": "stop",
+    "limit": 20,
+    "hits": [
+      {
+        "module": "move",
+        "routine": "stop",
+        "score": 7.54,
+        "text": "Stop pathfinding and clear the movement keys."
+      },
+      {
+        "module": "move",
+        "routine": "to",
+        "score": 3.35,
+        "text": "Walk within `range` blocks of `position` ({x,y,z} or [x,y,z]) and stop. Gives up (and stops pathfinding) after `timeoutMs`. Returns where the player then stands."
+      },
+      {
+        "module": "farm",
+        "routine": "harvest",
+        "score": 2.51,
+        "text": "Dig the ripe crops within `radius` (default 16), nearest first, collect the drops, and replant each (`replant`, default true) when the inventory has its seed. `crops` limits it to some of wheat, ca..."
+      },
+      {
+        "module": "explorer",
+        "routine": "explore",
+        "score": 2.51,
+        "text": "Walk about `distance` blocks (default 48) toward the least-explored direction. Remembers visited 16x16 cells across calls. Gives up (and stops pathfinding) after `timeoutMs` (default 90000). Return..."
+      },
+      {
+        "module": "move",
+        "score": 1.26,
+        "text": "Walk the player with the pathfinder, with a time limit and a fallback for stuck paths."
+      },
+      {
+        "module": "explorer",
+        "routine": "surface",
+        "score": 0.63,
+        "text": "Climb to open sky by digging a staircase; use it when trapped underground or in a pit. Needs no blocks; slow without a pickaxe, so pass a long program timeout (e.g. --timeout 600000). Under water i..."
+      },
+      {
+        "module": "combat",
+        "routine": "retreat",
+        "score": 0.43,
+        "text": "Walk away until more than `distance` (default 16) blocks from `from`: a position ({x,y,z} or [x,y,z]), an entity id, or a creature name. Without `from`, away from the nearest hostile mob within 32 ..."
+      },
+      {
+        "module": "explorer",
+        "routine": "travel",
+        "score": 0.43,
+        "text": "Walk to a saved place, stopping within `range` (default 2) blocks. Gives up after `timeoutMs` (default 120000). Returns where the player then stands."
+      }
+    ]
+  },
+  {
+    "query": "to",
+    "limit": 1,
+    "hits": [
+      {
+        "module": "move",
+        "routine": "to",
+        "score": 1.93,
+        "text": "Walk within `range` blocks of `position` ({x,y,z} or [x,y,z]) and stop. Gives up (and stops pathfinding) after `timeoutMs`. Returns where the player then stands."
+      }
+    ]
+  },
+  {
+    "query": "to",
+    "limit": 5,
+    "hits": [
+      {
+        "module": "move",
+        "routine": "to",
+        "score": 1.93,
+        "text": "Walk within `range` blocks of `position` ({x,y,z} or [x,y,z]) and stop. Gives up (and stops pathfinding) after `timeoutMs`. Returns where the player then stands."
+      },
+      {
+        "module": "explorer",
+        "routine": "surface",
+        "score": 1.93,
+        "text": "Climb to open sky by digging a staircase; use it when trapped underground or in a pit. Needs no blocks; slow without a pickaxe, so pass a long program timeout (e.g. --timeout 600000). Under water i..."
+      },
+      {
+        "module": "social",
+        "score": 1.93,
+        "text": "Talk to, wait for, follow, and hand items to other players."
+      },
+      {
+        "module": "gatherer",
+        "routine": "collectDrops",
+        "score": 1.77,
+        "text": "Walk over dropped items within `radius` (default 8) to pick them up. Returns how many drops it tried to reach."
+      },
+      {
+        "module": "social",
+        "routine": "give",
+        "score": 1.6,
+        "text": "Walk to a `player` and toss them `count` (default 1) of `item`."
+      }
+    ]
+  },
+  {
+    "query": "to",
+    "limit": 20,
+    "hits": [
+      {
+        "module": "move",
+        "routine": "to",
+        "score": 1.93,
+        "text": "Walk within `range` blocks of `position` ({x,y,z} or [x,y,z]) and stop. Gives up (and stops pathfinding) after `timeoutMs`. Returns where the player then stands."
+      },
+      {
+        "module": "explorer",
+        "routine": "surface",
+        "score": 1.93,
+        "text": "Climb to open sky by digging a staircase; use it when trapped underground or in a pit. Needs no blocks; slow without a pickaxe, so pass a long program timeout (e.g. --timeout 600000). Under water i..."
+      },
+      {
+        "module": "social",
+        "score": 1.93,
+        "text": "Talk to, wait for, follow, and hand items to other players."
+      },
+      {
+        "module": "gatherer",
+        "routine": "collectDrops",
+        "score": 1.77,
+        "text": "Walk over dropped items within `radius` (default 8) to pick them up. Returns how many drops it tried to reach."
+      },
+      {
+        "module": "social",
+        "routine": "give",
+        "score": 1.6,
+        "text": "Walk to a `player` and toss them `count` (default 1) of `item`."
+      },
+      {
+        "module": "survival",
+        "routine": "sleep",
+        "score": 1.44,
+        "text": "Go to bed at `at` ({x,y,z} or [x,y,z]), or the nearest bed within 16 blocks, and sleep. Works at night (time of day 12541 to 23458) and in thunderstorms; fails with the reason otherwise, or when mo..."
+      },
+      {
+        "module": "gatherer",
+        "score": 1.44,
+        "text": "Collect resources: walk to matching blocks, dig them with the right tool, pick up the drops."
+      },
+      {
+        "module": "builder",
+        "score": 1.44,
+        "text": "Place blocks and build structures from blueprints. Blueprints: { palette: { '#': 'oak_planks' }, layers: [layer, ...] }; layers go bottom to top, rows run along +z, characters along +x, '.' or spac..."
+      },
+      {
+        "module": "explorer",
+        "score": 1.44,
+        "text": "Explore new ground, summarize surroundings, remember named places, and climb out of holes to open sky."
+      },
+      {
+        "module": "explorer",
+        "routine": "explore",
+        "score": 1.44,
+        "text": "Walk about `distance` blocks (default 48) toward the least-explored direction. Remembers visited 16x16 cells across calls. Gives up (and stops pathfinding) after `timeoutMs` (default 90000). Return..."
+      },
+      {
+        "module": "explorer",
+        "routine": "remember",
+        "score": 1.44,
+        "text": "Save a named place at `at` (default: where the player stands) and return it. `kind` is one of chest, bed, farm, ore, base, portal, other (default other); `tags` and `note` describe it; `contents` m..."
+      },
+      {
+        "module": "explorer",
+        "routine": "travel",
+        "score": 1.44,
+        "text": "Walk to a saved place, stopping within `range` (default 2) blocks. Gives up after `timeoutMs` (default 120000). Returns where the player then stands."
+      },
+      {
+        "module": "farm",
+        "routine": "breed",
+        "score": 1.28,
+        "text": "Feed the two adult `animal`s ('cow', 'sheep', 'pig', 'chicken', ...) nearest each other within `radius` (default 16) and wait up to `timeoutMs` (default 30000) for the baby. `food` defaults to what..."
+      },
+      {
+        "module": "sense",
+        "routine": "look",
+        "score": 0.96,
+        "text": "Turn the player's head to face `at` ({x,y,z} or [x,y,z])."
+      },
+      {
+        "module": "place",
+        "routine": "place",
+        "score": 0.96,
+        "text": "Place one block of `item` at `at` ({x,y,z} or [x,y,z]), walking close and digging out a different solid block first. Needs a solid neighbor to place against. Returns false if the block was already ..."
+      },
+      {
+        "module": "craft",
+        "routine": "table",
+        "score": 0.96,
+        "text": "The position of a crafting table within 4 blocks, so programs can stand next to it. Fails when there is none nearby."
+      },
+      {
+        "module": "items",
+        "routine": "recipes",
+        "score": 0.96,
+        "text": "Up to 3 recipes for `item`: [{ makes, requiresTable, ingredients: { name: count } }]. Fails for an unknown item."
+      },
+      {
+        "module": "items",
+        "routine": "drops",
+        "score": 0.96,
+        "text": "Positions ({x,y,z}) of dropped item entities within `radius`, nearest first — what a dig has left to pick up."
+      },
+      {
+        "module": "furnace",
+        "routine": "smelt",
+        "score": 0.96,
+        "text": "Smelt `count` (default 1) of `item` (an input such as raw_iron, sand, cobblestone, beef, or a log) at the nearest furnace within 4.5 blocks, or at `at` ({x,y,z} or [x,y,z]), walking next to it firs..."
+      },
+      {
+        "module": "container",
+        "routine": "list",
+        "score": 0.96,
+        "text": "What the chest, barrel, shulker box, hopper, dispenser, or dropper at `at` ({x,y,z} or [x,y,z]) holds, walking next to it first. Returns { block, items: { name: count }, emptySlots }."
+      }
+    ]
+  },
+  {
+    "query": "position range",
+    "limit": 1,
+    "hits": [
+      {
+        "module": "move",
+        "routine": "to",
+        "score": 7.49,
+        "text": "Walk within `range` blocks of `position` ({x,y,z} or [x,y,z]) and stop. Gives up (and stops pathfinding) after `timeoutMs`. Returns where the player then stands."
+      }
+    ]
+  },
+  {
+    "query": "position range",
+    "limit": 5,
+    "hits": [
+      {
+        "module": "move",
+        "routine": "to",
+        "score": 7.49,
+        "text": "Walk within `range` blocks of `position` ({x,y,z} or [x,y,z]) and stop. Gives up (and stops pathfinding) after `timeoutMs`. Returns where the player then stands."
+      },
+      {
+        "module": "explorer",
+        "routine": "travel",
+        "score": 4.75,
+        "text": "Walk to a saved place, stopping within `range` (default 2) blocks. Gives up after `timeoutMs` (default 120000). Returns where the player then stands."
+      },
+      {
+        "module": "sense",
+        "score": 2.74,
+        "text": "Find blocks by name pattern and face a position, without changing anything."
+      },
+      {
+        "module": "sense",
+        "routine": "find",
+        "score": 2.74,
+        "text": "Positions ({x,y,z}) of blocks matching `blocks` ('oak_log', '*_ore', or a list), nearest first. `radius` limits the search, `count` the number of results. Fails when no block type matches."
+      },
+      {
+        "module": "dig",
+        "routine": "dig",
+        "score": 2.44,
+        "text": "Dig the block at `at` ({x,y,z} or [x,y,z]), equipping the best tool and failing with the tools it needs when the inventory lacks them. Digs on while gravel or sand refills the position. Returns { b..."
+      }
+    ]
+  },
+  {
+    "query": "position range",
+    "limit": 20,
+    "hits": [
+      {
+        "module": "move",
+        "routine": "to",
+        "score": 7.49,
+        "text": "Walk within `range` blocks of `position` ({x,y,z} or [x,y,z]) and stop. Gives up (and stops pathfinding) after `timeoutMs`. Returns where the player then stands."
+      },
+      {
+        "module": "explorer",
+        "routine": "travel",
+        "score": 4.75,
+        "text": "Walk to a saved place, stopping within `range` (default 2) blocks. Gives up after `timeoutMs` (default 120000). Returns where the player then stands."
+      },
+      {
+        "module": "sense",
+        "score": 2.74,
+        "text": "Find blocks by name pattern and face a position, without changing anything."
+      },
+      {
+        "module": "sense",
+        "routine": "find",
+        "score": 2.74,
+        "text": "Positions ({x,y,z}) of blocks matching `blocks` ('oak_log', '*_ore', or a list), nearest first. `radius` limits the search, `count` the number of results. Fails when no block type matches."
+      },
+      {
+        "module": "dig",
+        "routine": "dig",
+        "score": 2.44,
+        "text": "Dig the block at `at` ({x,y,z} or [x,y,z]), equipping the best tool and failing with the tools it needs when the inventory lacks them. Digs on while gravel or sand refills the position. Returns { b..."
+      },
+      {
+        "module": "combat",
+        "routine": "retreat",
+        "score": 2.44,
+        "text": "Walk away until more than `distance` (default 16) blocks from `from`: a position ({x,y,z} or [x,y,z]), an entity id, or a creature name. Without `from`, away from the nearest hostile mob within 32 ..."
+      },
+      {
+        "module": "social",
+        "routine": "players",
+        "score": 2.44,
+        "text": "Other online players: [{ username, distance, position }] (distance and position are null when out of view)."
+      },
+      {
+        "module": "craft",
+        "routine": "table",
+        "score": 1.83,
+        "text": "The position of a crafting table within 4 blocks, so programs can stand next to it. Fails when there is none nearby."
+      },
+      {
+        "module": "items",
+        "routine": "drops",
+        "score": 1.83,
+        "text": "Positions ({x,y,z}) of dropped item entities within `radius`, nearest first — what a dig has left to pick up."
+      },
+      {
+        "module": "bucket",
+        "routine": "fill",
+        "score": 1.83,
+        "text": "Fill an empty bucket from a `fluid` ('water' or 'lava') source: the one at `at` ({x,y,z} or [x,y,z]), or the nearest within `radius` (default 16). Walks within reach and tries up to 3 sources. Flow..."
+      },
+      {
+        "module": "explorer",
+        "routine": "scan",
+        "score": 1.83,
+        "text": "Summarize the area within `radius` (default 16): biome, uncommon blocks with counts and nearest positions (ores, logs, water, chests...), and nearby entities."
+      },
+      {
+        "module": "explorer",
+        "routine": "places",
+        "score": 1.83,
+        "text": "List saved places, nearest first. `kind` keeps one kind; `near` is the point distances are measured from (default: the player); `radius` drops places farther than that from `near` or in another dim..."
+      },
+      {
+        "module": "sense",
+        "routine": "look",
+        "score": 0.91,
+        "text": "Turn the player's head to face `at` ({x,y,z} or [x,y,z])."
+      }
+    ]
+  }
+]

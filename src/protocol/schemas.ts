@@ -15,7 +15,7 @@ export const NoteKey = z
 export const NoteText = z.string().min(1).max(MAX_NOTE_LENGTH);
 
 /** Features of a body that wiki content can depend on; the cut-block markers share these names. */
-export const WikiFeature = z.enum(["kits", "milestones", "agentKits", "reflexes", "routines"]);
+export const WikiFeature = z.enum(["builtins", "milestones", "reflexes", "routines"]);
 export type WikiFeature = z.infer<typeof WikiFeature>;
 
 /** Wiki page frontmatter. Pages that require a feature are hidden from bodies without it. */
@@ -35,9 +35,6 @@ export const PageMeta = z.object({
   created: z.string().optional(),
 });
 export type PageMeta = z.output<typeof PageMeta>;
-
-/** A kit name: the same shape a saved kit's `defineKit({ name })` must use. */
-export const KitName = z.string().regex(/^[a-z][a-z0-9_]{0,31}$/, "use 1-32 lowercase letters, digits, and _; start with a letter");
 
 /** A routine name: the file name of a library module, `<name>.ts`, so it is also what other modules import. */
 export const RoutineName = z.string().regex(/^[a-z][a-z0-9_-]{0,47}$/, "use 1-48 lowercase letters, digits, _ and -; start with a letter");
@@ -120,41 +117,6 @@ export const NoteInput = z.object({ text: NoteText });
 
 /** Body of `PUT /milestones`. */
 export const MilestonesInput = z.object({ milestones: MilestoneSet.nullable() });
-
-/** Body of `POST /kits`: replace the active kits. */
-export const UseKitsInput = z.object({ use: z.array(KitName).min(1) });
-
-export const KitDocsQuery = z.object({ names: z.string().optional() });
-
-export const KitSourceQuery = z.object({ name: KitName });
-
-/** Body of `POST /kits/save`: a kit's TypeScript source. */
-export const SaveKitInput = z.object({
-  source: z
-    .string()
-    .min(1)
-    .max(128 * 1024, "kit source is limited to 128 KiB"),
-});
-
-/** Body of `POST /kits/remove`. */
-export const RemoveKitInput = z.object({ name: KitName });
-
-/** Body of `POST /kits/try`: run one action of unsaved kit source once. */
-export const TryKitInput = z.object({
-  source: SaveKitInput.shape.source,
-  action: z.string().min(1).max(64),
-  args: z.record(z.string(), z.unknown()).optional(),
-  timeoutMs: RunInput.shape.timeoutMs,
-});
-
-/** Query of `GET /kits/search`. */
-export const KitSearchQuery = z.object({ q: z.string().min(1), limit: z.coerce.number().int().positive().max(20).default(5) });
-
-/** Query of `GET /kits/versions`. */
-export const KitVersionsQuery = z.object({ name: KitName });
-
-/** Body of `POST /kits/revert`: save an earlier version of a kit again, as a new version. */
-export const RevertKitInput = z.object({ name: KitName, version: z.number().int().positive() });
 
 export const WikiSearchQuery = z.object({ q: z.string().min(1), limit: z.coerce.number().int().positive().max(20).default(5) });
 

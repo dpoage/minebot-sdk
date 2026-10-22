@@ -3,7 +3,7 @@
 //   spawnLog / initLog  files it appends its pid / its init (minus the script) to, one line per spawn
 //   failFrom            from this spawn number on, exits with code 3 before it is ready
 //   crashAfterReadyMs   exits this long after it is ready
-//   mirrorState         reports the deaths / reconnects / active it was started with
+//   mirrorState         reports the deaths / reconnects it was started with
 //   graceMs             how long its `report` runs wait after an abort before reporting themselves hung
 //   ackLog              file it writes the time (ms) it was acked a run's start to
 //   trigger             a run with no request, started at `start`: { mode, timeoutMs }
@@ -57,7 +57,7 @@ function startRun(run: Omit<Run, "phase">): void {
   runs.set(runId, { ...run, phase: "starting" });
   const { trigger, requestId, timeoutMs } = run;
   const extra = trigger === undefined ? {} : { trigger, event: { seq: 1, type: "x" } };
-  send({ kind: "run_started", runId, code: "program", timeoutMs, extra, kits: [], ...(requestId !== undefined && { requestId }), ...(trigger !== undefined && { trigger: { name: trigger, updated: "t0" } }) });
+  send({ kind: "run_started", runId, code: "program", timeoutMs, extra, ...(requestId !== undefined && { requestId }), ...(trigger !== undefined && { trigger: { name: trigger, updated: "t0" } }) });
 }
 
 function running(runId: number, run: Run): void {
@@ -71,7 +71,7 @@ function running(runId: number, run: Run): void {
   if (run.mode === "crash") process.kill(process.pid, "SIGKILL");
   if (run.mode === "hang") return;
   if (run.registerAtMs !== undefined) {
-    setTimeout(() => send({ kind: "register", runId: nextRun++, code: "trigger", extra: {}, kits: [] }), run.registerAtMs);
+    setTimeout(() => send({ kind: "register", runId: nextRun++, code: "trigger", extra: {} }), run.registerAtMs);
   }
   const startedAt = Date.now();
   const abort = new Promise<"stopped" | "timeout">((resolve) => {
@@ -116,7 +116,7 @@ process.on("message", (message: ToHost) => {
       const spawn = script.spawnLog ? readFileSync(script.spawnLog, "utf8").trim().split("\n").length : 1;
       if (script.failFrom !== undefined && spawn >= script.failFrom) process.exit(3);
       if (script.mirrorState) {
-        send({ kind: "state", connected: true, deaths: init.deaths, reconnects: init.reconnects, active: init.active ?? [] });
+        send({ kind: "state", connected: true, deaths: init.deaths, reconnects: init.reconnects });
       }
       send({ kind: "event", type: "hello", data: { pid: process.pid } });
       send({ kind: "ready" });

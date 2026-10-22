@@ -188,7 +188,7 @@ describe("the count of built-in calls in kit-stats.json", () => {
   /** What a body of an earlier version wrote: built-in entries, and an entry of an agent kit. */
   const BASE = { actions: { move: { to: { ok: 3, failed: 1, lastError: "no path" } }, inventory: { list: { ok: 5, failed: 0 } }, counter: { later: { ok: 2, failed: 0 } } } };
 
-  it("holds one count per call of an offered built-in: top level, nested in a built-in, nested in an agent routine, next to a kit call, an earlier file's counts kept", { timeout: 60_000 }, async () => {
+  it("holds one count per call of an offered built-in: top level, nested in a built-in, nested in an agent routine, an earlier file's counts kept", { timeout: 60_000 }, async () => {
     let make: RunResult | undefined;
     const body = await using({ stateFiles: { "kit-stats.json": BASE, "routines/nested.ts": NESTED, "routines/impostor.ts": IMPOSTOR, "routines/afterabort.ts": AFTER_ABORT } }, async (body) => {
       for (const name of ["nested", "impostor", "afterabort"]) await body.ok("POST", "/bind", { kind: "action", name, routine: name });
@@ -201,8 +201,6 @@ describe("the count of built-in calls in kit-stats.json", () => {
       assert.equal(make.status, "error");
       // Nested in an agent routine.
       assert.equal(runOf(await body.request("POST", "/call", { name: "nested" })).status, "ok");
-      // A kit call of a program, on the same host.
-      assert.equal(runOf(await body.request("POST", "/run", { code: "return await kit.inventory.list({})" })).status, "ok");
       // An agent routine that names itself like a built-in is not one.
       assert.equal(runOf(await body.request("POST", "/call", { name: "impostor" })).result, "impostor");
       // A built-in call that fails after the run's abort.
@@ -215,8 +213,8 @@ describe("the count of built-in calls in kit-stats.json", () => {
     // The earlier file's entries are all there; the ones calls did not touch are as they were.
     assert.deepEqual(actions.counter, BASE.actions.counter);
     assert.deepEqual(actions.move!.to, BASE.actions.move.to, "the impostor is not move.to");
-    // inventory.list: 5 before, 2 top level, 1 nested in the agent routine, 1 kit call of the program.
-    assert.deepEqual(actions.inventory!.list, { ok: 9, failed: 0 });
+    // inventory.list: 5 before, 2 top level, 1 nested in the agent routine.
+    assert.deepEqual(actions.inventory!.list, { ok: 8, failed: 0 });
     assert.equal(actions.inventory!.count!.ok, 1, "the call crafter.make made");
     assert.equal(actions.inventory!.count!.failed, 1, "the call with invalid arguments, and not the one after the abort");
     assert.match(actions.inventory!.count!.lastError!, /^routine "inventory\.count" arguments: /);
@@ -226,15 +224,13 @@ describe("the count of built-in calls in kit-stats.json", () => {
     assert.deepEqual(Object.keys(actions).sort(), ["counter", "crafter", "inventory", "move"]);
   });
 
-  it("holds a kit call and routine calls interleaved on a body with no earlier file: every count lands, from the one writer", async () => {
+  it("holds the calls of several runs interleaved on a body with no earlier file: every count lands, from the one writer", async () => {
     const body = await using({}, async (body) => {
-      assert.equal(runOf(await body.request("POST", "/run", { code: "return await kit.inventory.list({})" })).status, "ok");
       assert.equal(runOf(await body.request("POST", "/call", { name: "inventory.list" })).status, "ok");
-      assert.equal(runOf(await body.request("POST", "/run", { code: "return await kit.move.stop({})" })).status, "ok");
       assert.equal(runOf(await body.request("POST", "/call", { name: "move.stop" })).status, "ok");
       assert.equal(runOf(await body.request("POST", "/call", { name: "inventory.list" })).status, "ok");
     });
-    assert.deepEqual(statsOf(body), { actions: { inventory: { list: { ok: 3, failed: 0 } }, move: { stop: { ok: 2, failed: 0 } } } });
+    assert.deepEqual(statsOf(body), { actions: { inventory: { list: { ok: 2, failed: 0 } }, move: { stop: { ok: 1, failed: 0 } } } });
   });
 
   it("writes the file when the host closes, also when nothing was counted", async () => {

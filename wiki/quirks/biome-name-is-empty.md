@@ -24,6 +24,6 @@ const biome = bot.registry.biomes[bot.world.getBiome(bot.entity.position.floored
 
 The `biome` field of the observation (`minebot observe`) is resolved this way, so read the biome there when you only need the name.
 
-<!-- kits -->
+<!-- builtins -->
 `kit.explorer.scan()` reports the biome this way.
-<!-- /kits -->
+<!-- /builtins -->

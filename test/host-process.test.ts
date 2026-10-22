@@ -146,7 +146,6 @@ describe("the run reporter", () => {
     let stops = 0;
     const reporter = new RunReporter({
       send: (message) => sent.push(message),
-      kits: () => [],
       stop: () => {
         stops++;
         return false;
@@ -181,11 +180,9 @@ describe("the supervisor's reading of request bodies", () => {
       port: await refusedPort(),
       apiHost: "127.0.0.1",
       apiPort: 0,
-      lockKits: false,
       wikiMode: "off",
       stateDir: path.join(ROOT, "state-reading"),
       milestonesEnabled: false,
-      agentKits: false,
       triggers: false,
     });
   });
@@ -310,11 +307,9 @@ describe("the host's lifetime", () => {
       port: await refusedPort(),
       apiHost: "127.0.0.1",
       apiPort: 0,
-      lockKits: false,
       wikiMode: "off",
       stateDir: state,
       milestonesEnabled: false,
-      agentKits: false,
     });
     const [hostPid] = childrenOf(process.pid).filter((pid) => alive(pid) && readFileSync(`/proc/${pid}/cmdline`, "utf8").includes("host/main"));
     assert.ok(hostPid !== undefined, "the daemon has no host child");

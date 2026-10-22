@@ -1,0 +1,373 @@
+{
+  "legacy": {
+    "places": {
+      "home": {
+        "name": "home",
+        "kind": "chest",
+        "tags": [
+          "food"
+        ],
+        "note": "",
+        "contents": {
+          "bread": 5
+        },
+        "position": {
+          "x": 5,
+          "y": 64,
+          "z": 6
+        },
+        "dimension": "overworld",
+        "updatedAt": "2026-10-22T13:50:26.073Z"
+      },
+      "far farm": {
+        "name": "far farm",
+        "kind": "farm",
+        "tags": [],
+        "note": "wheat",
+        "position": {
+          "x": 400,
+          "y": 64,
+          "z": 0
+        },
+        "dimension": "overworld",
+        "updatedAt": "2026-10-22T13:50:26.075Z"
+      }
+    },
+    "visited": [
+      "6,0",
+      "8,0"
+    ],
+    "waypoints": {
+      "old": {
+        "x": 1,
+        "y": 2,
+        "z": 3,
+        "dimension": "minecraft:overworld"
+      }
+    }
+  },
+  "scenarioLegacy": {
+    "places": [
+      {
+        "name": "home",
+        "kind": "chest",
+        "tags": [
+          "food"
+        ],
+        "note": "",
+        "contents": {
+          "bread": 5
+        },
+        "position": {
+          "x": 5,
+          "y": 64,
+          "z": 6
+        },
+        "dimension": "overworld",
+        "updatedAt": "2026-10-22T13:50:26.073Z",
+        "distance": 95
+      },
+      {
+        "name": "far farm",
+        "kind": "farm",
+        "tags": [],
+        "note": "wheat",
+        "position": {
+          "x": 400,
+          "y": 64,
+          "z": 0
+        },
+        "dimension": "overworld",
+        "updatedAt": "2026-10-22T13:50:26.075Z",
+        "distance": 300
+      }
+    ],
+    "placesFarm": [
+      {
+        "name": "far farm",
+        "kind": "farm",
+        "tags": [],
+        "note": "wheat",
+        "position": {
+          "x": 400,
+          "y": 64,
+          "z": 0
+        },
+        "dimension": "overworld",
+        "updatedAt": "2026-10-22T13:50:26.075Z",
+        "distance": 300
+      }
+    ],
+    "waypoints": {
+      "home": {
+        "x": 5,
+        "y": 64,
+        "z": 6,
+        "dimension": "overworld"
+      },
+      "far farm": {
+        "x": 400,
+        "y": 64,
+        "z": 0,
+        "dimension": "overworld"
+      }
+    },
+    "travel": {
+      "x": 5,
+      "y": 64,
+      "z": 6
+    },
+    "position": {
+      "x": 5.5,
+      "y": 64,
+      "z": 6.5
+    },
+    "fileAfter": {
+      "places": {
+        "home": {
+          "name": "home",
+          "kind": "chest",
+          "tags": [
+            "food"
+          ],
+          "note": "",
+          "contents": {
+            "bread": 5
+          },
+          "position": {
+            "x": 5,
+            "y": 64,
+            "z": 6
+          },
+          "dimension": "overworld",
+          "updatedAt": "2026-10-22T13:50:26.073Z"
+        },
+        "far farm": {
+          "name": "far farm",
+          "kind": "farm",
+          "tags": [],
+          "note": "wheat",
+          "position": {
+            "x": 400,
+            "y": 64,
+            "z": 0
+          },
+          "dimension": "overworld",
+          "updatedAt": "2026-10-22T13:50:26.075Z"
+        }
+      },
+      "visited": [
+        "6,0",
+        "8,0"
+      ],
+      "waypoints": {
+        "old": {
+          "x": 1,
+          "y": 2,
+          "z": 3,
+          "dimension": "minecraft:overworld"
+        }
+      }
+    }
+  },
+  "plain": {
+    "places": {
+      "home": {
+        "name": "home",
+        "kind": "chest",
+        "tags": [
+          "food"
+        ],
+        "note": "",
+        "contents": {
+          "bread": 5
+        },
+        "position": {
+          "x": 5,
+          "y": 64,
+          "z": 6
+        },
+        "dimension": "overworld",
+        "updatedAt": "2026-10-22T13:50:26.082Z"
+      },
+      "far farm": {
+        "name": "far farm",
+        "kind": "farm",
+        "tags": [],
+        "note": "wheat",
+        "position": {
+          "x": 400,
+          "y": 64,
+          "z": 0
+        },
+        "dimension": "overworld",
+        "updatedAt": "2026-10-22T13:50:26.083Z"
+      }
+    },
+    "visited": [
+      "6,0",
+      "8,0"
+    ]
+  },
+  "scenarioRemember": {
+    "args": {
+      "name": "home",
+      "note": "stocked",
+      "at": [
+        9,
+        64,
+        9
+      ]
+    },
+    "result": {
+      "name": "home",
+      "kind": "chest",
+      "tags": [
+        "food"
+      ],
+      "note": "stocked",
+      "contents": {
+        "bread": 5
+      },
+      "position": {
+        "x": 9,
+        "y": 64,
+        "z": 9
+      },
+      "dimension": "overworld",
+      "updatedAt": "2026-10-22T13:50:26.083Z"
+    },
+    "fileAfter": {
+      "places": {
+        "home": {
+          "name": "home",
+          "kind": "chest",
+          "tags": [
+            "food"
+          ],
+          "note": "stocked",
+          "contents": {
+            "bread": 5
+          },
+          "position": {
+            "x": 9,
+            "y": 64,
+            "z": 9
+          },
+          "dimension": "overworld",
+          "updatedAt": "2026-10-22T13:50:26.083Z"
+        },
+        "far farm": {
+          "name": "far farm",
+          "kind": "farm",
+          "tags": [],
+          "note": "wheat",
+          "position": {
+            "x": 400,
+            "y": 64,
+            "z": 0
+          },
+          "dimension": "overworld",
+          "updatedAt": "2026-10-22T13:50:26.083Z"
+        }
+      },
+      "visited": [
+        "6,0",
+        "8,0"
+      ]
+    },
+    "placesAfter": [
+      {
+        "name": "home",
+        "kind": "chest",
+        "tags": [
+          "food"
+        ],
+        "note": "stocked",
+        "contents": {
+          "bread": 5
+        },
+        "position": {
+          "x": 9,
+          "y": 64,
+          "z": 9
+        },
+        "dimension": "overworld",
+        "updatedAt": "2026-10-22T13:50:26.083Z",
+        "distance": 91
+      },
+      {
+        "name": "far farm",
+        "kind": "farm",
+        "tags": [],
+        "note": "wheat",
+        "position": {
+          "x": 400,
+          "y": 64,
+          "z": 0
+        },
+        "dimension": "overworld",
+        "updatedAt": "2026-10-22T13:50:26.083Z",
+        "distance": 300
+      }
+    ]
+  },
+  "scenarioConvert": {
+    "seed": {
+      "waypoints": {
+        "home": {
+          "x": 5,
+          "y": 70,
+          "z": 6,
+          "dimension": "minecraft:overworld"
+        }
+      },
+      "visited": [
+        "0,0"
+      ]
+    },
+    "waypoints": {
+      "home": {
+        "x": 5,
+        "y": 70,
+        "z": 6,
+        "dimension": "minecraft:overworld"
+      }
+    },
+    "places": [
+      {
+        "name": "home",
+        "kind": "other",
+        "tags": [],
+        "note": "",
+        "position": {
+          "x": 5,
+          "y": 70,
+          "z": 6
+        },
+        "dimension": "minecraft:overworld",
+        "updatedAt": "2026-10-22T13:50:26.084Z"
+      }
+    ],
+    "fileAfter": {
+      "visited": [
+        "0,0"
+      ],
+      "places": {
+        "home": {
+          "name": "home",
+          "kind": "other",
+          "tags": [],
+          "note": "",
+          "position": {
+            "x": 5,
+            "y": 70,
+            "z": 6
+          },
+          "dimension": "minecraft:overworld",
+          "updatedAt": "2026-10-22T13:50:26.084Z"
+        }
+      }
+    }
+  }
+}

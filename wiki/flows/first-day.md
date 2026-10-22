@@ -87,6 +87,6 @@ globalThis.isLog = (n) => n.endsWith("_log") && !n.startsWith("stripped_");
 
 Check the result after each step with `bot.inventory.items()`. Do not assume a step worked because the call returned.
 
-<!-- kits -->
+<!-- builtins -->
 With kits active, steps 1-4 are one call each: `await kit.gatherer.gather({ blocks: "*_log", count: 4 })`, `await kit.crafter.make({ item: "wooden_pickaxe" })`, `await kit.gatherer.gather({ blocks: "stone", count: 3 })`, `await kit.crafter.make({ item: "stone_pickaxe" })`. `kit.inventory.list()` shows the result.
-<!-- /kits -->
+<!-- /builtins -->

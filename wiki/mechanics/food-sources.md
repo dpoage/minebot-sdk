@@ -42,6 +42,6 @@ if (best && bot.food < 20) {
 
 Observed: with food 19, eating `cooked_beef` brought `bot.food` to 20 (the bar caps at 20). Points above 20 are lost, so eat an 8-point meal at food 12 or lower.
 
-<!-- kits -->
+<!-- builtins -->
 `kit.survival.eat()` eats the best food in the inventory. `kit.survival.eat({ item: "bread" })` eats that item.
-<!-- /kits -->
+<!-- /builtins -->

@@ -12,8 +12,6 @@ import { z } from "zod";
 import { BODY_FLAG_OPTIONS, builtinOffer, parseBodyFlags } from "../src/client/body-flags.ts";
 import { Builtins } from "../src/host/routines/builtins.ts";
 import { KitStats } from "../src/host/routines/stats.ts";
-import { BUILTIN_KITS } from "../src/kit/index.ts";
-import { KitHost } from "../src/kit/kit.ts";
 import { defineRoutine, metaOf, observerOf, withObserver, type Routine } from "../src/routine/define.ts";
 import { BUILTIN_MODULES } from "../src/routines/index.ts";
 import { JsonStore } from "../src/store.ts";
@@ -150,18 +148,18 @@ describe("search", () => {
   /** The queries of the base kit tests (kit search: agent-kit.test, the body API's /kits/search), plus ones that tie. */
   const CORPUS = ["walk", "collect logs", "collect drops", "waypoints", "crafter", "pickaxe", "xyzzy plugh", "   ", "smelt iron", "eat food", "place block", "chat players", "follow player", "bucket water", "dig down", "attack hostile", "craft table", "inventory", "items", "gather", "make", "list", "scan", "stop", "to", "position range"];
 
-  const kits = new KitHost({ kits: BUILTIN_KITS, stores: () => JsonStore.memory() });
   const builtins = new Builtins({ stats: memoryStats() });
 
-  it("ranks the (module, routine) sequence the kit search ranks for the same (kit, action) catalog, for every query and limit", () => {
+  /** What the kit search at 5218f99 ranked for each query and limit of the corpus, recorded once and committed: (module, routine) hits with score and text. */
+  const KIT_SEARCH = JSON.parse(readFileSync(path.join(ROOT, "test", "fixtures", "catalog", "kit-search-5218f99.json"), "utf8")) as { query: string; limit: number; hits: unknown[] }[];
+
+  it("ranks the (module, routine) sequence the kit search ranked for the same (kit, action) catalog, for every query and limit", () => {
+    assert.deepEqual(KIT_SEARCH.map(({ query, limit }) => [query, limit]), CORPUS.flatMap((query) => [1, 5, 20].map((limit) => [query, limit])), "the committed table covers the corpus");
     let nonEmpty = 0;
-    for (const query of CORPUS) {
-      for (const limit of [1, 5, 20]) {
-        const expected = kits.search(query, limit).map((hit) => ({ module: hit.kit, ...(hit.action !== undefined && { routine: hit.action }), score: hit.score, text: hit.text }));
-        const actual = builtins.search(query, limit).map(({ stats: _stats, ...hit }) => hit);
-        assert.deepEqual(actual, expected, `${JSON.stringify(query)} limit ${limit}`);
-        if (expected.length > 0) nonEmpty++;
-      }
+    for (const { query, limit, hits } of KIT_SEARCH) {
+      const actual = builtins.search(query, limit).map(({ stats: _stats, ...hit }) => hit);
+      assert.deepEqual(actual, hits, `${JSON.stringify(query)} limit ${limit}`);
+      if (hits.length > 0) nonEmpty++;
     }
     assert.ok(nonEmpty >= 60, "the corpus must find things");
   });
@@ -183,7 +181,7 @@ describe("search", () => {
     assert.deepEqual(gatherer.search("furnace smelt", 20).filter((hit) => hit.module === "furnace"), []);
   });
 
-  it("shows how often a routine worked, as the kit search shows it for an action", () => {
+  it("shows how often a routine worked", () => {
     const stats = memoryStats();
     stats.record("gatherer", "gather");
     stats.record("gatherer", "gather", { message: "no trees" });

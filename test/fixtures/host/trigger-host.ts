@@ -99,8 +99,8 @@ process.on("message", async (message: ToHost) => {
       const init = message.init as HostInit & { script: Script };
       runner = new ProgramRunner({ globals: () => ({}), graceMs: init.script.graceMs });
       sourceDir = init.stateDir;
-      reporter = new RunReporter({ send, kits: () => [], stop: () => runner.stop(), running: () => runner.running !== null });
-      const reportState = () => send({ kind: "state", connected: true, deaths: init.deaths, reconnects: init.reconnects, active: [] });
+      reporter = new RunReporter({ send, stop: () => runner.stop(), running: () => runner.running !== null });
+      const reportState = () => send({ kind: "state", connected: true, deaths: init.deaths, reconnects: init.reconnects });
       events = new HostEvents((m) => {
         send(m);
         reportState();
@@ -147,7 +147,7 @@ process.on("message", async (message: ToHost) => {
       appendFileSync(spawnLog, `${process.pid}\n`);
       if (init.script.dieBeforeReadyOnSpawn === readFileSync(spawnLog, "utf8").trim().split("\n").length) {
         // Once everything sent so far (its counts) is written.
-        process.send!({ kind: "state", connected: false, deaths: init.deaths, reconnects: init.reconnects, active: [] }, () => process.kill(process.pid, "SIGKILL"));
+        process.send!({ kind: "state", connected: false, deaths: init.deaths, reconnects: init.reconnects }, () => process.kill(process.pid, "SIGKILL"));
         return;
       }
       reportState();

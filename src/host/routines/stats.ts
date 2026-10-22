@@ -1,7 +1,7 @@
-// Per-action call statistics: how often each kit action and each built-in routine succeeded or
-// failed on this body, and why it failed last. The host owns one instance, which the kit framework
-// and the built-in call observer both record into, so every counter has one writer. Counts persist
-// in the state directory (kit-stats.json: {"actions": {<kit or module>: {<action or routine>: {ok, failed, lastError?}}}}).
+// Per-routine call statistics: how often each built-in routine succeeded or failed on this body, and
+// why it failed last. The host owns one instance, which the built-in call observer records into, so
+// every counter has one writer. Counts persist in the state directory (kit-stats.json, named for the
+// kits the routines replace: {"actions": {<module>: {<routine>: {ok, failed, lastError?}}}}).
 import type { ActionStats } from "../../protocol/index.ts";
 import type { JsonStore } from "../../store.ts";
 
@@ -21,10 +21,10 @@ export class KitStats {
     this.#data = typeof saved === "object" && saved !== null && !Array.isArray(saved) ? (saved as Record<string, Record<string, ActionStats>>) : {};
   }
 
-  /** Counts one finished call; `error` is set when the action failed. */
-  record(kit: string, action: string, error?: { message: string }): void {
-    const actions = (this.#data[kit] ??= {});
-    const stats = (actions[action] ??= { ok: 0, failed: 0 });
+  /** Counts one finished call; `error` is set when the routine failed. */
+  record(module: string, routine: string, error?: { message: string }): void {
+    const routines = (this.#data[module] ??= {});
+    const stats = (routines[routine] ??= { ok: 0, failed: 0 });
     if (error) {
       stats.failed++;
       stats.lastError = error.message.length > MAX_ERROR_LENGTH ? `${error.message.slice(0, MAX_ERROR_LENGTH - 3)}...` : error.message;
@@ -34,16 +34,9 @@ export class KitStats {
     this.#timer ??= setTimeout(() => this.flush(), FLUSH_DELAY_MS).unref();
   }
 
-  /** The counts of one kit's actions; an action that never ran is absent. */
-  forKit(kit: string): Record<string, ActionStats> {
-    return Object.fromEntries(Object.entries(this.#data[kit] ?? {}).map(([action, stats]) => [action, { ...stats }]));
-  }
-
-  /** Forgets a kit's counts: a new version of an agent kit starts clean. */
-  reset(kit: string): void {
-    if (!(kit in this.#data)) return;
-    delete this.#data[kit];
-    this.flush();
+  /** The counts of one module's routines; a routine that never ran is absent. */
+  forKit(module: string): Record<string, ActionStats> {
+    return Object.fromEntries(Object.entries(this.#data[module] ?? {}).map(([routine, stats]) => [routine, { ...stats }]));
   }
 
   /** Writes the counts now. The body calls this when it closes. */

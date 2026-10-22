@@ -43,6 +43,6 @@ Dig the crop to harvest it. Observed on wheat:
 
 Breaking a crop early loses the harvest, so dig only at the ripe stage. Replant with the seeds the crop dropped. Bone meal speeds growth (`mechanics/bonemeal`). A full wheat plot, step by step: `flows/grow-wheat`.
 
-<!-- kits -->
+<!-- builtins -->
 `kit.farm.plant({ at, seed: "wheat_seeds" })` plants one seed. `kit.farm.harvest({ radius: 8, replant: true })` harvests every ripe crop in reach and replants it.
-<!-- /kits -->
+<!-- /builtins -->

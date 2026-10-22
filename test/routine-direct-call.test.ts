@@ -8,6 +8,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { after, describe, it } from "node:test";
 import type { Bot } from "mineflayer";
+import * as inventory from "minebot-sdk/routines/inventory";
 import { BodyState } from "../src/host/state.ts";
 import { ProgramRunner } from "../src/program/runner.ts";
 import type { ProgramScope } from "../src/program/scope.ts";
@@ -15,7 +16,7 @@ import { BODY_STORES, type RoutineCallEnd, type RoutineCallObserver, withObserve
 import { invokeRoutine } from "../src/routine/invoke.ts";
 import * as publicRoutine from "../src/routine/public.ts";
 import { defineRoutine, z, type RoutineContext } from "../src/routine/public.ts";
-import { createKitHarness } from "../src/testing/index.ts";
+import { createHarness } from "../src/testing/index.ts";
 import { FakeBody, removeScratch, startFakeBody } from "./fixtures/host/fake-body.ts";
 
 const SCRATCH = realpathSync(mkdtempSync(path.join(tmpdir(), "routine-direct-")));
@@ -249,8 +250,8 @@ describe("ctx.store", () => {
   });
 
   it("is in memory and per harness in the harness, under the same rule", async () => {
-    const first = createKitHarness();
-    const second = createKitHarness();
+    const first = createHarness();
+    const second = createHarness();
     const write = defineRoutine({ name: "t.write", args: z.object({ value: z.number() }) }, (c, args) => {
       c.store("t").set("v", args.value);
       return c.store("t").keys();
@@ -295,7 +296,7 @@ describe("ctx.store", () => {
 
 describe("the harness's call record", () => {
   it("records every call of a named routine value at its start as { kit: module, action: routine, args }, nested included", async () => {
-    const h = createKitHarness();
+    const h = createHarness();
     const leaf = defineRoutine({ name: "dig.down", args: z.object({ depth: z.number().default(2) }), returns: z.number() }, (_ctx, args) => args.depth);
     const unnamed = defineRoutine({}, () => 0);
     const top = defineRoutine({ name: "miner.mine" }, async (c) => {
@@ -308,14 +309,14 @@ describe("the harness's call record", () => {
       { kit: "dig", action: "down", args: undefined },
       { kit: "dig", action: "down", args: { depth: 5 } },
     ]);
-    // Kit actions are recorded as before.
-    await h.call("move.to", { position: { x: 1, y: 64, z: 0 } }).catch(() => {});
-    assert.equal(h.calls.at(-1)?.kit, "move");
+    // A built-in routine called by plain import is recorded the same way.
+    await h.run(async (c) => inventory.count(c, { items: "stick" }));
+    assert.deepEqual(h.calls.at(-1), { kit: "inventory", action: "count", args: { items: "stick" } });
   });
 });
 
 describe("minebot-sdk/routine exports", () => {
-  it("are defineRoutine, z, and the authoring values of the kit surface without action and defineKit", () => {
+  it("are defineRoutine, z, and the authoring values: goals, positions, name patterns, and the world and smelting helpers", () => {
     const names = Object.keys(publicRoutine).sort();
     assert.deepEqual(names, [
       "Movements",
@@ -375,7 +376,7 @@ async function bodyRun(how: Ending): Promise<Run> {
 
 /** One `h.run` that ends as `how` says, and the context it handed out. */
 async function harnessRun(how: Ending): Promise<Run> {
-  const h = createKitHarness();
+  const h = createHarness();
   const scopes = Promise.withResolvers<RoutineContext>();
   const ended = h.run(async (c) => {
     scopes.resolve(c);

@@ -1,7 +1,6 @@
 // The routine library: a flat directory of modules, `<dir>/<name>.ts`, with every saved version kept
 // under `<dir>/.history/<name>/<n>.ts` beside `<n>.json`. Several bodies may share the directory.
-// Nothing here imports or evaluates a module: a routine runs only when something calls it. The
-// version log duplicates the mechanics of `src/kit/library.ts` (deviation D-B1, until the kits go).
+// Nothing here imports or evaluates a module: a routine runs only when something calls it.
 import { randomBytes } from "node:crypto";
 import { lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";

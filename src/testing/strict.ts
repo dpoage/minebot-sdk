@@ -1,5 +1,5 @@
-// Mineflayer is large; the harness implements the part kits' decision logic leans on. Everything
-// else must fail loudly: a kit that reaches for `bot.attack` must not get `undefined` back and
+// Mineflayer is large; the harness implements the part routines' decision logic leans on. Everything
+// else must fail loudly: a routine that reaches for `bot.attack` must not get `undefined` back and
 // carry on as if the call worked.
 
 /** Thrown for every Mineflayer API the harness does not implement. */
@@ -19,7 +19,7 @@ const PROBES: Record<string, true> = { then: true, toJSON: true, asymmetricMatch
  * Wraps `target` so that reading a member it does not have returns a function that throws
  * `UnsupportedApiError` naming `path.member` when called (or read further). Members the target
  * has pass through, and its methods and getters run on the target itself, so classes with private
- * fields work behind the wrapper. `path` is how the API reads in kit code: `bot`, `bot.pathfinder`, ...
+ * fields work behind the wrapper. `path` is how the API reads in routine code: `bot`, `bot.pathfinder`, ...
  *
  * A missing member that Mineflayer holds data in, not a function (`bot.quickBarSlot`,
  * `bot.currentWindow`), would read as a truthy function here, so the harness defines such members

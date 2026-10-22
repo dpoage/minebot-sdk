@@ -9,25 +9,37 @@ import { describe, it } from "node:test";
 const ROOT = path.join(import.meta.dirname, "..");
 const manifest = JSON.parse(readFileSync(path.join(ROOT, "package.json"), "utf8")) as { files: string[]; dependencies: Record<string, string> };
 
+/** The export lists the package commits to, which the consumer compares the built entry points against. */
+const COMMITTED_EXPORTS: unknown = JSON.parse(readFileSync(path.join(import.meta.dirname, "fixtures", "package-exports.json"), "utf8"));
+
 /** A consumer of the published package: a test file that runs a routine through `h.run`. It is plain JavaScript, so the only thing between it and the package is node's own resolution. */
 const CONSUMER = `
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { defineRoutine, z } from "minebot-sdk/routine";
-import { createKitHarness, UnsupportedApiError } from "minebot-sdk/testing";
+import * as client from "minebot-sdk/client";
+import * as routine from "minebot-sdk/routine";
+import * as testing from "minebot-sdk/testing";
+import * as crafter from "minebot-sdk/routines/crafter";
+
+const { createHarness, UnsupportedApiError } = testing;
+const COMMITTED = ${JSON.stringify(COMMITTED_EXPORTS)};
 
 test("runs a routine through the published harness", async () => {
   // The built files answered, not the sources: no source condition is set.
   assert.match(import.meta.resolve("minebot-sdk/routine"), /\\/node_modules\\/minebot-sdk\\/dist\\/routine\\/public\\.js$/);
   assert.match(import.meta.resolve("minebot-sdk/testing"), /\\/node_modules\\/minebot-sdk\\/dist\\/testing\\/index\\.js$/);
-  const h = createKitHarness({ inventory: { oak_log: 1 } });
+  assert.deepEqual(Object.keys(client).sort(), COMMITTED.client);
+  assert.deepEqual(Object.keys(testing).sort(), COMMITTED.testing);
+  assert.deepEqual(Object.keys(routine).sort(), COMMITTED.routine);
+  const h = createHarness({ inventory: { oak_log: 1 } });
   const make = defineRoutine(
     { args: z.object({ item: z.string(), note: z.string().default("made") }), returns: z.object({ made: z.number() }) },
     async (ctx, { item, note }) => {
       ctx.log("making", item);
       await ctx.sleep(100);
       ctx.notes.set("last", note);
-      return { made: await ctx.kit.crafter.make({ item }) };
+      return { made: await crafter.make(ctx, { item }) };
     },
   );
   assert.deepEqual(await h.run(make, { item: "oak_planks" }), { made: 4 });
@@ -43,10 +55,11 @@ test("runs a routine through the published harness", async () => {
 /** The same call, for the compiler: the published declarations have to carry the routine's types through \`h.run\`. */
 const CONSUMER_TYPES = `
 import { defineRoutine, z } from "minebot-sdk/routine";
-import { createKitHarness } from "minebot-sdk/testing";
+import { createHarness } from "minebot-sdk/testing";
+import * as crafter from "minebot-sdk/routines/crafter";
 
-const h = createKitHarness();
-const make = defineRoutine({ args: z.object({ item: z.string(), note: z.string().default("made") }), returns: z.object({ made: z.number() }) }, async (ctx, { item }) => ({ made: await ctx.kit!.crafter.make({ item }) }));
+const h = createHarness();
+const make = defineRoutine({ args: z.object({ item: z.string(), note: z.string().default("made") }), returns: z.object({ made: z.number() }) }, async (ctx, { item }) => ({ made: await crafter.make(ctx, { item }) }));
 export async function types() {
   const made: number = (await h.run(make, { item: "oak_planks" })).made;
   // @ts-expect-error item is required
