@@ -86,7 +86,7 @@ describe("POST /call", () => {
     await using(body, async () => {
       const first = body.request("POST", "/call", { name: "sleeper" });
       await running(body);
-      for (const refused of [await body.request("POST", "/call", { name: "echo" }), await body.request("POST", "/call", { name: "sleeper" }), await body.request("POST", "/call", { name: "echo" })]) {
+      for (const refused of [await body.request("POST", "/call", { name: "echo" }), await body.request("POST", "/call", { name: "sleeper" }), await body.request("POST", "/run", { code: "return 1" })]) {
         assert.equal(refused.status, 409, JSON.stringify(refused.body));
       }
       assert.deepEqual(await body.host.stop(), { stopped: true });
@@ -94,7 +94,7 @@ describe("POST /call", () => {
       assert.equal(body.history().length, 1);
 
       // The other direction: a program is running.
-      const program = body.request("POST", "/call", { name: "sleeper" });
+      const program = body.request("POST", "/run", { code: "await sleep(30000)" });
       await running(body);
       assert.equal((await body.request("POST", "/call", { name: "echo" })).status, 409);
       await body.host.stop();

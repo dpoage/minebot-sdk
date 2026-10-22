@@ -236,17 +236,17 @@ describe("ProgramRunner.call", () => {
 
   it("rejects a call while a program runs and a program while a call runs", async () => {
     const { runner } = makeRunner();
-    const program = runner.call(async ({ sleep }) => sleep(30), { sourceDir });
+    const program = runner.run(`await sleep(30);`);
     await assert.rejects(runner.call(async () => 1, { sourceDir }), BusyError);
     mock.timers.tick(30);
     assert.equal((await program).status, "ok");
 
     const call = runner.call(async ({ sleep }) => sleep(30), { sourceDir });
-    await assert.rejects(runner.call(async () => 1, { sourceDir }), BusyError);
+    await assert.rejects(runner.run(`return 1;`), BusyError);
     await assert.rejects(runner.call(async () => 1, { sourceDir }), BusyError);
     mock.timers.tick(30);
     assert.equal((await call).status, "ok");
-    assert.equal((await runner.call(async () => 1, { sourceDir })).result, 1);
+    assert.equal((await runner.run(`return 1;`)).result, 1);
   });
 
   it("times out a call, rejects its sleep, halts the body, and frees the runner", async () => {
