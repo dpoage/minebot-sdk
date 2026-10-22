@@ -387,17 +387,17 @@ console.log(JSON.stringify(out));
 
     it(`gives require to a module exactly when it has no binding of that name at module scope, and checks it alike, ${environment}`, () => {
       const got = runAndCheck(rootOf(), Object.fromEntries(Object.entries(REQUIRE_ROWS).map(([name, row]) => [name, row.source])));
+      // Every row's outcome at once, so a failure names each row that differs.
+      const actual: Record<string, { run: unknown; check: string }> = {};
+      const expected: Record<string, { run: unknown; check: string }> = {};
       for (const [name, row] of Object.entries(REQUIRE_ROWS)) {
         const outcome = got[name]!;
-        assert.ok(outcome.runs, `${name} (${row.why}) runs: ${outcome.error}`);
-        assert.deepEqual(outcome.value, row.value, `${name} (${row.why}) returns`);
-        if (row.nodeTypes && !nodeTypes) {
-          assert.equal(outcome.check.status, "failed", `${name} (${row.why}) is checked: ${JSON.stringify(outcome.check)}`);
-          assert.ok(outcome.check.errors!.every((error) => !error.includes("'require'")), `${name}: ${JSON.stringify(outcome.check)}`);
-        } else {
-          assert.equal(outcome.check.status, "passed", `${name} (${row.why}) is checked: ${JSON.stringify(outcome.check)}`);
-        }
+        const onRequire = (outcome.check.errors ?? []).filter((error) => error.includes("'require'"));
+        const check = outcome.check.status !== "failed" ? outcome.check.status : onRequire.length > 0 ? `failed: ${onRequire.join(" | ")}` : "failed, not on require";
+        actual[`${name} (${row.why})`] = { run: outcome.runs ? outcome.value : `throws ${outcome.error}`, check };
+        expected[`${name} (${row.why})`] = { run: row.value, check: row.nodeTypes && !nodeTypes ? "failed, not on require" : "passed" };
       }
+      assert.deepEqual(actual, expected);
     });
   }
 });
