@@ -115,15 +115,187 @@ describe("generated tasks", () => {
 
 interface ComposeService {
   command?: string[];
-  environment?: Record<string, string>;
-  volumes?: string[];
+  /** A map, or a list of `KEY=value` (a bare `KEY` passes the host's value through). */
+  environment?: Record<string, string> | string[];
+  /** Short syntax `source:target[:mode]`, or long syntax. */
+  volumes?: (string | { source?: string; read_only?: boolean })[];
   network_mode?: string;
   depends_on?: Record<string, { condition?: string }>;
 }
 
-/** The tables of the form `[[name]]` in a task.toml: each one's header line and the lines up to the next table. */
-function tomlTables(toml: string, name: string): string[] {
-  return toml.split(/^(?=\[)/m).filter((table) => table.startsWith(`[[${name}]]`));
+interface Compose {
+  services: Record<string, ComposeService>;
+}
+
+const readCompose = async (dir: string) => parse(await read(dir, "environment", "docker-compose.yaml")) as Compose;
+
+/** A service's environment in either compose syntax, as a map. */
+function environment(service: ComposeService): Record<string, string | undefined> {
+  const env = service.environment ?? {};
+  if (!Array.isArray(env)) return env;
+  return Object.fromEntries(env.map((entry) => (entry.includes("=") ? [entry.slice(0, entry.indexOf("=")), entry.slice(entry.indexOf("=") + 1)] : [entry, undefined])));
+}
+
+/** For each mount of the `world` volume in a service, in either compose syntax: whether it is read-only. */
+function worldMounts(service: ComposeService): boolean[] {
+  return (service.volumes ?? []).flatMap((volume) => {
+    if (typeof volume !== "string") return volume.source === "world" ? [volume.read_only === true] : [];
+    const [source, , mode = ""] = volume.split(":");
+    return source === "world" ? [mode.split(",").includes("ro")] : [];
+  });
+}
+
+/** The names of the services for which `test` holds, sorted. */
+function servicesWhere(compose: Compose, test: (service: ComposeService) => boolean): string[] {
+  return Object.entries(compose.services)
+    .filter(([, service]) => test(service))
+    .map(([name]) => name)
+    .sort();
+}
+
+/** The body's `--bot=` value: the one player that the server lets in and that the grader snapshots. */
+function bodyPlayer(compose: Compose, dir: string): string {
+  const bots = (compose.services.body!.command ?? []).filter((arg) => arg.startsWith("--bot=")).map((arg) => arg.slice("--bot=".length));
+  assert.equal(bots.length, 1, dir);
+  return bots[0]!;
+}
+
+/**
+ * Reads the TOML that gen-tasks.ts writes: comments, `[table]` and `[[array.of.tables]]` headers, dotted keys, and strings, numbers,
+ * booleans, arrays and inline tables as values. It throws on anything else (multi-line strings, dates, a key set twice), so a task.toml
+ * that it cannot read fails the test instead of hiding an entry from it.
+ */
+function parseToml(text: string): Record<string, unknown> {
+  const root: Record<string, unknown> = {};
+  const tableArrays = new WeakSet<unknown[]>();
+  let at = 0;
+
+  function fail(what: string): never {
+    throw new SyntaxError(`task.toml: ${what} at ${JSON.stringify(text.slice(at, at + 40))}`);
+  }
+  function skip(newlines: boolean) {
+    for (;;) {
+      const c = text[at];
+      if (c === " " || c === "\t" || (newlines && (c === "\n" || c === "\r"))) at++;
+      else if (c === "#") while (at < text.length && text[at] !== "\n") at++;
+      else return;
+    }
+  }
+  function expect(token: string) {
+    if (!text.startsWith(token, at)) fail(`expected ${token}`);
+    at += token.length;
+  }
+  function match(pattern: RegExp): string | undefined {
+    pattern.lastIndex = at;
+    const found = pattern.exec(text)?.[0];
+    if (found !== undefined) at += found.length;
+    return found;
+  }
+  function string(): string {
+    if (text.startsWith('"""', at) || text.startsWith("'''", at)) fail("a multi-line string");
+    const literal = match(/'[^'\n]*'/y);
+    if (literal !== undefined) return literal.slice(1, -1);
+    return JSON.parse(match(/"(?:[^"\\\n]|\\.)*"/y) ?? fail("expected a string")) as string;
+  }
+  function key(): string[] {
+    const parts: string[] = [];
+    for (;;) {
+      skip(false);
+      parts.push(match(/[A-Za-z0-9_-]+/y) ?? string());
+      skip(false);
+      if (text[at] !== ".") return parts;
+      at++;
+    }
+  }
+  /** The table `name` under `parent` (the last one, if `name` is an array of tables), created if absent. */
+  function descend(parent: Record<string, unknown>, name: string): Record<string, unknown> {
+    const node = (parent[name] ??= {});
+    const table = Array.isArray(node) && tableArrays.has(node) ? node.at(-1) : node;
+    if (table === null || typeof table !== "object" || Array.isArray(table)) fail(`${name} is not a table`);
+    return table as Record<string, unknown>;
+  }
+  function assign(table: Record<string, unknown>, path: string[], value: unknown) {
+    const parent = path.slice(0, -1).reduce(descend, table);
+    const name = path.at(-1)!;
+    if (Object.hasOwn(parent, name)) fail(`${path.join(".")} is set twice`);
+    parent[name] = value;
+  }
+  function value(): unknown {
+    if (text[at] === '"' || text[at] === "'") return string();
+    if (text[at] === "[") {
+      at++;
+      const items: unknown[] = [];
+      for (;;) {
+        skip(true);
+        if (text[at] === "]") break;
+        items.push(value());
+        skip(true);
+        if (text[at] !== ",") break;
+        at++;
+      }
+      expect("]");
+      return items;
+    }
+    if (text[at] === "{") {
+      at++;
+      const table: Record<string, unknown> = {};
+      skip(false);
+      while (text[at] !== "}") {
+        const path = key();
+        expect("=");
+        skip(false);
+        assign(table, path, value());
+        skip(false);
+        if (text[at] !== ",") break;
+        at++;
+      }
+      expect("}");
+      return table;
+    }
+    const scalar = match(/true|false|[+-]?\d[\d_]*(?:\.\d[\d_]*)?(?:[eE][+-]?\d+)?/y) ?? fail("expected a value");
+    return scalar === "true" ? true : scalar === "false" ? false : Number(scalar.replaceAll("_", ""));
+  }
+
+  let table = root;
+  for (;;) {
+    skip(true);
+    if (at >= text.length) return root;
+    if (text.startsWith("[[", at)) {
+      at += 2;
+      const path = key();
+      expect("]]");
+      const parent = path.slice(0, -1).reduce(descend, root);
+      const name = path.at(-1)!;
+      if (!Object.hasOwn(parent, name)) {
+        const fresh: unknown[] = [];
+        tableArrays.add(fresh);
+        parent[name] = fresh;
+      }
+      const list = parent[name];
+      if (!Array.isArray(list) || !tableArrays.has(list)) fail(`${path.join(".")} is not an array of tables`);
+      table = {};
+      list.push(table);
+    } else if (text[at] === "[") {
+      at++;
+      const path = key();
+      expect("]");
+      table = path.reduce(descend, root);
+    } else {
+      const path = key();
+      expect("=");
+      skip(false);
+      assign(table, path, value());
+    }
+    skip(false);
+    if (at < text.length && text[at] !== "\n" && text[at] !== "\r") fail("expected the end of the line");
+  }
+}
+
+/** Every value of a key called `name`, at any depth of a parsed TOML document; an array's items count one by one. */
+function valuesNamed(node: unknown, name: string): unknown[] {
+  if (Array.isArray(node)) return node.flatMap((item) => valuesNamed(item, name));
+  if (node === null || typeof node !== "object") return [];
+  return Object.entries(node).flatMap(([key, value]) => (key === name ? [value].flat() : valuesNamed(value, name)));
 }
 
 describe("the grading boundary of every generated task", () => {
@@ -131,47 +303,50 @@ describe("the grading boundary of every generated task", () => {
     const dirs = await readdir(TASKS);
     assert.ok(dirs.length >= NEW_FAMILIES.length * TIERS.length);
     for (const dir of dirs) {
-      const compose = parse(await read(dir, "environment", "docker-compose.yaml")) as { services: Record<string, ComposeService> };
+      const compose = await readCompose(dir);
       assert.deepEqual(Object.keys(compose.services).sort(), ["body", "grader", "main", "minecraft"], dir);
-      for (const [name, service] of Object.entries(compose.services)) {
-        if (name === "minecraft" || name === "grader") continue;
-        assert.ok(!("RCON_PASSWORD" in (service.environment ?? {})), `${dir}: ${name} holds RCON_PASSWORD`);
-        for (const volume of service.volumes ?? []) assert.notEqual(volume.split(":")[0], "world", `${dir}: ${name} mounts the world volume`);
-      }
+      assert.deepEqual(servicesWhere(compose, (service) => Object.hasOwn(environment(service), "RCON_PASSWORD")), ["grader", "minecraft"], `${dir}: who holds RCON_PASSWORD`);
+      assert.deepEqual(servicesWhere(compose, (service) => worldMounts(service).length > 0), ["grader", "minecraft"], `${dir}: who mounts the world volume`);
+      assert.deepEqual(servicesWhere(compose, (service) => "network_mode" in service), ["grader"], `${dir}: who shares a network namespace`);
+      assert.deepEqual(servicesWhere(compose, (service) => "volumes_from" in service), [], `${dir}: who mounts another service's volumes`);
+      assert.deepEqual(servicesWhere(compose, (service) => "ports" in service), [], `${dir}: who publishes ports`);
       const { grader, minecraft } = compose.services as { grader: ComposeService; minecraft: ComposeService };
       assert.equal(grader.network_mode, "service:minecraft", dir);
       assert.equal(grader.depends_on?.minecraft?.condition, "service_healthy", dir);
-      assert.deepEqual(Object.keys(grader.environment ?? {}), ["RCON_PASSWORD"], dir);
-      const worldMounts = (grader.volumes ?? []).filter((volume) => volume.split(":")[0] === "world");
-      assert.ok(worldMounts.length > 0 && worldMounts.every((volume) => volume.endsWith(":ro")), `${dir}: the grader's world mount is not read-only`);
-      assert.equal(minecraft.environment?.RCON_LOOPBACK_ONLY, "true", dir);
+      assert.deepEqual(Object.keys(environment(grader)), ["RCON_PASSWORD"], dir);
+      assert.ok(worldMounts(grader).every((readOnly) => readOnly), `${dir}: the grader's world mount is not read-only`);
+      assert.equal(environment(minecraft).RCON_LOOPBACK_ONLY, "true", dir);
     }
   });
 
   it("lets only the body's player in", async () => {
     for (const dir of await readdir(TASKS)) {
-      const compose = parse(await read(dir, "environment", "docker-compose.yaml")) as { services: Record<string, ComposeService> };
-      const bots = (compose.services.body!.command ?? []).filter((arg) => arg.startsWith("--bot=")).map((arg) => arg.slice("--bot=".length));
-      assert.equal(bots.length, 1, dir);
-      const bot = bots[0]!;
-      assert.deepEqual(JSON.parse(compose.services.minecraft!.environment!.WHITELIST!), [{ uuid: offlineUuid(bot), name: bot }], dir);
-      // The grader snapshots, and the verifier grades, the same player.
-      const toml = await read(dir, "task.toml");
-      for (const table of tomlTables(toml, "verifier.collect")) assert.match(table, new RegExp(`snapshot\\.ts ${bot}"`), dir);
+      const compose = await readCompose(dir);
+      const bot = bodyPlayer(compose, dir);
+      assert.deepEqual(JSON.parse(environment(compose.services.minecraft!).WHITELIST!), [{ uuid: offlineUuid(bot), name: bot }], dir);
+      // The verifier grades the same player that the grader snapshots (see the next test).
       const specs = (await readdir(path.join(TASKS, dir), { recursive: true })).filter((file) => file.endsWith(`${path.sep}milestones.json`));
       assert.ok(specs.length > 0, dir);
       for (const spec of specs) assert.equal(MilestoneSpec.parse(JSON.parse(await read(dir, spec))).player, bot, `${dir}/${spec}`);
     }
   });
 
-  it("collects the snapshot and the grading artifact from the grader, and the history from the body", async () => {
+  it("collects the snapshot and the grading artifact from the grader only, and the history from the body, at every level of the task", async () => {
+    // Harbor copies the artifacts in order: a later entry with the grader's source overwrites the grader's copy, and an earlier entry
+    // with its destination makes Harbor skip the grader's. So the list holds these two entries and nothing else, at any level.
+    const artifacts = [
+      { source: "/var/log/minebot", destination: "minebot", service: "body" },
+      { source: "/var/log/grading", destination: "grading", service: "grader" },
+    ];
     for (const dir of await readdir(TASKS)) {
-      const toml = await read(dir, "task.toml");
-      const hooks = tomlTables(toml, "verifier.collect");
-      assert.ok(hooks.length > 0, `${dir} has no collect hook`);
-      for (const hook of hooks) assert.match(hook, /^service = "grader"$/m, dir);
-      assert.match(toml, /source = "\/var\/log\/grading", destination = "grading", service = "grader"/, dir);
-      assert.match(toml, /source = "\/var\/log\/minebot", destination = "minebot", service = "body"/, dir);
+      const toml = parseToml(await read(dir, "task.toml"));
+      assert.deepEqual(new Set(valuesNamed(toml, "artifacts")), new Set(artifacts), `${dir}: the artifacts`);
+      const hooks = valuesNamed(toml, "collect").map((hook) => {
+        const { service, command } = hook as Record<string, unknown>;
+        return { service, command };
+      });
+      const command = `node /opt/minebot/bench/verify/snapshot.ts ${bodyPlayer(await readCompose(dir), dir)}`;
+      assert.deepEqual(hooks, [{ service: "grader", command }], `${dir}: the collect hooks`);
     }
   });
 });
