@@ -1,8 +1,14 @@
 // The bot host's entry: forked by the supervisor (src/body/host-process.ts) with its pid as the
 // only argument. It builds the world the supervisor's init describes, answers the API requests the
-// supervisor forwards, and exits on `shutdown`, when the channel closes, or when its supervisor is gone.
-import { supervisorPidOf, type FromHost, type ToHost } from "../protocol/host.ts";
+// supervisor forwards, and exits on `shutdown`, when the channel closes, when its supervisor is gone,
+// or on an uncaught error, which it reports to the supervisor first.
+import { realpathSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { inspect } from "node:util";
+import { supervisorPidOf, type FromHost, type HostCrash, type HostInit, type ToHost } from "../protocol/host.ts";
 import type { HostEvents, RunReporter } from "./channel.ts";
+import { BodyState } from "./state.ts";
 import { watchSupervisor } from "./supervisor-watch.ts";
 import type { World } from "./world.ts";
 
@@ -21,6 +27,17 @@ if (supervisorPid === undefined || !process.send) {
 process.once("disconnect", () => process.exit(0));
 // A program can block this thread, and then the closing of the channel is never seen.
 watchSupervisor(supervisorPid);
+
+/** How long a crashing host waits for its report to be written before it exits without. */
+const CRASH_REPORT_MS = 1_000;
+let crashing = false;
+/** The routine library's directory, once the init message says where it is; a crash's frame is the one inside it. */
+let libraryDir: string | undefined;
+
+// Not exiting on an uncaught error would resume a host whose state an error left half done: the host
+// reports the error and exits, and the supervisor replaces it.
+process.on("uncaughtException", crash);
+process.on("unhandledRejection", crash);
 
 const modules = Promise.all([import("./channel.ts"), import("./world.ts")]);
 
@@ -42,6 +59,68 @@ function sendWritten(message: FromHost): Promise<void> {
   const written = Promise.withResolvers<void>();
   send(message, written.resolve);
   return written.promise;
+}
+
+/** Sends what the host knows of its uncaught error in one message, and exits once that is written. */
+function crash(err: unknown): void {
+  // The exit is on its way: a second error is not reported over the first.
+  if (crashing) return;
+  crashing = true;
+  try {
+    console.error("[minebot] bot host crashed:", err);
+  } catch {}
+  // The channel may be gone or stuck: the report is bounded, and the host exits with 1 however it ends.
+  setTimeout(() => process.exit(1), CRASH_REPORT_MS);
+  send({ kind: "crashed", ...describeCrash(err, libraryDir) }, () => process.exit(1));
+}
+
+/** An uncaught error's message, and its top frame: the first inside `library`, else the first. Never throws, whatever was thrown. */
+function describeCrash(err: unknown, library: string | undefined): HostCrash {
+  try {
+    if (typeof err !== "object" || err === null || !("message" in err) || typeof err.message !== "string") return { message: String(err) };
+    const name = "name" in err && typeof err.name === "string" ? err.name : "Error";
+    const message = `${name}: ${err.message}`;
+    const frame = "stack" in err && typeof err.stack === "string" ? topFrame(err.stack, library) : undefined;
+    return frame === undefined ? { message } : { message, frame };
+  } catch {
+    try {
+      return { message: inspect(err, { depth: 2, breakLength: 120 }) };
+    } catch {
+      return { message: "a thrown value that cannot be shown" };
+    }
+  }
+}
+
+/** A stack's first frame inside `library` as `path:line:column`, else its first frame; undefined when it has none. */
+function topFrame(stack: string, library: string | undefined): string | undefined {
+  let inside: string | undefined;
+  if (library !== undefined) {
+    let real = library;
+    try {
+      real = realpathSync(library);
+    } catch {}
+    inside = path.join(real, path.sep);
+  }
+  let first: string | undefined;
+  for (const line of stack.split("\n")) {
+    if (!line.startsWith("    at ")) continue;
+    // A frame ends with `<url or path>:<line>:<column>`, in parentheses unless the function has no name; a module's `file:` URL names it with a query that is no part of its path.
+    const location = /\((.+):(\d+:\d+)\)$|\s(\S+):(\d+:\d+)$/.exec(line);
+    let located: string | undefined;
+    let file: string | undefined;
+    if (location) {
+      file = location[1] ?? location[3]!;
+      if (file.startsWith("file:")) {
+        try {
+          file = fileURLToPath(file);
+        } catch {}
+      }
+      located = `${file}:${location[2] ?? location[4]!}`;
+    }
+    first ??= located ?? line.trim().slice("at ".length);
+    if (located !== undefined && inside !== undefined && file!.startsWith(inside)) return located;
+  }
+  return first;
 }
 
 let handling = modules.then(() => {});
@@ -74,6 +153,7 @@ async function handle(message: ToHost): Promise<void> {
   const [{ HostEvents, RunReporter }, { buildWorld }] = await modules;
   switch (message.kind) {
     case "init":
+      libraryDir = routinesDirOf(message.init);
       events = new HostEvents((m) => {
         send(m);
         reportState();
@@ -116,6 +196,11 @@ async function handle(message: ToHost): Promise<void> {
       // Off the message chain: the runs it ends settle only on the supervisor's `run_ack`, which arrives behind it.
       void shutdown();
   }
+}
+
+/** Where the world keeps the routine library (src/host/world.ts); undefined for a body without routines. */
+function routinesDirOf(init: HostInit): string | undefined {
+  return init.routines === false ? undefined : (init.routinesDir ?? new BodyState(init.stateDir).routinesDir);
 }
 
 async function shutdown(): Promise<void> {
