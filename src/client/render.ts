@@ -90,8 +90,8 @@ function formatRoutine(routine: RoutineInfo): string {
   return routine.version === undefined ? `${routine.name}  (not saved through the library)` : `${routine.name}  v${routine.version}  ${routine.savedAt}`;
 }
 
-/** Renders the routine library, one line per routine. */
-export function formatRoutines(routines: RoutineInfo[]): string {
+/** The routine library, one line per routine. */
+function formatRoutines(routines: RoutineInfo[]): string {
   return routines.length === 0 ? "no routines" : routines.map(formatRoutine).join("\n");
 }
 
@@ -100,8 +100,8 @@ export function formatRoutineVersions(name: string, versions: RoutineVersion[]):
   return versions.length === 0 ? `no saved versions of ${name}` : formatKitVersions(name, versions);
 }
 
-/** Renders bindings: an action on one line, a reflex with its filters, limits, and what it has done since the body started. */
-export function formatBindings(bindings: BindingInfo[]): string {
+/** Bindings: an action on one line, a reflex with its filters, limits, and what it has done since the body started. */
+function formatBindings(bindings: BindingInfo[]): string {
   return bindings.length === 0
     ? "no bindings"
     : bindings.map((b) => (b.kind === "action" ? `${b.name}  action of ${b.routine}` : formatFiring(`${b.name}  reflex of ${b.routine}`, b))).join("\n");
