@@ -7,6 +7,8 @@ import { describe, it } from "node:test";
 import { MC_VERSION } from "../src/mc/version.ts";
 import { formatPage, Wiki, WIKI_DIR, WikiDisabledError, WikiPageNotFoundError } from "../src/wiki/wiki.ts";
 import { FULL_VIEW, WikiAccess, wikiView, type WikiView } from "../src/wiki/access.ts";
+import { WikiFeature } from "../src/protocol/index.ts";
+import { BUILTIN_MODULES } from "../src/routines/index.ts";
 import { chunk, compress, dataPages, loadMinecraftData } from "../scripts/wiki-reference.ts";
 
 async function fixture(): Promise<{ root: string; lessons: string }> {
@@ -237,6 +239,87 @@ describe("repository wiki", () => {
     const page = wiki.read("minebot/triggers", triggersOnly);
     assert.doesNotMatch(formatPage(page), /\bkits?\b|\bkit\./i);
     assert.match(wiki.read("minebot/triggers", { ...triggersOnly, builtins: true }).body, /survival\.eat\(ctx\)/);
+  });
+
+  /** Every view a body can have: each feature on or off. */
+  const VIEWS: WikiView[] = Array.from({ length: 1 << WikiFeature.options.length }, (_, bits) =>
+    Object.fromEntries(WikiFeature.options.map((feature, i) => [feature, ((bits >> i) & 1) === 1])) as WikiView,
+  );
+  const MARKER = new RegExp(`<!-- (/?)(${WikiFeature.options.join("|")}) -->`);
+
+  /** Each feature's marked lines on a repository page, parsed from its raw file: the trimmed lines inside its `<!-- feature -->` blocks that no line outside them repeats. */
+  function markedLines(id: string): Record<WikiFeature, string[]> {
+    const lines: { feature: WikiFeature | null; text: string }[] = [];
+    let open: WikiFeature | null = null;
+    for (const line of readFileSync(path.join(WIKI_DIR, `${id}.md`), "utf8").split("\n")) {
+      const text = line.trim();
+      const marker = MARKER.exec(text);
+      if (!marker) {
+        if (text) lines.push({ feature: open, text });
+        continue;
+      }
+      assert.equal(marker[0], text, `${id}: a marker must be alone on its line: ${text}`);
+      const feature = marker[2] as WikiFeature;
+      assert.equal(open, marker[1] ? feature : null, `${id}: unbalanced ${text}`);
+      open = marker[1] ? null : feature;
+    }
+    assert.equal(open, null, `${id}: <!-- ${open} --> is never closed`);
+    const marked = Object.fromEntries(WikiFeature.options.map((feature) => [feature, [] as string[]])) as Record<WikiFeature, string[]>;
+    for (const { feature, text } of lines) {
+      if (feature && !marked[feature].includes(text) && !lines.some((other) => other.feature !== feature && other.text === text)) marked[feature].push(text);
+    }
+    return marked;
+  }
+
+  const viewName = (view: WikiView) => WikiFeature.options.filter((feature) => view[feature]).join("+") || "no features";
+
+  it("shows each page's marked lines exactly in the views with their feature, in the page text and in search", () => {
+    const wiki = Wiki.load(WIKI_DIR);
+    const marked = new Map(wiki.pages.map((page) => [page.id, markedLines(page.id)]));
+    for (const feature of ["builtins", "reflexes"] as const) {
+      assert.ok([...marked.values()].some((lines) => lines[feature].length > 0), `no page marks ${feature} content, so nothing below tests it`);
+    }
+    for (const view of VIEWS) {
+      for (const { id } of wiki.list(undefined, view)) {
+        const text = new Set(formatPage(wiki.read(id, view)).split("\n").map((line) => line.trim()));
+        for (const feature of WikiFeature.options) {
+          for (const line of marked.get(id)![feature]) assert.equal(text.has(line), view[feature], `${id} with ${viewName(view)}: ${feature} line ${line}`);
+        }
+      }
+    }
+    // Search: each marked line, in the view with every feature and in the one without just its feature.
+    for (const [id, lines] of marked) {
+      for (const feature of WikiFeature.options) {
+        const off: WikiView = { ...FULL_VIEW, [feature]: false };
+        for (const line of lines[feature].filter((l) => /[a-z0-9]/i.test(l))) {
+          assert.ok(wiki.search(line, wiki.pages.length, FULL_VIEW).some((hit) => hit.id === id), `search with ${feature} does not find ${id} by its ${feature} line ${line}`);
+          const hit = wiki.search(line, wiki.pages.length, off).find((h) => h.id === id);
+          // A field shows the line whole, or cut to the snippet length with "...".
+          const shown = hit && [hit.title, ...hit.tags, hit.snippet].find((field) => field === line || (field.endsWith("...") && line.startsWith(field.slice(0, -3))));
+          assert.equal(shown, undefined, `search without ${feature} shows ${id}'s ${feature} line ${line}`);
+        }
+      }
+    }
+  });
+
+  it("marks every built-in routine a page names unless the page requires built-ins, so a view without built-ins names none", () => {
+    const wiki = Wiki.load(WIKI_DIR);
+    const calls = BUILTIN_MODULES.flatMap((module) => Object.keys(module.routines).map((routine) => `${module.name}.${routine}`));
+    // `bot.inventory.count` is Mineflayer's, not the inventory.count routine: a name preceded by `.` or a word character is not a call.
+    const names = new RegExp(`(?<![\\w.])(?:${calls.map((call) => call.replace(".", "\\.")).join("|")})\\b|minebot-sdk/routines/`);
+    for (const view of VIEWS.filter((v) => !v.builtins)) {
+      for (const { id } of wiki.list(undefined, view)) {
+        const page = wiki.read(id, view);
+        for (const text of [formatPage(page), page.meta.tags.join(" ")]) assert.doesNotMatch(text, names, `${id} with ${viewName(view)} names a built-in routine`);
+      }
+    }
+    for (const view of [VIEWS[0]!, { ...FULL_VIEW, builtins: false }]) {
+      for (const call of calls) {
+        for (const hit of wiki.search(call, 20, view)) {
+          assert.doesNotMatch(`${hit.title} ${hit.tags.join(" ")} ${hit.snippet}`, names, `search "${call}" with ${viewName(view)} shows ${hit.id}: ${hit.snippet}`);
+        }
+      }
+    }
   });
 });
 
