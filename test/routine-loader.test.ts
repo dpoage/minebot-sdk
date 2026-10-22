@@ -84,11 +84,14 @@ describe("RoutineLoader: what a library module can import", () => {
     assert.equal(got.os, osDefault);
   });
 
-  it("resolves each specifier to the URL it has from the body package", async () => {
+  it("resolves each specifier to the URL it has from the body package, with the named-export facade's query on a CommonJS package's alone", async () => {
     const { resolved } = await probed();
-    const own = ["vec3", "zod", "mineflayer", "minebot-sdk/routine", "node:os", "os"].map((specifier) => import.meta.resolve(specifier));
+    const specifiers = ["vec3", "zod", "mineflayer", "minebot-sdk/routine", "node:os", "os"];
+    // `mineflayer` is the one CommonJS package here (`vec3` has an ES wrapper, `zod` is ES).
+    const own = specifiers.map((specifier) => import.meta.resolve(specifier) + (specifier === "mineflayer" ? "?minebot-named-exports" : ""));
     assert.deepEqual(resolved, own);
     assert.ok(resolved[0]!.includes("/node_modules/vec3/"), resolved[0]!);
+    assert.equal(((await import(resolved[2]!)) as { default: unknown }).default, mineflayer);
   });
 
   it("imports other library modules by relative path, statically and dynamically", async () => {

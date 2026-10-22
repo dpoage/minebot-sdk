@@ -164,6 +164,24 @@ async function linkPackages(project: string): Promise<void> {
   }
 }
 
+/** The file name of the ambient declaration of `require` (a routine's file name has no dot, so it never names a routine). */
+const REQUIRE_DECLARATION = "routine.require.d.ts";
+
+/**
+ * The `require` a routine has at run time (see the loader), declared for a project without `@types/node`,
+ * which declares it otherwise: `@types/node` is a development dependency of this package, so a workspace
+ * that did not install it for the body has none. As in Node's declaration, `require(id)` is `any`.
+ */
+const REQUIRE_TYPES = `interface RoutineRequire {
+  (id: string): any;
+  resolve: { (id: string, options?: { paths?: string[] }): string; paths(request: string): string[] | null };
+  cache: Record<string, unknown>;
+  main: unknown;
+  extensions: Record<string, unknown>;
+}
+declare var require: RoutineRequire;
+`;
+
 /**
  * The options of the check of a routine: the ones that make the module load as the body loads it, as
  * ES TypeScript that Node only strips of types. `verbatimModuleSyntax` rejects `import { Bot } from
@@ -187,7 +205,7 @@ function routineTsconfig(file: string, nodeTypes: boolean): string {
       // A body running from source takes the package's entry points from src/; an installed one from dist/.
       ...(import.meta.url.endsWith(".ts") && { customConditions: ["minebot-sdk:source"] }),
     },
-    files: [file],
+    files: nodeTypes ? [file] : [file, REQUIRE_DECLARATION],
   });
 }
 
@@ -215,6 +233,7 @@ export async function typeCheckRoutine(dir: string, name: string, signal?: Abort
     // Without a module package scope, nodenext treats the routine as CommonJS, and it loads as ESM.
     await writeFile(path.join(project, "package.json"), '{ "type": "module" }\n');
     const nodeTypes = await access(path.join(project, "node_modules/@types/node")).then(() => true, () => false);
+    if (!nodeTypes) await writeFile(path.join(project, REQUIRE_DECLARATION), REQUIRE_TYPES);
     await writeFile(path.join(project, "tsconfig.json"), routineTsconfig(`${name}.ts`, nodeTypes));
     return await compile(tsc, project, `${name}.ts`, signal);
   } catch (err) {
