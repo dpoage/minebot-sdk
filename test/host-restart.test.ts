@@ -664,8 +664,8 @@ describe("restart: backoff and failure", () => {
   });
 });
 
-describe("restart: the messages the host sends carry no kits", () => {
-  it("sends run_started, register, and state with exactly their own fields", async () => {
+describe("restart: the register message the host sends carries no kits", () => {
+  it("sends register with exactly its own fields", async () => {
     const sent: FromHost[] = [];
     const reporter = new RunReporter({ send: (message) => sent.push(message), stop: () => false, running: () => false });
     const registered = reporter.register("event.data.health < 8", { trigger: "t" });
