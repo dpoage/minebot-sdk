@@ -37,6 +37,8 @@ export async function runBody({ name, token, flags }: BodyCommandInput): Promise
     agentKits: !parsed.noAgentKits,
     agentKitsDir: parsed.agentKits,
     triggers: !parsed.noTriggers,
+    routines: !parsed.noRoutines,
+    routinesDir: parsed.routines,
   });
   console.error(`[minebot] body "${name}" API at ${daemon.endpoint.url}; joining ${parsed.host}:${parsed.port}`);
   const stopped = Promise.withResolvers<void>();

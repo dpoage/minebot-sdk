@@ -8,6 +8,8 @@ import type { KitLibrary } from "../kit/library.ts";
 import { KitSourceError } from "../kit/agent.ts";
 import { BusyError } from "../program/runner.ts";
 import {
+  BindInput,
+  CallInput,
   capabilities,
   ChatInput,
   KitDocsQuery,
@@ -23,10 +25,15 @@ import {
   RemoveKitInput,
   RevertKitInput,
   RemoveTriggerInput,
+  RevertRoutineInput,
+  RoutineSourceQuery,
+  RoutineVersionsQuery,
   RunInput,
   SaveKitInput,
+  SaveRoutineInput,
   TriggerEnabledInput,
   TryKitInput,
+  UnbindInput,
   UseKitsInput,
   WikiListQuery,
   WikiPageQuery,
@@ -35,6 +42,7 @@ import {
   type KitInfo,
   type KitsResponse,
   type SaveKitResponse,
+  type SaveRoutineResponse,
   type TriggersResponse,
 } from "../protocol/index.ts";
 import { HttpError, parse, parseBody } from "../protocol/request.ts";
@@ -42,6 +50,10 @@ import { WikiDisabledError, WikiPageNotFoundError } from "../wiki/wiki.ts";
 import type { Body, RunRecorder } from "./body.ts";
 import { NotConnectedError } from "./connection.ts";
 import { NoteLimitError } from "../notes.ts";
+import type { Bindings } from "./bindings.ts";
+import { BindingConflictError } from "./bindings.ts";
+import { RoutineSourceError, type RoutineLibrary } from "./routines/library.ts";
+import { RoutineNotFoundError } from "./routines/loader.ts";
 import { TriggerInvalidError, TriggerLimitError, TriggerNotFoundError } from "./triggers.ts";
 
 export interface RequestContext {
@@ -75,13 +87,13 @@ export interface ApiRequest {
 /** HTTP status for an error thrown while handling a request. */
 export function statusFor(err: unknown): number {
   if (err instanceof HttpError) return err.status;
-  if (err instanceof BusyError || err instanceof NoteLimitError || err instanceof TriggerLimitError) return 409;
-  if (err instanceof TriggerNotFoundError) return 404;
+  if (err instanceof BusyError || err instanceof NoteLimitError || err instanceof TriggerLimitError || err instanceof BindingConflictError) return 409;
+  if (err instanceof TriggerNotFoundError || err instanceof RoutineNotFoundError) return 404;
   if (err instanceof TriggerInvalidError) return 400;
   if (err instanceof NotConnectedError) return 503;
   if (err instanceof WikiDisabledError) return 403;
   if (err instanceof WikiPageNotFoundError) return 404;
-  if (err instanceof z.ZodError || err instanceof KitSourceError) return 400;
+  if (err instanceof z.ZodError || err instanceof KitSourceError || err instanceof RoutineSourceError) return 400;
   return 500;
 }
 
@@ -104,6 +116,14 @@ export async function serve(routes: Route[], body: Body, request: ApiRequest): P
   }
 }
 
+/** What the routine routes act on, for a body that offers routines. */
+export interface RoutineRouteDeps {
+  library: RoutineLibrary;
+  bindings: Bindings;
+  /** Saves a routine and reports the type check of its source. */
+  save: (name: string, source: string) => Promise<SaveRoutineResponse>;
+}
+
 /** What the routes act on. */
 export interface RouteDeps {
   body: Body;
@@ -113,10 +133,12 @@ export interface RouteDeps {
   saveKit: (source: string) => Promise<SaveKitResponse>;
   revertKit: (name: string, version: number) => Promise<KitInfo>;
   recorder: RunRecorder;
+  /** Absent on a body without routines, whose routine routes are never served. */
+  routines?: RoutineRouteDeps;
 }
 
 /** The routes the host answers: every route of the body API except health, events, waits, and stop, which the supervisor answers. */
-export function bodyRoutes({ body, kits: host, library, syncKits, saveKit, revertKit, recorder }: RouteDeps): Route[] {
+export function bodyRoutes({ body, kits: host, library, syncKits, saveKit, revertKit, recorder, routines }: RouteDeps): Route[] {
   function kitsResponse(): KitsResponse {
     return { kits: host.info(), active: host.active, locked: host.locked };
   }
@@ -320,6 +342,74 @@ export function bodyRoutes({ body, kits: host, library, syncKits, saveKit, rever
       handler: async ({ read }) => {
         const { name, enabled } = parse(TriggerEnabledInput, await read());
         return { trigger: body.triggers!.setEnabled(name, enabled) };
+      },
+    },
+    { method: "GET", path: "/routines", capability: "routines", handler: () => ({ routines: routines!.library.list() }) },
+    {
+      method: "GET",
+      path: "/routines/source",
+      capability: "routines",
+      handler: async ({ url }) => {
+        const { name } = parse(RoutineSourceQuery, Object.fromEntries(url.searchParams));
+        const source = routines!.library.source(name);
+        if (source === undefined) throw new HttpError(404, `no routine "${name}"`);
+        return { name, source };
+      },
+    },
+    {
+      method: "POST",
+      path: "/routines/save",
+      capability: "routines",
+      handler: async ({ read }) => {
+        const { name, source } = parse(SaveRoutineInput, await read());
+        return routines!.save(name, source);
+      },
+    },
+    {
+      method: "GET",
+      path: "/routines/versions",
+      capability: "routines",
+      handler: async ({ url }) => {
+        const { name } = parse(RoutineVersionsQuery, Object.fromEntries(url.searchParams));
+        return { name, versions: await routines!.library.versions(name) };
+      },
+    },
+    {
+      method: "POST",
+      path: "/routines/revert",
+      capability: "routines",
+      handler: async ({ read }) => {
+        const { name, version } = parse(RevertRoutineInput, await read());
+        return { routine: await routines!.library.revert(name, version) };
+      },
+    },
+    { method: "GET", path: "/bindings", capability: "routines", handler: () => ({ bindings: routines!.bindings.list() }) },
+    {
+      method: "POST",
+      path: "/bind",
+      capability: "routines",
+      handler: async ({ read }) => routines!.bindings.bind(parse(BindInput, await read())),
+    },
+    {
+      method: "POST",
+      path: "/unbind",
+      capability: "routines",
+      handler: async ({ read }) => {
+        const { name } = parse(UnbindInput, await read());
+        if (!routines!.bindings.unbind(name)) throw new HttpError(404, `no binding "${name}"`);
+        return { unbound: name };
+      },
+    },
+    {
+      // A call is a run: recorded like a program, with the action and its routine and args on the history line.
+      method: "POST",
+      path: "/call",
+      capability: "routines",
+      handler: async ({ read, requestId }) => {
+        const { name, args, timeoutMs } = parse(CallInput, await read());
+        const binding = routines!.bindings.action(name);
+        if (!binding) throw new HttpError(404, `no action bound to "${name}"`);
+        return recorder.record({ code: "", timeoutMs, requestId, extra: { call: { name, routine: binding.routine, args } } }, () => body.call(binding.routine, args, timeoutMs));
       },
     },
     {

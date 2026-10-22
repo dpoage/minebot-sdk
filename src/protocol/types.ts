@@ -330,3 +330,54 @@ export interface AddTriggerResponse {
   trigger: TriggerInfo;
   replaced: boolean;
 }
+
+/** What listing the routine library returns. */
+export interface RoutinesResponse {
+  routines: RoutineInfo[];
+}
+
+/** A routine's source. */
+export interface RoutineSourceResponse {
+  name: string;
+  source: string;
+}
+
+/** What saving a routine returns: the routine as the library now has it, and the type check of its source (which never blocks a save). */
+export interface SaveRoutineResponse {
+  routine: RoutineInfo;
+  typeCheck: KitTypeCheck;
+}
+
+export interface RoutineVersionsResponse {
+  name: string;
+  versions: RoutineVersion[];
+}
+
+/** What a revert returns: the routine, now at a new version holding the earlier source. */
+export interface RevertRoutineResponse {
+  routine: RoutineInfo;
+}
+
+/** An action binding: `name` calls the saved routine `routine`. */
+export interface ActionBindingInfo {
+  kind: "action";
+  name: string;
+  routine: string;
+}
+
+/** A name bound to a routine. */
+export type BindingInfo = ActionBindingInfo;
+
+export interface BindingsResponse {
+  bindings: BindingInfo[];
+}
+
+/** What binding returns: the binding as stored, and whether it replaced one of the same name. */
+export interface BindResponse {
+  binding: BindingInfo;
+  replaced: boolean;
+}
+
+export interface UnbindResponse {
+  unbound: string;
+}

@@ -9,7 +9,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import type { BodyFeatures } from "../src/protocol/index.ts";
 
-const EVERYTHING: BodyFeatures = { kits: ["move"], kitsLocked: false, agentKits: true, wiki: "write", lessons: true, milestones: true, triggers: true };
+const EVERYTHING: BodyFeatures = { kits: ["move"], kitsLocked: false, agentKits: true, wiki: "write", lessons: true, milestones: true, triggers: true, routines: true };
 const CLI = [...process.execArgv, path.join(import.meta.dirname, "..", "src", "cli.ts")];
 
 const CORE = ["api_reference", "get_events", "kit_docs", "observe", "run_program", "stop_program", "wait_for"];

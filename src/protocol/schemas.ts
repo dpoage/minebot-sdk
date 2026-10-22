@@ -14,7 +14,7 @@ export const NoteKey = z
 export const NoteText = z.string().min(1).max(MAX_NOTE_LENGTH);
 
 /** Features of a body that wiki content can depend on; the cut-block markers share these names. */
-export const WikiFeature = z.enum(["kits", "milestones", "agentKits", "triggers"]);
+export const WikiFeature = z.enum(["kits", "milestones", "agentKits", "triggers", "routines"]);
 export type WikiFeature = z.infer<typeof WikiFeature>;
 
 /** Wiki page frontmatter. Pages that require a feature are hidden from bodies without it. */
@@ -40,6 +40,12 @@ export const KitName = z.string().regex(/^[a-z][a-z0-9_]{0,31}$/, "use 1-32 lowe
 
 /** A routine name: the file name of a library module, `<name>.ts`, so it is also what other modules import. */
 export const RoutineName = z.string().regex(/^[a-z][a-z0-9_-]{0,47}$/, "use 1-48 lowercase letters, digits, _ and -; start with a letter");
+
+/**
+ * An action binding's name, which `POST /call` takes. It follows the routine name rule, so a dotted
+ * name such as `move.to` is never a binding: that shape is for the built-in routines' call names.
+ */
+export const BindingName = RoutineName;
 
 /** The largest routine source the library keeps, in UTF-8 bytes. */
 export const ROUTINE_SOURCE_LIMIT = 128 * 1024;
@@ -190,3 +196,29 @@ export const RemoveTriggerInput = z.object({ name: TriggerName });
 
 /** Body of `POST /triggers/enabled`. */
 export const TriggerEnabledInput = z.object({ name: TriggerName, enabled: z.boolean() });
+
+/** Body of `POST /routines/save`. */
+export const SaveRoutineInput = z.object({ name: RoutineName, source: RoutineSource });
+
+/** Query of `GET /routines/source`. */
+export const RoutineSourceQuery = z.object({ name: RoutineName });
+
+/** Query of `GET /routines/versions`. */
+export const RoutineVersionsQuery = z.object({ name: RoutineName });
+
+/** Body of `POST /routines/revert`: save an earlier version of a routine again, as a new version. */
+export const RevertRoutineInput = z.object({ name: RoutineName, version: z.number().int().positive() });
+
+/** Body of `POST /bind`: an action, a saved routine called by name with `POST /call`. */
+export const BindInput = z.object({ kind: z.literal("action"), name: BindingName, routine: RoutineName });
+export type BindInput = z.infer<typeof BindInput>;
+
+/** Body of `POST /unbind`. */
+export const UnbindInput = z.object({ name: BindingName });
+
+/** Body of `POST /call`: calls the action bound to `name`. `args` default to `{}`; `timeoutMs` as for `POST /run`. */
+export const CallInput = z.object({
+  name: BindingName,
+  args: z.record(z.string(), z.unknown()).optional(),
+  timeoutMs: RunInput.shape.timeoutMs,
+});

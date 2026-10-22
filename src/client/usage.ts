@@ -7,8 +7,8 @@ import { CAPABILITY_GATES, type BodyFeatures } from "../protocol/index.ts";
 export const HAS_BODY = existsSync(new URL(`../body/daemon${import.meta.url.slice(import.meta.url.lastIndexOf("."))}`, import.meta.url));
 
 /** What the usage text shows when no body can be asked: everything on an install that can start bodies, nothing optional otherwise. */
-const EVERYTHING: BodyFeatures = { kits: ["move"], kitsLocked: false, agentKits: true, wiki: "write", lessons: true, milestones: true, triggers: true };
-const NOTHING: BodyFeatures = { kits: [], kitsLocked: true, agentKits: false, wiki: "off", lessons: false, milestones: false, triggers: false };
+const EVERYTHING: BodyFeatures = { kits: ["move"], kitsLocked: false, agentKits: true, wiki: "write", lessons: true, milestones: true, triggers: true, routines: true };
+const NOTHING: BodyFeatures = { kits: [], kitsLocked: true, agentKits: false, wiki: "off", lessons: false, milestones: false, triggers: false, routines: false };
 
 /**
  * The usage text for a body that offers `features`, or for no body when `features` is null.

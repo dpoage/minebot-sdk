@@ -13,7 +13,7 @@ import { readPages, tokens, visible, type WikiView } from "./page.ts";
 export const WIKI_DIR = path.join(PACKAGE_ROOT, "wiki");
 
 const LESSONS = "lessons";
-const FULL_VIEW: WikiView = { kits: true, milestones: true, agentKits: true, triggers: true };
+const FULL_VIEW: WikiView = { kits: true, milestones: true, agentKits: true, triggers: true, routines: true };
 
 export class WikiPageNotFoundError extends Error {}
 export class WikiDisabledError extends Error {}
