@@ -5,6 +5,7 @@ import { createRequire } from "node:module";
 import os, { tmpdir } from "node:os";
 import path from "node:path";
 import { after, describe, it } from "node:test";
+import { isDeepStrictEqual } from "node:util";
 import pathfinderPackage from "mineflayer-pathfinder";
 import * as pathfinderNamespace from "mineflayer-pathfinder";
 import { RoutineLoader } from "../src/host/routines/loader.ts";
@@ -388,16 +389,16 @@ console.log(JSON.stringify(out));
     it(`gives require to a module exactly when it has no binding of that name at module scope, and checks it alike, ${environment}`, () => {
       const got = runAndCheck(rootOf(), Object.fromEntries(Object.entries(REQUIRE_ROWS).map(([name, row]) => [name, row.source])));
       // Every row's outcome at once, so a failure names each row that differs.
-      const actual: Record<string, { run: unknown; check: string }> = {};
-      const expected: Record<string, { run: unknown; check: string }> = {};
+      const differing: string[] = [];
       for (const [name, row] of Object.entries(REQUIRE_ROWS)) {
         const outcome = got[name]!;
         const onRequire = (outcome.check.errors ?? []).filter((error) => error.includes("'require'"));
         const check = outcome.check.status !== "failed" ? outcome.check.status : onRequire.length > 0 ? `failed: ${onRequire.join(" | ")}` : "failed, not on require";
-        actual[`${name} (${row.why})`] = { run: outcome.runs ? outcome.value : `throws ${outcome.error}`, check };
-        expected[`${name} (${row.why})`] = { run: row.value, check: row.nodeTypes && !nodeTypes ? "failed, not on require" : "passed" };
+        const actual = { run: outcome.runs ? outcome.value : `throws ${outcome.error}`, check };
+        const expected = { run: row.value, check: row.nodeTypes && !nodeTypes ? "failed, not on require" : "passed" };
+        if (!isDeepStrictEqual(actual, expected)) differing.push(`${name} (${row.why}): got ${JSON.stringify(actual)}, want ${JSON.stringify(expected)}`);
       }
-      assert.deepEqual(actual, expected);
+      assert.equal(differing.length, 0, `${differing.length} of ${Object.keys(REQUIRE_ROWS).length} rows differ:\n${differing.join("\n")}`);
     });
   }
 });
