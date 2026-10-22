@@ -43,7 +43,7 @@ export interface HarnessOptions {
   username?: string;
 }
 
-/** One call of a routine value declared with a `module.routine` name, as the call observer saw it: nested calls included. It records with the module as `kit` and the routine as `action`. */
+/** One call of a routine value declared with a `module.routine` name (the built-in routines), as the call observer saw it: nested calls included. `kit` is the module part of the name and `action` the routine part. A routine value without such a name is not recorded. */
 export interface RecordedCall {
   kit: string;
   action: string;
@@ -76,7 +76,7 @@ export interface Harness {
    *
    * Each call is one run, as in the body: its own `ctx`, whose `signal` `abort` stops and which is
    * aborted with `finished` once the call settles (a later `ctx.sleep` rejects), and whose `ctx.on`
-   * handlers hear events only until then. Routines this one calls by import run with that scope and are recorded in `calls`.
+   * handlers hear events only until then. Routines this one calls by import run with that scope; those named `module.routine` are recorded in `calls`.
    */
   run<F extends RoutineFunction>(routine: F, args?: NoInfer<RunArgs<F>>): Promise<RunResult<F>>;
   run<M extends { readonly default: RoutineFunction }>(routine: M, args?: NoInfer<RunArgs<M["default"]>>): Promise<RunResult<M["default"]>>;
@@ -114,7 +114,7 @@ export interface Harness {
 
 /**
  * A test harness for routines. It runs a routine through the real `invokeRoutine`: arguments and
- * results are validated, and each routine value it calls by import is observed (`calls`). The harness
+ * results are validated, and each call of a routine value named `module.routine` (the built-in routines) is observed (`calls`). The harness
  * keeps a notepad and `ctx.store` namespaces in memory, over a fake bot built on the real registry:
  *
  * - A block world: `blockAt`, `findBlock(s)`, a flat ground layer plus the blocks you set.

@@ -1,14 +1,19 @@
 import assert from "node:assert/strict";
 import { type ChildProcess, execFile, spawn } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { setTimeout } from "node:timers/promises";
 import { after, before, describe, it } from "node:test";
 import { promisify } from "node:util";
+import { parse as parseYaml } from "yaml";
 import { BodyClient } from "../src/client/client.ts";
+import { toolPlan } from "../src/client/mcp.ts";
+import { z } from "zod";
 import { type BodyFeatures, programApiDoc } from "../src/protocol/index.ts";
 import { usageFor } from "../src/client/usage.ts";
+import { defineRoutine } from "../src/routine/define.ts";
+import { createHarness } from "../src/testing/index.ts";
 import { OPERATOR_FLAG_HELP } from "../src/client/body-flags.ts";
 
 const exec = promisify(execFile);
@@ -336,5 +341,89 @@ describe("tier visibility on a running body", () => {
     await assert.rejects(some.builtinDocs(["social"]), /unknown built-in module "social"/);
     const { doc } = await some.apiDoc();
     assert.match(doc, new RegExp(`^Built-in routines: ${offered.join(", ")}\\.`, "m"));
+  });
+
+  /** The front matter field the wiki's page view reads. */
+  const FrontMatter = z.object({ requires: z.array(z.string()).default([]) });
+
+  /** The ids of the pages under wiki/ that a body with these features serves: the pages whose `requires` the body has, read from the front matter on disk. */
+  function pagesFor(features: Record<string, boolean>): string[] {
+    const wikiDir = path.join(import.meta.dirname, "..", "wiki");
+    const ids: string[] = [];
+    for (const entry of readdirSync(wikiDir, { withFileTypes: true, recursive: true })) {
+      if (!entry.isFile() || !entry.name.endsWith(".md") || entry.name === "README.md") continue;
+      const file = path.join(entry.parentPath, entry.name);
+      const { requires } = FrontMatter.parse(parseYaml(/^---\n([\s\S]*?)\n---/.exec(readFileSync(file, "utf8"))![1]!));
+      if (requires.every((feature) => features[feature])) ids.push(path.relative(wikiDir, file).slice(0, -".md".length).split(path.sep).join("/"));
+    }
+    return ids.sort();
+  }
+
+  /** What no page may say to a body: the call shapes and tools of the kits and code triggers that are gone. */
+  const STALE_PAGE_TEXT = /kit\.|kits\.|defineKit|trigger_/;
+
+  /** The pages a body lists, and the ones among them whose served text says something stale. */
+  async function served(body: BodyClient): Promise<{ ids: string[]; stale: string[] }> {
+    const ids = (await body.wikiList()).pages.map((page) => page.id).sort();
+    const stale: string[] = [];
+    for (const id of ids) if (STALE_PAGE_TEXT.test((await body.wikiRead(id)).text)) stale.push(id);
+    return { ids, stale };
+  }
+
+  it("serves a default body (routines on, no --builtins) every page its features fit, and no page that names the kits or the trigger tools", { timeout: 60_000 }, async () => {
+    const body = await start("features-view-default", "--wiki", "read", "--no-milestones");
+    const features = await body.features();
+    assert.deepEqual([features.routines, features.reflexes, features.builtins.length > 0], [true, true, true]);
+    const { ids, stale } = await served(body);
+    assert.deepEqual(ids, pagesFor({ builtins: true, milestones: false, reflexes: true, routines: true }));
+    assert.ok(ids.includes("minebot/routines"), "the routines page is served where routines are on");
+    assert.deepEqual(stale, [], "pages whose served text names kit.*, kits.*, defineKit, or trigger_*");
+  });
+
+  it("serves a builtins-only body (--builtins, no routines) every page its features fit, and no page that names the kits or the trigger tools", { timeout: 60_000 }, async () => {
+    const body = await start("features-view-builtins", "--wiki", "read", "--no-milestones", "--builtins", "gatherer", "--no-routines");
+    const features = await body.features();
+    assert.deepEqual([features.routines, features.builtins.length > 0], [false, true]);
+    const { ids, stale } = await served(body);
+    assert.deepEqual(ids, pagesFor({ builtins: true, milestones: false, reflexes: false, routines: false }));
+    assert.ok(!ids.includes("minebot/routines"), "the routines page is hidden where routines are off");
+    assert.deepEqual(stale, [], "pages whose served text names kit.*, kits.*, defineKit, or trigger_*");
+  });
+});
+
+describe("what the references say about imports and require", () => {
+  it("tells a run that paths and file: URLs fail to import, and does not say that every URL does", () => {
+    const doc = programApiDoc({ ...raw, routines: true });
+    assert.match(doc, /importing an absolute path, a `file:` URL, or a relative path to anything but a module of the library fails\./);
+    assert.doesNotMatch(doc, /an absolute path, a URL,/);
+    // The loader refuses a file: URL and an absolute path (module-run.test.ts); a data: or node: import is not refused, so the reference must not claim a URL import fails.
+  });
+
+  it("tells an agent that routine_save accepts require, which a saved routine has", () => {
+    const { routine_save: save } = toolPlan({ ...raw, routines: true }, "full");
+    assert.doesNotMatch(save!.description, /`require` does not work/);
+    assert.match(save!.description, /`require` works too/);
+  });
+});
+
+describe("what h.calls records", () => {
+  const unnamed = defineRoutine({ args: z.object({}) }, () => 1);
+  const named = defineRoutine({ name: "mine.one" }, () => 2);
+  const plain = () => 3;
+
+  it("records only the routine values named module.routine, nested calls included", async () => {
+    const h = createHarness();
+    const result = await h.run(async (ctx) => [await unnamed(ctx), await named(ctx, { a: 1 }), plain()]);
+    assert.deepEqual(result, [1, 2, 3]);
+    assert.deepEqual(h.calls, [{ kit: "mine", action: "one", args: { a: 1 } }]);
+  });
+
+  it("says so in the doc comments of the published harness types", () => {
+    const source = readFileSync(path.join(import.meta.dirname, "..", "src", "testing", "index.ts"), "utf8");
+    assert.match(source, /declared with a `module\.routine` name \(the built-in routines\)/);
+    assert.match(source, /A routine value without such a name is not recorded\./);
+    assert.match(source, /those named `module\.routine` are recorded in `calls`/);
+    assert.doesNotMatch(source, /by import run with that scope and are recorded in `calls`/);
+    assert.doesNotMatch(source, /each routine value it calls by import is observed/);
   });
 });

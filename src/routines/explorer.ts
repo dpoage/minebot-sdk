@@ -450,7 +450,7 @@ export const explore = defineRoutine(
 export const remember = defineRoutine(
   {
     name: "explorer.remember",
-    description: "Save a named place at `at` (default: where the player stands) and return it. `kind` is one of chest, bed, farm, ore, base, portal, other (default other); `tags` and `note` describe it; `contents` maps item names to counts for a chest. Remembering a name again keeps the kind, tags, note, and contents you do not pass. Places survive programs, kit swaps, and body restarts.",
+    description: "Save a named place at `at` (default: where the player stands) and return it. `kind` is one of chest, bed, farm, ore, base, portal, other (default other); `tags` and `note` describe it; `contents` maps item names to counts for a chest. Remembering a name again keeps the kind, tags, note, and contents you do not pass. Places survive runs and body restarts.",
     args: z.object({
       name: z.string().min(1).max(64),
       at: Position.optional(),
@@ -540,7 +540,7 @@ export const travel = defineRoutine(
 export const surface = defineRoutine(
   {
     name: "explorer.surface",
-    description: "Climb to open sky by digging a staircase; use it when trapped underground or in a pit. Needs no blocks; slow without a pickaxe, so pass a long program timeout (e.g. --timeout 600000). Under water it checks the air supply: it does not dig what the air cannot cover and swims to air first. `maxSteps` (default 120) bounds the climb. Returns { surfaced, from, to, steps }.",
+    description: "Climb to open sky by digging a staircase; use it when trapped underground or in a pit. Needs no blocks; slow without a pickaxe, so pass a long call timeout (e.g. --timeout 600000). Under water it checks the air supply: it does not dig what the air cannot cover and swims to air first. `maxSteps` (default 120) bounds the climb. Returns { surfaced, from, to, steps }.",
     args: z.object({ maxSteps: z.number().int().positive().default(120) }),
     returns: SurfaceResultSchema,
   },

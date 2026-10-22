@@ -338,7 +338,7 @@ describe("reflex bindings persist", () => {
       assert.deepEqual(bindings.map((binding) => [binding.kind, binding.name, binding.routine]), [["reflex", "clash", "r1"], ["action", "mine", "r2"]]);
       const errors = body.eventsOf("binding_error");
       assert.deepEqual(errors.map((event) => event.data.name), ["clash"]);
-      assert.match(String(errors[0]!.data.error), /is also a reflex/);
+      assert.match(String(errors[0]!.data.error), /is also a reflex, which takes the name; unbind it, then restart the body to use this action$/);
       assert.equal((await body.request("POST", "/call", { name: "clash" })).status, 404, "the skipped action is not callable");
       // The entry waits in the file: another bind rewrites the file with it still there.
       await body.ok("POST", "/bind", { kind: "action", name: "other", routine: "r1" });
@@ -535,7 +535,7 @@ describe("stored entries the reflexes skip", () => {
       assert.deepEqual((await listed(body)).map((binding) => [binding.kind, binding.name]), [["reflex", "good"], ["action", "mine"]]);
       const errors = body.eventsOf("binding_error");
       assert.deepEqual(errors.map((event) => event.data.name), ["code", "junk"]);
-      assert.match(String(errors[0]!.data.error), /^"code" is also a stored entry the reflexes skipped, which takes the name/);
+      assert.match(String(errors[0]!.data.error), /^"code" is also a stored entry the reflexes skipped, which takes the name; unbind it, then restart the body to use this action$/);
       assert.equal((await body.request("POST", "/call", { name: "code" })).status, 404, "the skipped action is not callable");
       assert.deepEqual(Object.keys(JSON.parse(readFileSync(path.join(body.stateDir, "bindings.json"), "utf8")) as object), ["code", "junk", "mine"]);
     });
