@@ -128,10 +128,13 @@ describe("POST /call", () => {
     await using(body, async () => {
       const before = runOf(await body.request("POST", "/call", { name: "pid" })).result;
       const started = Date.now();
+      const since = body.events.since(0, 1000).next;
       const run = runOf(await body.request("POST", "/call", { name: "blocker", timeoutMs: 200 }));
       assert.ok(Date.now() - started < 200 + GRACE_MS + 500 + 4_000, `took ${Date.now() - started} ms`);
       assert.equal(run.error, restartedError(hungCause(GRACE_MS)));
       assert.equal(body.eventsOf("program_finished").filter((event) => event.data.status !== "ok").length, 1, "the supervisor ends the killed call once");
+      // The replacement host announces itself; a request sent before that may meet the dying one.
+      await body.waitFor("connected", since);
       const after = runOf(await body.request("POST", "/call", { name: "pid" })).result;
       assert.notEqual(after, before, "the host was replaced");
       const blocked = body.history().filter((line) => (line.call as { name: string }).name === "blocker");
