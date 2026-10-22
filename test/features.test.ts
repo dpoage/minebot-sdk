@@ -10,7 +10,8 @@ import { parse as parseYaml } from "yaml";
 import { BodyClient } from "../src/client/client.ts";
 import { toolPlan } from "../src/client/mcp.ts";
 import { z } from "zod";
-import { type BodyFeatures, programApiDoc } from "../src/protocol/index.ts";
+import { type BodyFeatures, programApiDoc, WikiFeature } from "../src/protocol/index.ts";
+import { BUILTIN_MODULES } from "../src/routines/index.ts";
 import { usageFor } from "../src/client/usage.ts";
 import { defineRoutine } from "../src/routine/define.ts";
 import { createHarness } from "../src/testing/index.ts";
@@ -323,8 +324,10 @@ describe("tier visibility on a running body", () => {
     assert.deepEqual(await fullBody.unbind("react"), { unbound: "react" });
   });
 
-  it("serves a body without built-ins and routines none of their content in the wiki", async () => {
+  it("serves a body without built-ins and routines none of their content in the wiki", { timeout: 60_000 }, async () => {
     const wikiBody = await start("features-wiki", "--wiki", "read", "--no-milestones", "--builtins", "none", "--no-routines");
+    const features = await wikiBody.features();
+    assert.deepEqual([features.builtins.length, features.milestones, features.routines], [0, false, false]);
     const first = (await cli(wikiBody, "wiki", "read", "flows/first-day")).out;
     assert.match(first, /collect\((ctx, )?isLog/);
     assert.doesNotMatch(first, KIT_WORDS);
@@ -332,6 +335,18 @@ describe("tier visibility on a running body", () => {
     const search = (await cli(wikiBody, "wiki", "search", "gather logs")).out;
     assert.doesNotMatch(search, KIT_WORDS);
     assert.match((await cli(wikiBody, "wiki", "read", "minebot/kits")).out, /no wiki page/);
+    // Reflexes need routines (CAPABILITY_GATES.reflexes), so this body's view has none.
+    const view = { builtins: false, milestones: false, reflexes: false, routines: false };
+    const { ids, stale, misplaced, naming } = await served(wikiBody, view);
+    assert.deepEqual(ids, pagesFor(view));
+    assert.deepEqual(stale, [], "pages whose served text names kit.*, kits.*, defineKit, or trigger_*");
+    assert.deepEqual(misplaced, [], "marked lines the served text shows without their feature");
+    assert.deepEqual(naming, [], "pages that name a built-in routine to a body without built-ins");
+    for (const call of BUILTIN_CALLS) {
+      for (const hit of (await wikiBody.wikiSearch(call, 20)).hits) {
+        assert.doesNotMatch(`${hit.title} ${hit.tags.join(" ")} ${hit.snippet}`, BUILTIN_NAMES, `search "${call}" shows ${hit.id}: ${hit.snippet}`);
+      }
+    }
   });
 
   it("shows a body with built-ins only the modules it offers", async () => {
@@ -362,32 +377,65 @@ describe("tier visibility on a running body", () => {
   /** What no page may say to a body: the call shapes and tools of the kits and code triggers that are gone. */
   const STALE_PAGE_TEXT = /kit\.|kits\.|defineKit|trigger_/;
 
-  /** The pages a body lists, and the ones among them whose served text says something stale. */
-  async function served(body: BodyClient): Promise<{ ids: string[]; stale: string[] }> {
-    const ids = (await body.wikiList()).pages.map((page) => page.id).sort();
-    const stale: string[] = [];
-    for (const id of ids) if (STALE_PAGE_TEXT.test((await body.wikiRead(id)).text)) stale.push(id);
-    return { ids, stale };
+  /** Every built-in routine's call name, from the catalog. */
+  const BUILTIN_CALLS = BUILTIN_MODULES.flatMap((module) => Object.keys(module.routines).map((routine) => `${module.name}.${routine}`));
+  /** A built-in routine's call name or import path. A name after `.` or a word character (Mineflayer's `bot.inventory.count`) is not a call. */
+  const BUILTIN_NAMES = new RegExp(`(?<![\\w.])(?:${BUILTIN_CALLS.map((call) => call.replace(".", "\\.")).join("|")})\\b|minebot-sdk/routines/`);
+  const MARKER = new RegExp(`^<!-- (/?)(${WikiFeature.options.join("|")}) -->$`);
+
+  /** Each feature's marked lines on a page under wiki/, parsed from its file: the trimmed lines inside its `<!-- feature -->` blocks that no line outside them repeats. */
+  function markedLines(id: string): [WikiFeature, string][] {
+    const lines: { feature: WikiFeature | null; text: string }[] = [];
+    let open: WikiFeature | null = null;
+    for (const line of readFileSync(path.join(import.meta.dirname, "..", "wiki", `${id}.md`), "utf8").split("\n")) {
+      const marker = MARKER.exec(line.trim());
+      if (marker) open = marker[1] ? null : (marker[2] as WikiFeature);
+      else if (line.trim()) lines.push({ feature: open, text: line.trim() });
+    }
+    return lines.filter(({ feature, text }) => feature && !lines.some((other) => other.feature !== feature && other.text === text)).map(({ feature, text }) => [feature!, text]);
   }
 
-  it("serves a default body (routines on, no --builtins) every page its features fit, and no page that names the kits or the trigger tools", { timeout: 60_000 }, async () => {
+  /**
+   * What a body with `view` serves of the wiki: the pages it lists; the ones whose text says something stale; the marked lines
+   * its text shows without their feature or hides with it; and, without built-ins, the pages whose text names a built-in routine.
+   */
+  async function served(body: BodyClient, view: Record<WikiFeature, boolean>): Promise<{ ids: string[]; stale: string[]; misplaced: string[]; naming: string[] }> {
+    const ids = (await body.wikiList()).pages.map((page) => page.id).sort();
+    const stale: string[] = [];
+    const misplaced: string[] = [];
+    const naming: string[] = [];
+    for (const id of ids) {
+      const { text } = await body.wikiRead(id);
+      if (STALE_PAGE_TEXT.test(text)) stale.push(id);
+      if (!view.builtins && BUILTIN_NAMES.test(text)) naming.push(id);
+      const lines = new Set(text.split("\n").map((line) => line.trim()));
+      for (const [feature, line] of markedLines(id)) if (lines.has(line) !== view[feature]) misplaced.push(`${id} ${feature}: ${line}`);
+    }
+    return { ids, stale, misplaced, naming };
+  }
+
+  it("serves a default body (routines on, no --builtins) every page its features fit, each marked line exactly where its feature is on, and no page that names the kits or the trigger tools", { timeout: 60_000 }, async () => {
     const body = await start("features-view-default", "--wiki", "read", "--no-milestones");
     const features = await body.features();
     assert.deepEqual([features.routines, features.reflexes, features.builtins.length > 0], [true, true, true]);
-    const { ids, stale } = await served(body);
-    assert.deepEqual(ids, pagesFor({ builtins: true, milestones: false, reflexes: true, routines: true }));
+    const view = { builtins: true, milestones: false, reflexes: true, routines: true };
+    const { ids, stale, misplaced } = await served(body, view);
+    assert.deepEqual(ids, pagesFor(view));
     assert.ok(ids.includes("minebot/routines"), "the routines page is served where routines are on");
     assert.deepEqual(stale, [], "pages whose served text names kit.*, kits.*, defineKit, or trigger_*");
+    assert.deepEqual(misplaced, [], "marked lines the served text shows without their feature, or hides with it");
   });
 
-  it("serves a builtins-only body (--builtins, no routines) every page its features fit, and no page that names the kits or the trigger tools", { timeout: 60_000 }, async () => {
+  it("serves a builtins-only body (--builtins, no routines) every page its features fit, each marked line exactly where its feature is on, and no page that names the kits or the trigger tools", { timeout: 60_000 }, async () => {
     const body = await start("features-view-builtins", "--wiki", "read", "--no-milestones", "--builtins", "gatherer", "--no-routines");
     const features = await body.features();
     assert.deepEqual([features.routines, features.builtins.length > 0], [false, true]);
-    const { ids, stale } = await served(body);
-    assert.deepEqual(ids, pagesFor({ builtins: true, milestones: false, reflexes: false, routines: false }));
+    const view = { builtins: true, milestones: false, reflexes: false, routines: false };
+    const { ids, stale, misplaced } = await served(body, view);
+    assert.deepEqual(ids, pagesFor(view));
     assert.ok(!ids.includes("minebot/routines"), "the routines page is hidden where routines are off");
     assert.deepEqual(stale, [], "pages whose served text names kit.*, kits.*, defineKit, or trigger_*");
+    assert.deepEqual(misplaced, [], "marked lines the served text shows without their feature, or hides with it");
   });
 });
 
@@ -420,7 +468,8 @@ describe("what h.calls records", () => {
 
   it("says so in the doc comments of the published harness types", () => {
     const source = readFileSync(path.join(import.meta.dirname, "..", "src", "testing", "index.ts"), "utf8");
-    assert.match(source, /declared with a `module\.routine` name \(the built-in routines\)/);
+    assert.match(source, /declared with a `module\.routine` name \(every built-in routine, and any other routine that declares one\)/);
+    assert.doesNotMatch(source, /\(the built-in routines\)/, "a routine of your own named module.routine is recorded too");
     assert.match(source, /A routine value without such a name is not recorded\./);
     assert.match(source, /those named `module\.routine` are recorded in `calls`/);
     assert.doesNotMatch(source, /by import run with that scope and are recorded in `calls`/);

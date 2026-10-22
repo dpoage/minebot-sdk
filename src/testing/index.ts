@@ -43,7 +43,7 @@ export interface HarnessOptions {
   username?: string;
 }
 
-/** One call of a routine value declared with a `module.routine` name (the built-in routines), as the call observer saw it: nested calls included. `kit` is the module part of the name and `action` the routine part. A routine value without such a name is not recorded. */
+/** One call of a routine value declared with a `module.routine` name (every built-in routine, and any other routine that declares one), as the call observer saw it: nested calls included. `kit` is the module part of the name and `action` the routine part. A routine value without such a name is not recorded. */
 export interface RecordedCall {
   kit: string;
   action: string;
@@ -80,7 +80,7 @@ export interface Harness {
    */
   run<F extends RoutineFunction>(routine: F, args?: NoInfer<RunArgs<F>>): Promise<RunResult<F>>;
   run<M extends { readonly default: RoutineFunction }>(routine: M, args?: NoInfer<RunArgs<M["default"]>>): Promise<RunResult<M["default"]>>;
-  /** Every call so far of a routine value named `module.routine` (the built-in routines), in the order the calls started: the one `run` runs and the ones it calls. */
+  /** Every call so far of a routine value named `module.routine` (every built-in routine, and any other routine that declares such a name), in the order the calls started: the one `run` runs and the ones it calls. */
   readonly calls: readonly RecordedCall[];
   /** What routines passed to `ctx.log`, as the body's run log writes the lines: non-strings through `util.inspect`. */
   readonly logs: readonly string[];
@@ -114,7 +114,7 @@ export interface Harness {
 
 /**
  * A test harness for routines. It runs a routine through the real `invokeRoutine`: arguments and
- * results are validated, and each call of a routine value named `module.routine` (the built-in routines) is observed (`calls`). The harness
+ * results are validated, and each call of a routine value named `module.routine` (every built-in routine, and any other routine that declares such a name) is observed (`calls`). The harness
  * keeps a notepad and `ctx.store` namespaces in memory, over a fake bot built on the real registry:
  *
  * - A block world: `blockAt`, `findBlock(s)`, a flat ground layer plus the blocks you set.

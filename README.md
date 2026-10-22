@@ -307,10 +307,11 @@ minebot routines                                # the saved routines, and the na
 
 ### Write a routine
 
-The default export of the module is a function `(ctx, args) => result`. `defineRoutine({ description?, args?, returns? }, fn)` declares it with types and checks. A plain default-exported function works too. A routine receives the same `ctx` as a run; see [Runs](#runs).
+The default export of the module is a function `(ctx, args) => result`. `defineRoutine({ name?, description?, args?, returns? }, fn)` declares it with types and checks. A plain default-exported function works too. A routine receives the same `ctx` as a run; see [Runs](#runs).
 
 - `args`: a zod schema. The body checks the arguments of every call against it and gives the routine the parsed value, with defaults applied. A call with bad arguments fails before the routine runs, and the error holds the schema. Without `args`, the routine gets its arguments unchecked.
 - `returns`: a zod schema. The body checks the result of every call against it. A result that does not match fails the call.
+- `name`: the routine's name in the error messages of a direct call of the routine value, such as a call from another routine that imports it (`routine` when it has none). A built-in routine declares `<module>.<routine>`, and [the test harness](#test-a-routine) records the calls of every routine named that way, yours too.
 - `description`: text for the readers of the source. The body does not show it.
 
 Only a missing argument becomes `{}`. A call without `--args` passes `{}`, and a reflex passes `{ event }`. `null` is an argument: a direct call `routine(ctx, null)` and `h.run(routine, null)` hand `null` to the routine's schema, and a `z.object` refuses it.
@@ -356,7 +357,7 @@ An action is a routine that the agent calls by name. `bind action <name> <routin
 - The default timeout is 60 seconds and the maximum is 30 minutes (`--timeout <ms>`).
 - `minebot stop` and the timeout abort the call, and the kill deadline of [Runs](#runs) applies.
 - A call that names no bound action, or no offered built-in routine, gets HTTP 404.
-- The history (`--history`) records the call with an empty `code` and `call: { name, routine, args }`. A built-in's line has `call: { name, args }`.
+- The history (`--history`) records the call with an empty `code` and `call: { name, routine, args }`, without `args` when the call had none. A built-in's line has `call: { name, args }`, the same way.
 
 ### Reflexes
 
@@ -423,9 +424,9 @@ The MCP tools take `timeout_ms` and `cooldown_ms`, as the other MCP tools do; HT
 npm run minebot -- init ../ws && cd ../ws    # from a checkout; an installed package: npx minebot init ws
 npm install /path/to/minebot-sdk-0.1.0.tgz   # while the package is unpublished; see Install
 npx minebot body --bot dev                   # in another terminal
-npx minebot routines save routines/*.ts      # save the routines into the body's library
-npx minebot bind action hello hello
-npx minebot call hello
+npx minebot routines save --bot dev routines/*.ts  # save the routines into the body's library
+npx minebot bind --bot dev action hello hello
+npx minebot call --bot dev hello
 npx minebot run --bot dev runs/say-hello.ts
 npx tsc                                      # checks routines/, runs/, and test/
 npm test
@@ -454,7 +455,7 @@ test("count-logs doubles the logs it finds", async () => {
 });
 ```
 
-`h.calls` records the calls of built-in routines, which are the routine values named `module.routine`, nested calls included, in the order they started. Each record is `{ kit, action, args }`: `kit` is the module, `action` is the routine, and `args` are the arguments as the caller passed them. The harness does not record a routine value without such a name, such as your own routine.
+`h.calls` records the calls of the routine values named `module.routine`, nested calls included, in the order they started: every built-in routine, and a routine of yours whose `defineRoutine` declares such a `name`. Each record is `{ kit, action, args }`: `kit` is the module, `action` is the routine, and `args` are the arguments as the caller passed them. The harness does not record a routine value without such a name, such as a plain function.
 
 ```ts
 import assert from "node:assert/strict";
@@ -659,7 +660,7 @@ The files stay where they are. Rewrite each kit as a routine: `defineRoutine` re
 
 A body skips every code trigger that an earlier version stored in the state directory's reflex file (`triggers.json`). The body does not run it and does not delete it. At each start the body adds a `reflex_error` event for it. The entry keeps its name and counts toward the limit of 50 reflexes until you remove it.
 
-- If the name fits the rule `unbind` accepts (1-48 lowercase letters, digits, `.`, `_`, and `-`, starting with a letter or digit), run `minebot unbind <name>`. Then bind a routine as a reflex under that name or another.
+- If the name fits the rule `unbind` accepts (1-48 lowercase letters, digits, `.`, `_`, and `-`, starting with a letter or digit), run `minebot unbind <name>`. Then bind a routine as a reflex under a name the bind rule accepts (1-48 lowercase letters, digits, `_`, and `-`, starting with a letter). That can be the old name only when it has no `.` and starts with a letter.
 - If the name breaks that rule (an uppercase letter or a space, say), `unbind` refuses it. Stop the body, delete the key from `triggers.json` in the state directory, and start the body again.
 - An action in `bindings.json` whose name a reflex or a skipped entry also holds is skipped too, and the body reports a `binding_error` event that tells you to unbind the other entry and restart the body. After the unbind, the action is callable once the body has restarted.
 
@@ -675,7 +676,7 @@ A run is a module, not the body of an async function. These changes follow:
 
 ### createKitHarness becomes createHarness
 
-`createKitHarness` is now `createHarness`, from the same `minebot-sdk/testing` path. The options `kits`, `builtins`, and `active` are gone. `h.call("kit.action", args)` and `h.kit` are gone. Run a routine with `h.run(routine, args)`, and call a built-in as an import. `h.calls` records `{ kit, action, args }` for the routine values named `module.routine`, which are the built-ins.
+`createKitHarness` is now `createHarness`, from the same `minebot-sdk/testing` path. The options `kits`, `builtins`, and `active` are gone. `h.call("kit.action", args)` and `h.kit` are gone. Run a routine with `h.run(routine, args)`, and call a built-in as an import. `h.calls` records `{ kit, action, args }` for the routine values named `module.routine`: the built-ins, and a routine of yours that declares such a name.
 
 ### An old workspace
 
