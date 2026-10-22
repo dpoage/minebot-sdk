@@ -51,10 +51,10 @@ import type { Body, RunRecorder } from "./body.ts";
 import { NotConnectedError } from "./connection.ts";
 import { NoteLimitError } from "../notes.ts";
 import type { Bindings } from "./bindings.ts";
-import { BindingConflictError } from "./bindings.ts";
+import { BindingInvalidError } from "./bindings.ts";
 import { RoutineSourceError, type RoutineLibrary } from "./routines/library.ts";
 import { RoutineNotFoundError } from "./routines/loader.ts";
-import { TriggerInvalidError, TriggerLimitError, TriggerNotFoundError } from "./triggers.ts";
+import { NameConflictError, TriggerInvalidError, TriggerLimitError, TriggerNotFoundError } from "./triggers.ts";
 
 export interface RequestContext {
   url: URL;
@@ -87,9 +87,9 @@ export interface ApiRequest {
 /** HTTP status for an error thrown while handling a request. */
 export function statusFor(err: unknown): number {
   if (err instanceof HttpError) return err.status;
-  if (err instanceof BusyError || err instanceof NoteLimitError || err instanceof TriggerLimitError || err instanceof BindingConflictError) return 409;
+  if (err instanceof BusyError || err instanceof NoteLimitError || err instanceof TriggerLimitError || err instanceof NameConflictError) return 409;
   if (err instanceof TriggerNotFoundError || err instanceof RoutineNotFoundError) return 404;
-  if (err instanceof TriggerInvalidError) return 400;
+  if (err instanceof TriggerInvalidError || err instanceof BindingInvalidError) return 400;
   if (err instanceof NotConnectedError) return 503;
   if (err instanceof WikiDisabledError) return 403;
   if (err instanceof WikiPageNotFoundError) return 404;

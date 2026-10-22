@@ -15,18 +15,24 @@
 // Requests: GET /ping answers with this pid; GET /triggers with the trigger list; POST /triggers
 // saves the trigger in the body; POST /triggers/enabled `{name, enabled}` sets it enabled; POST
 // /run runs `{code, timeoutMs}` the way the body's /run does.
+// With `init.script.asReflex` the definition is a reflex (a `routine` body in place of `run`): the
+// fixture has no routine library, so its firings run `script.reflex.run` (or what POST /triggers
+// last saved under the name) as the stand-in program, and the scheduler, channel, and supervisor
+// see what they see for a body's reflex. POST /triggers then saves a reflex from the same fields
+// and GET /triggers lists the reflexes; there is no enabling a reflex.
 import { appendFileSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { HostEvents, preemptingRunner, RunReporter } from "../../../src/host/channel.ts";
-import { Triggers } from "../../../src/host/triggers.ts";
+import { isReflex, Triggers } from "../../../src/host/triggers.ts";
 import { BusyError, ProgramRunner } from "../../../src/program/runner.ts";
 import { programFinished, type FromHost, type HostInit, type ToHost } from "../../../src/protocol/host.ts";
-import { TriggerInput } from "../../../src/protocol/index.ts";
+import { ReflexInput, TriggerInput } from "../../../src/protocol/index.ts";
 import { JsonStore } from "../../../src/store.ts";
 
 interface Script {
   graceMs: number;
   reflex: { name: string; on: string[]; run: string; when?: string; timeoutMs: number; cooldownMs: number; preempt?: boolean; priority?: number };
+  asReflex?: boolean;
   killAfterFinished?: boolean;
   killOnEndAck?: boolean;
   dieBeforeReadyOnSpawn?: number;
@@ -58,13 +64,27 @@ function start(code: string, timeoutMs: number) {
   return runner.run(code, timeoutMs);
 }
 
+/** The routine a reflex of this fixture names; the fixture has no library, so nothing loads it. */
+const ROUTINE = "stand-in";
+/** Whether this host's definitions are reflexes. */
+let asReflex = false;
+/** The program each reflex stands in for, by name. */
+const programs = new Map<string, string>();
+
+function save(input: { name: string; run: string }): Promise<unknown> {
+  if (!asReflex) return triggers.add(input);
+  const { run, ...fields } = input;
+  programs.set(fields.name, run);
+  return triggers.addReflex({ ...fields, routine: ROUTINE });
+}
+
 async function serve(id: number, method: string, pathname: string, body: string | null): Promise<unknown> {
-  if (pathname === "/triggers" && method === "POST") return triggers.add(JSON.parse(body ?? "{}"));
+  if (pathname === "/triggers" && method === "POST") return save(JSON.parse(body ?? "{}"));
   if (pathname === "/triggers/enabled" && method === "POST") {
     const { name, enabled } = JSON.parse(body ?? "{}") as { name: string; enabled: boolean };
     return triggers.setEnabled(name, enabled);
   }
-  if (pathname === "/triggers") return { triggers: triggers.list() };
+  if (pathname === "/triggers") return { triggers: asReflex ? triggers.reflexes() : triggers.list() };
   if (pathname !== "/run") return { pid: process.pid };
   const { code, timeoutMs } = JSON.parse(body ?? "{}") as { code: string; timeoutMs: number };
   return reporter.record({ code, timeoutMs, requestId: id }, async () => {
@@ -88,7 +108,10 @@ process.on("message", async (message: ToHost) => {
       });
       const store = new JsonStore(path.join(init.stateDir, "triggers.json"));
       const first = store.keys().length === 0;
-      if (first) store.set(init.script.reflex.name, { ...TriggerInput.parse(init.script.reflex), updated: new Date().toISOString() });
+      asReflex = init.script.asReflex === true;
+      const { run: program, ...fields } = init.script.reflex;
+      programs.set(fields.name, program);
+      if (first) store.set(fields.name, { ...(asReflex ? ReflexInput.parse({ ...fields, routine: ROUTINE }) : TriggerInput.parse(init.script.reflex)), updated: new Date().toISOString() });
       killAfterFinished = first && init.script.killAfterFinished === true;
       killOnEndAck = first && init.script.killOnEndAck === true;
       const { burstOnEvent } = init.script;
@@ -104,15 +127,18 @@ process.on("message", async (message: ToHost) => {
         runner: preemptingRunner(runner, reporter),
         connected: () => true,
         bot: () => undefined,
-        run: (trigger, event, started) =>
-          reporter.record(
-            { code: trigger.run, timeoutMs: trigger.timeoutMs, extra: { trigger: trigger.name, event: { seq: event.seq, type: event.type } }, trigger: { name: trigger.name, updated: trigger.updated } },
+        reflexes: asReflex,
+        run: (trigger, event, started) => {
+          const code = isReflex(trigger) ? programs.get(trigger.name)! : trigger.run;
+          return reporter.record(
+            { code, timeoutMs: trigger.timeoutMs, extra: { trigger: trigger.name, event: { seq: event.seq, type: event.type } }, trigger: { name: trigger.name, updated: trigger.updated } },
             () => {
               if (runner.running) throw new BusyError();
               started();
-              return start(trigger.run, trigger.timeoutMs);
+              return start(code, trigger.timeoutMs);
             },
-          ),
+          );
+        },
         deliver: (end, finished, disabled, failures) => reporter.deliver(end, finished, disabled, failures),
         counts: (failures, ended) => reporter.counts(failures, ended),
         register: async () => {},

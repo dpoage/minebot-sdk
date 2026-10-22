@@ -20,6 +20,7 @@ process.on("message", async (message: ToHost) => {
         runner: { running: null, stop: () => false },
         connected: () => true,
         bot: () => undefined,
+        reflexes: false,
         run: async (_trigger, _event, started) => {
           started();
           return { status: "ok", result: null, logs: "", durationMs: 0 };

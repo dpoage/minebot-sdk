@@ -17,7 +17,7 @@ import { Notes } from "../notes.ts";
 import { StallTracker } from "./progress.ts";
 import { requestStats } from "./stats.ts";
 import { BodyState } from "./state.ts";
-import { Triggers, type StoredTrigger } from "./triggers.ts";
+import { isReflex, Triggers, type StoredReflex, type StoredTrigger } from "./triggers.ts";
 import { preemptingRunner } from "./channel.ts";
 
 export interface BodyOptions {
@@ -140,11 +140,11 @@ export class Body {
             runner: preemptingRunner(this.runner, options.recorder),
             connected: () => this.#connection.spawned,
             bot: () => this.#connection.bot ?? undefined,
+            reflexes: options.routines !== undefined,
             run: (trigger, event, started) => this.#runTrigger(trigger, event, started),
             deliver: (end, finished, disabled, failures) => options.recorder.deliver(end, finished, disabled, failures),
             counts: (failures, ended) => options.recorder.counts(failures, ended),
-            register: (trigger) =>
-              options.recorder.register(`${trigger.run}\n${trigger.when ?? ""}`, { trigger: trigger.name, on: trigger.on, ...(trigger.when !== undefined && { when: trigger.when }) }),
+            register: (trigger) => this.#register(trigger),
             failures: options.triggerFailures,
             lost: options.lostFiring,
           });
@@ -225,8 +225,14 @@ export class Body {
     return result;
   }
 
+  /** Records what a trigger or reflex being saved will run: a trigger's code, and for a reflex its `when` (the routine's source is the library's). */
+  #register(trigger: StoredTrigger): Promise<void> {
+    if (isReflex(trigger)) return this.#options.recorder.register(trigger.when ?? "", { trigger: trigger.name, routine: trigger.routine, on: trigger.on });
+    return this.#options.recorder.register(`${trigger.run}\n${trigger.when ?? ""}`, { trigger: trigger.name, on: trigger.on, ...(trigger.when !== undefined && { when: trigger.when }) });
+  }
+
   /**
-   * Runs one firing of a trigger through the same runner and history as programs. Its end is a
+   * Runs one firing of a trigger or reflex through the same runner and history as programs. Its end is a
    * `trigger_finished` event, not `program_finished`, so an agent waiting on its own programs is not woken by reflexes.
    */
   async #runTrigger(trigger: StoredTrigger, event: BodyEvent, started: () => void): Promise<RunResult> {
@@ -234,11 +240,30 @@ export class Body {
     const run = () => {
       if (this.runner.running) throw new BusyError();
       started();
-      return this.runner.run(trigger.run, trigger.timeoutMs, { event: structuredClone(event) });
+      return isReflex(trigger) ? this.#callReflex(trigger, event) : this.runner.run(trigger.run, trigger.timeoutMs, { event: structuredClone(event) });
     };
     return this.#options.recorder.record(
-      { code: trigger.run, timeoutMs: trigger.timeoutMs, extra: { trigger: trigger.name, event: { seq: event.seq, type: event.type } }, trigger: { name: trigger.name, updated: trigger.updated } },
+      {
+        code: isReflex(trigger) ? "" : trigger.run,
+        timeoutMs: trigger.timeoutMs,
+        extra: { trigger: trigger.name, ...(isReflex(trigger) && { routine: trigger.routine }), event: { seq: event.seq, type: event.type } },
+        trigger: { name: trigger.name, updated: trigger.updated },
+      },
       run,
+    );
+  }
+
+  /** Calls a reflex's routine with `{ event }` as one run, loading its module inside the run as a call does. */
+  #callReflex(reflex: StoredReflex, event: BodyEvent): Promise<RunOutcome> {
+    const loader = this.#options.routines;
+    if (!loader) throw new Error("this body has no routines");
+    const environment = this.#environment();
+    return this.runner.call(
+      async (scope) => {
+        const ctx = routineContext(scope, environment);
+        return invokeRoutine(await loader.load(reflex.routine), reflex.routine, ctx, { event: structuredClone(event) });
+      },
+      { timeoutMs: reflex.timeoutMs, sourceDir: loader.dir },
     );
   }
 

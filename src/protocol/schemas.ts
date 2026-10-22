@@ -209,8 +209,21 @@ export const RoutineVersionsQuery = z.object({ name: RoutineName });
 /** Body of `POST /routines/revert`: save an earlier version of a routine again, as a new version. */
 export const RevertRoutineInput = z.object({ name: RoutineName, version: z.number().int().positive() });
 
-/** Body of `POST /bind`: an action, a saved routine called by name with `POST /call`. */
-export const BindInput = z.object({ kind: z.literal("action"), name: BindingName, routine: RoutineName });
+/**
+ * A reflex: a saved routine that fires on events, with a trigger's fields and defaults in place of
+ * its `run` program. The routine's default export is called with `(ctx, { event })`.
+ */
+export const ReflexInput = TriggerInput.omit({ name: true, run: true }).extend({ name: BindingName, routine: RoutineName });
+export type ReflexInput = z.infer<typeof ReflexInput>;
+
+/**
+ * Body of `POST /bind`: an action, a saved routine called by name with `POST /call`, or a reflex,
+ * a saved routine the body calls when events arrive.
+ */
+export const BindInput = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("action"), name: BindingName, routine: RoutineName }),
+  ReflexInput.extend({ kind: z.literal("reflex") }),
+]);
 export type BindInput = z.infer<typeof BindInput>;
 
 /** Body of `POST /unbind`. */

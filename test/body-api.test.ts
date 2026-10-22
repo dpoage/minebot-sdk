@@ -811,7 +811,57 @@ describe("body API: limits", () => {
     for (let i = 0; i < MAX_TRIGGERS; i++) {
       await body.call("POST", "/triggers", { body: { trigger: { name: `t${i}`, on: ["hurt"], run: "log(1)", cooldownMs: 1000, timeoutMs: 30_000, enabled: true, preempt: false, priority: 0, updated: "<timestamp>", fired: 0, failures: 0 }, replaced: false } }, { json: { name: `t${i}`, on: ["hurt"], run: "log(1)" } });
     }
-    await body.call("POST", "/triggers", { status: 409, body: { error: `a body keeps at most ${MAX_TRIGGERS} triggers; remove some first` } }, { json: { name: "one-too-many", on: ["hurt"], run: "log(1)" } });
+    await body.call("POST", "/triggers", { status: 409, body: { error: `a body keeps at most ${MAX_TRIGGERS} triggers and reflexes together; remove some first` } }, { json: { name: "one-too-many", on: ["hurt"], run: "log(1)" } });
+  });
+});
+
+describe("body API: reflexes", () => {
+  let body: Running;
+  const reflex = (name: string, on: string[] = ["hurt"]) => ({ kind: "reflex", name, routine: "r1", on, cooldownMs: 1000, timeoutMs: 30_000, enabled: true, preempt: false, priority: 0, updated: "<timestamp>", fired: 0, failures: 0 });
+
+  before(async () => {
+    body = await startBody({ stateFiles: { "routines/r1.ts": "export default () => 1;\n" } });
+  });
+  after(() => body.close());
+
+  it("binds, lists, and unbinds a reflex among the bindings, and keeps it out of the triggers", async () => {
+    await body.call("POST", "/bind", { body: { binding: reflex("rfx"), replaced: false } }, { json: { kind: "reflex", name: "rfx", routine: "r1", on: ["hurt"] } });
+    await body.call("POST", "/bind", { body: { binding: reflex("rfx", ["chat"]), replaced: true } }, { json: { kind: "reflex", name: "rfx", routine: "r1", on: ["chat"] } });
+    await body.call("GET", "/bindings", { body: { bindings: [reflex("rfx", ["chat"])] } });
+    await body.call("GET", "/triggers", { body: { triggers: [] } });
+    await body.call("POST", "/triggers/remove", { status: 404, body: { error: 'no trigger "rfx"' } }, { json: { name: "rfx" } });
+    await body.call("POST", "/triggers/enabled", { status: 404, body: { error: 'no trigger "rfx"' } }, { json: { name: "rfx", enabled: false } });
+    await body.call("POST", "/unbind", { body: { unbound: "rfx" } }, { json: { name: "rfx" } });
+    await body.call("GET", "/bindings", { body: { bindings: [] } });
+  });
+
+  it("refuses a reflex that does not validate with 400, an unknown routine with 404, and a trigger's name with 409", async () => {
+    await body.call("POST", "/bind", { status: 400, body: { error: "✖ Invalid input: expected array, received undefined\n  → at on" } }, { json: { kind: "reflex", name: "rfx", routine: "r1" } });
+    // The syntax error's own text is the JavaScript engine's.
+    const syntax = await body.send("POST", "/bind", { json: { kind: "reflex", name: "rfx", routine: "r1", on: ["hurt"], when: "event.data <" } });
+    assert.equal(syntax.status, 400);
+    assert.match(JSON.stringify(syntax.body), /^\{"error":"when does not compile: /);
+    await body.call("POST", "/bind", { status: 404, body: { error: 'no routine named "ghost"' } }, { json: { kind: "reflex", name: "rfx", routine: "ghost", on: ["hurt"] } });
+    await body.call("POST", "/triggers", { body: { trigger: { name: "tgr", on: ["hurt"], run: "log(1)", cooldownMs: 1000, timeoutMs: 30_000, enabled: true, preempt: false, priority: 0, updated: "<timestamp>", fired: 0, failures: 0 }, replaced: false } }, { json: { name: "tgr", on: ["hurt"], run: "log(1)" } });
+    await body.call(
+      "POST",
+      "/bind",
+      { status: 409, body: { error: '"tgr" is a trigger; triggers, reflexes, and action bindings share their names, so remove it or pick another name' } },
+      { json: { kind: "reflex", name: "tgr", routine: "r1", on: ["hurt"] } },
+    );
+    await body.call("GET", "/bindings", { body: { bindings: [] } });
+    await body.call("POST", "/triggers/remove", { body: { removed: "tgr" } }, { json: { name: "tgr" } });
+  });
+
+  it("counts reflexes and triggers toward one limit of 50", async () => {
+    for (let i = 0; i < MAX_TRIGGERS; i++) {
+      if (i % 2) await body.call("POST", "/bind", { body: { binding: reflex(`t${i}`), replaced: false } }, { json: { kind: "reflex", name: `t${i}`, routine: "r1", on: ["hurt"] } });
+      else await body.call("POST", "/triggers", { body: { trigger: { name: `t${i}`, on: ["hurt"], run: "log(1)", cooldownMs: 1000, timeoutMs: 30_000, enabled: true, preempt: false, priority: 0, updated: "<timestamp>", fired: 0, failures: 0 }, replaced: false } }, { json: { name: `t${i}`, on: ["hurt"], run: "log(1)" } });
+    }
+    const full = { status: 409, body: { error: `a body keeps at most ${MAX_TRIGGERS} triggers and reflexes together; remove some first` } };
+    await body.call("POST", "/bind", full, { json: { kind: "reflex", name: "one-too-many", routine: "r1", on: ["hurt"] } });
+    await body.call("POST", "/triggers", full, { json: { name: "one-too-many", on: ["hurt"], run: "log(1)" } });
+    await body.call("POST", "/bind", { body: { binding: reflex("t1", ["chat"]), replaced: true } }, { json: { kind: "reflex", name: "t1", routine: "r1", on: ["chat"] } });
   });
 });
 

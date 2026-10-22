@@ -230,3 +230,38 @@ describe("a call evaluates a module only inside its run", () => {
     });
   });
 });
+
+describe("a reflex's run is a call's, fired by an event", () => {
+  const chatter = "export default async (ctx: { bot: { emit(event: string, ...args: unknown[]): void }; sleep(ms: number): Promise<void> }) => {\n  ctx.bot.emit('chat', 'alice', 'go');\n  await ctx.sleep(400);\n  return 'done';\n};\n";
+  const KEYS = "export default (ctx: object) => Object.keys(ctx).sort();\n";
+  // Notes what the reflex was given, so the firing's own arguments can be read back.
+  const NOTES = "export default (ctx: { notes: { set(key: string, text: string): void } }, args: { event: { type: string } }) => {\n  ctx.notes.set('given', JSON.stringify({ keys: Object.keys(ctx).sort(), args: Object.keys(args), type: args.event.type }));\n};\n";
+
+  it("starts a reflex's firing queued during a call when the call ends, though no event echo tells the triggers", { timeout: 30_000 }, async () => {
+    const body = await bodyWith({ chatter, keys: KEYS }, { dropEchoes: ["program_finished"] });
+    await using(body, async () => {
+      await body.ok("POST", "/bind", { kind: "reflex", name: "reflex", routine: "keys", on: ["chat"], cooldownMs: 0 });
+      const run = runOf(await body.request("POST", "/call", { name: "chatter" }));
+      assert.equal(run.result, "done");
+      const finished = await body.waitFor("trigger_finished");
+      assert.deepEqual([finished.data.name, finished.data.status], ["reflex", "ok"]);
+      const [fired] = body.eventsOf("trigger_fired");
+      assert.equal(body.eventsOf("trigger_fired").length, 1);
+      const [ended] = body.eventsOf("program_finished");
+      assert.ok(fired!.seq > ended!.seq, "the firing started after the call ended");
+    });
+  });
+
+  it("gets exactly the ctx a call gets, and one argument: { event }", async () => {
+    const body = await bodyWith({ keys: KEYS, notes: NOTES });
+    await using(body, async () => {
+      const called = runOf(await body.request("POST", "/call", { name: "keys" })).result;
+      assert.deepEqual(called, ["bot", "kit", "log", "notes", "on", "signal", "sleep", "status", "wiki"]);
+      await body.ok("POST", "/bind", { kind: "reflex", name: "reflex", routine: "notes", on: ["chat"], cooldownMs: 0 });
+      runOf(await body.request("POST", "/run", { code: "bot.emit('chat', 'ana', 'hi')" }));
+      assert.equal((await body.waitFor("trigger_finished")).data.status, "ok");
+      const given = runOf(await body.request("POST", "/run", { code: "return notes.get('given')" })).result;
+      assert.deepEqual(JSON.parse(String(given)), { keys: called, args: ["event"], type: "chat" });
+    });
+  });
+});
