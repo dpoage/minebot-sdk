@@ -279,9 +279,13 @@ function isInLibrary(specifier: string, parentURL: string, library: Library): bo
   }
 }
 
-/** What `RoutineLoader.run` says of a source with a top-level `return`, which only a function body may have. */
-function explainReturn(err: unknown): unknown {
-  if (err instanceof SyntaxError && /return statement/i.test(err.message)) {
+/**
+ * What `RoutineLoader.run` says of a source with a top-level `return`, which only a function body may have. Only the run's own
+ * parse error is explained: Node opens the stack of a module's parse error with that module's URL (`<url>:<line>`), so a
+ * library module's parse error, and a SyntaxError the run's code throws or causes (`JSON.parse`), are left as they are.
+ */
+function explainReturn(err: unknown, url: string): unknown {
+  if (err instanceof SyntaxError && err.stack?.startsWith(`${url}:`) && /return statement/i.test(err.message)) {
     err.message = `a run is a module, so its source cannot return: write the result as \`export default <value>\`, or \`export default async (ctx, args) => <value>\` (${err.message})`;
   }
   return err;
@@ -351,7 +355,7 @@ export class RoutineLoader {
     try {
       return await import(url.href);
     } catch (err) {
-      throw explainReturn(err);
+      throw explainReturn(err, url.href);
     }
   }
 

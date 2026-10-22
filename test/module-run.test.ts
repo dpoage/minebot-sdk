@@ -94,6 +94,23 @@ export default defineRoutine({ args: z.object({ n: z.number().default(3) }), ret
     });
   });
 
+  it("says nothing of export default for any other SyntaxError that mentions a return statement: one the run throws or causes, and a library module's own top-level return", async () => {
+    await using({}, async (body) => {
+      body.writeRoutines({ badlib: "return 1;\nexport const x = 1;\n" });
+      const cases = {
+        "JSON.parse": ["JSON.parse('return statement');\nexport default 1;\n", /is not valid JSON/],
+        thrown: ["throw new SyntaxError('return statement');\n", /^SyntaxError: return statement/],
+        "a library module": ["import { x } from './badlib.ts';\nexport default x;\n", /badlib\.ts:1[\s\S]*SyntaxError: /],
+      } as const;
+      for (const [name, [code, error]] of Object.entries(cases)) {
+        const answer = runOf(await run(body, code));
+        assert.equal(answer.status, "error", name);
+        assert.match(answer.error ?? "", error, name);
+        assert.doesNotMatch(answer.error ?? "", /export default|a run is a module/, name);
+      }
+    });
+  });
+
   it("ends a syntax error and a throw in status error, the throw with the run's own line", async () => {
     await using({}, async (body) => {
       const syntax = runOf(await run(body, "export default (;"));

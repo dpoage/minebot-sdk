@@ -2,9 +2,10 @@
 // grace of it ends with its host, whether it awaits forever or blocks the host's main thread after
 // catching the abort. The supervisor's side runs against the trigger fixture
 // (test/fixtures/host/trigger-host.ts: the real RunReporter, Triggers, and ProgramRunner over the
-// real channel) with a small grace; the host-side rules (which run a preemption aborts, and when)
-// run in-process against a RunReporter over a real ProgramRunner, whose channel is held open by the
-// test. The body's own Triggers are checked to send their preemptions through the recorder.
+// real channel) with a small grace; the host-side rules (which run a preemption aborts, and when, and
+// which runs the reporter's run slot refuses) run in-process against a RunReporter over a real
+// ProgramRunner, whose channel is held open by the test. The body's own Triggers are checked to see
+// the slot and send their preemptions through the recorder.
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -45,7 +46,6 @@ after(async () => {
 interface Script {
   reflex: { name: string; on: string[]; run: string; timeoutMs: number; cooldownMs: number; preempt?: boolean; priority?: number };
   burstOnEvent?: { type: string; count: number; bytes: number };
-  holdPreempt?: boolean;
 }
 
 interface Scripted {
@@ -202,19 +202,17 @@ describe("a preemption after a run refused as busy still stops the run that exec
     assert.notEqual(await pidOf(t), before, "the host was not replaced");
   });
 
-  // The refused run's start can be acked after the preemption is asked and before its message is written: the supervisor's history is slow to
-  // write the start, or the message waits behind a burst. Nothing orders those two paths, so under load the ack lost the race and the "refused"
-  // run started on a runner the preemption had freed, answering 200. The host holds the message until the test says, so the order is the test's.
-  for (const ackDelayMs of [0, 400]) {
-    it(`stops the executing program, leaving the host alone, when the refused run's start is acked (${ackDelayMs} ms late) between the ask and the write of a preemption that waits behind a burst`, { timeout: 30_000 }, async () => {
-      const t = await scripted({ reflex: reflex("return 1;"), burstOnEvent: { type: "fire", count: 150, bytes: 4_000 }, holdPreempt: true }, { ackDelayMs });
+  // A run that arrives while another holds the host's run slot (running, or in the grace of its preemption) is refused at its arrival, before
+  // the supervisor hears of it: however late the supervisor's history would write its start, it never runs ahead of the preempting firing,
+  // nor starts and is stopped by it (mb-9h3). Nothing here orders the refusal against the preemption: the order is the product's.
+  for (const ackDelayMs of [0, 80, 400]) {
+    it(`refuses a run that arrives as a preemption that waits behind a burst is asked (its start would be acked ${ackDelayMs} ms late), stops the executing program, runs the firing, and leaves the host alone`, { timeout: 30_000 }, async () => {
+      const t = await scripted({ reflex: reflex("return 1;"), burstOnEvent: { type: "fire", count: 150, bytes: 4_000 } }, { ackDelayMs });
       const before = await pidOf(t);
       const { answer } = await startRun(t, SETTLES);
       const refusal = busy(t);
       t.events.push("fire");
-      // The executing program is still running, so the refusal is certain whenever its start is acked.
       await refused(refusal);
-      await post(t, "/release", {});
       const result = (await answer).body as RunResult;
       assert.deepEqual({ status: result.status, error: result.error }, { status: "stopped", error: undefined });
       assert.equal((await waitFor(t, "reflex_finished")).data.status, "ok");
@@ -303,60 +301,107 @@ describe("a preemption aborts only the run that executes at the ask", () => {
     assert.equal((await run.ended).status, "stopped");
   });
 
-  it("asks for nothing while no recorded run executes: before the supervisor's ack, after the run settled, and after a run that threw before starting", async () => {
+  it("asks for nothing while no run holds the slot: after a run settled, after a run that threw before starting, and after a start the history refused", async () => {
     const { reporter, runner, sent, stops, recordRun } = held();
     const gate = Promise.withResolvers<void>();
-    const run = recordRun(() => runner.call(gated(gate.promise), { timeoutMs: 60_000, sourceDir: ROOT }), false);
-    assert.equal(reporter.preempt(), false, "a run whose start is not acked executes");
-    reporter.acknowledge(run.runId);
+    const run = recordRun(() => runner.call(gated(gate.promise), { timeoutMs: 60_000, sourceDir: ROOT }));
     await setImmediate();
     gate.resolve();
     await run.ended;
-    assert.equal(reporter.preempt(), false, "a settled run executes");
+    assert.equal(reporter.preempt(), false, "a settled run holds the slot");
     await assert.rejects(recordRun(() => Promise.reject(new Error("not connected"))).ended, { message: "not connected" });
-    assert.equal(reporter.preempt(), false, "a run that never started executes");
-    assert.deepEqual([preempts(sent), stops], [[], []]);
+    assert.equal(reporter.preempt(), false, "a run that never started holds the slot");
+    await assert.rejects(recordRun(() => runner.call(async () => 2, { sourceDir: ROOT }), "EACCES: permission denied").ended, { message: "EACCES: permission denied" });
+    assert.equal(reporter.preempt(), false, "a run whose start the history refused holds the slot");
+    assert.deepEqual([preempts(sent), stops, reporter.busy], [[], [], false]);
   });
 
-  describe("stops the executing run after another run was refused", () => {
-    const refusals = {
-      "by the runner, as busy (the body's /run)": (runner: InstanceType<typeof ProgramRunner>) => () => runner.call(async () => 2, { sourceDir: ROOT }),
-      "by a synchronous busy check before the runner (the body's trigger firing)": (runner: InstanceType<typeof ProgramRunner>) => () => {
-        if (runner.running) throw new BusyError();
-        return runner.call(async () => 2, { sourceDir: ROOT });
-      },
-    };
-    for (const [how, refusing] of Object.entries(refusals)) {
-      it(`${how}, before the ask`, async () => {
-        const { reporter, runner, sent, writes, recordRun, begin } = held();
-        const run = await begin();
-        await assert.rejects(recordRun(refusing(runner)).ended, BusyError);
-        assert.equal(reporter.preempt(), true, "no run executes");
-        assert.deepEqual(preempts(sent), [{ kind: "preempt", runId: run.runId }]);
-        writes[0]!();
-        assert.equal((await run.ended).status, "stopped");
-      });
+  it("preempts a run whose start the supervisor has not acked yet as it starts, the supervisor told before the abort", async () => {
+    const { reporter, runner, sent, writes, stops, recordRun } = held();
+    const run = recordRun(() => runner.call(gated(Promise.withResolvers<void>().promise), { timeoutMs: 60_000, sourceDir: ROOT }), false);
+    assert.equal(reporter.preempt(), true, "the firing does not wait for the reserved run");
+    assert.deepEqual(preempts(sent), [], "a deadline was asked for a run the supervisor has not acked");
+    reporter.acknowledge(run.runId);
+    await setImmediate();
+    assert.deepEqual(preempts(sent), [{ kind: "preempt", runId: run.runId }]);
+    assert.deepEqual(stops, [], "aborted before the message was written");
+    writes[0]!();
+    assert.equal((await run.ended).status, "stopped");
+  });
 
-      it(`${how}, between the ask and the write of the message`, async () => {
-        const { reporter, runner, writes, stops, recordRun, begin } = held();
-        const run = await begin();
-        assert.equal(reporter.preempt(), true);
-        await assert.rejects(recordRun(refusing(runner)).ended, BusyError);
-        writes[0]!();
-        assert.equal(stops.length, 1, "the executing run was not aborted");
-        assert.equal((await run.ended).status, "stopped");
+  describe("refuses a run that arrives while another holds the slot, before the supervisor hears of it, and still stops the run that holds it", () => {
+    /** Records a run while another holds the slot: it is refused as busy, with nothing sent and none of its code run. */
+    async function refused(reporter: InstanceType<typeof RunReporter>, sent: FromHost[]): Promise<void> {
+      const before = sent.length;
+      let ran = false;
+      const second = reporter.record({ code: "second" }, async () => {
+        ran = true;
+        return { status: "ok", result: 2, logs: "", durationMs: 0 };
       });
+      await assert.rejects(second, BusyError);
+      assert.deepEqual({ sent: sent.slice(before), ran }, { sent: [], ran: false });
     }
 
-    it("by the history, refusing its start, and by its own throw before starting", async () => {
-      const { reporter, runner, sent, writes, recordRun, begin } = held();
+    it("while its start waits for the supervisor's ack", async () => {
+      const { reporter, runner, sent, recordRun } = held();
+      const gate = Promise.withResolvers<void>();
+      const run = recordRun(() => runner.call(gated(gate.promise), { timeoutMs: 60_000, sourceDir: ROOT }), false);
+      await refused(reporter, sent);
+      reporter.acknowledge(run.runId);
+      await setImmediate();
+      gate.resolve();
+      assert.equal((await run.ended).status, "ok");
+    });
+
+    it("before the ask", async () => {
+      const { reporter, sent, writes, begin } = held();
       const run = await begin();
-      await assert.rejects(recordRun(() => runner.call(async () => 2, { sourceDir: ROOT }), "EACCES: permission denied").ended, { message: "EACCES: permission denied" });
-      await assert.rejects(recordRun(() => Promise.reject(new Error("not connected"))).ended, { message: "not connected" });
-      assert.equal(reporter.preempt(), true, "no run executes");
+      await refused(reporter, sent);
+      assert.equal(reporter.preempt(), true, "no run holds the slot");
       assert.deepEqual(preempts(sent), [{ kind: "preempt", runId: run.runId }]);
       writes[0]!();
       assert.equal((await run.ended).status, "stopped");
+    });
+
+    it("between the ask and the write of the message", async () => {
+      const { reporter, sent, writes, stops, begin } = held();
+      const run = await begin();
+      assert.equal(reporter.preempt(), true);
+      await refused(reporter, sent);
+      writes[0]!();
+      assert.equal(stops.length, 1, "the executing run was not aborted");
+      assert.equal((await run.ended).status, "stopped");
+    });
+
+    it("in the grace after the abort, until the run's end frees the slot and tells whoever waits for it", async () => {
+      const { reporter, runner, sent, writes, recordRun } = held();
+      let idles = 0;
+      reporter.onIdle(() => idles++);
+      const settle = Promise.withResolvers<void>();
+      const run = recordRun(() =>
+        runner.call(
+          async (scope) => {
+            try {
+              await scope.sleep(1e9);
+            } catch {}
+            await settle.promise;
+            return 1;
+          },
+          { timeoutMs: 60_000, sourceDir: ROOT },
+        ),
+      );
+      await setImmediate();
+      assert.equal(reporter.preempt(), true);
+      writes[0]!();
+      await setImmediate();
+      assert.ok(runner.running, "the aborted program left its grace");
+      await refused(reporter, sent);
+      assert.equal(idles, 0);
+      settle.resolve();
+      assert.equal((await run.ended).status, "stopped");
+      assert.deepEqual({ busy: reporter.busy, idles }, { busy: false, idles: 1 });
+      const next = recordRun(async () => ({ status: "ok", result: 3, logs: "", durationMs: 0 }));
+      assert.equal((await next.ended).result, 3);
     });
   });
 });
@@ -377,11 +422,14 @@ describe("the body's triggers", () => {
     applyMilestones: false,
   };
 
-  it("ask the recorder, not the runner, to stop the running program for a preempting firing", async () => {
+  it("see the recorder's run slot, and ask the recorder, not the runner, to stop the run that holds it for a preempting firing", async () => {
     let preempted = 0;
     const events = new HostEvents(() => {});
     const recorder = {
       record: async () => assert.fail("no run"),
+      // With no server no program can run here: the slot is held, as it is while a run's code executes, and the runner is idle.
+      busy: true,
+      onIdle: () => {},
       deliver: () => false,
       counts: () => {},
       preempt: () => {
@@ -393,8 +441,6 @@ describe("the body's triggers", () => {
     const built = buildWorld({ ...world, stateDir: path.join(ROOT, "world") }, { events, recorder });
     try {
       await built.body.triggers!.addReflex({ name: "pre", on: ["fire"], routine: "stand-in", preempt: true, cooldownMs: 0 });
-      // With no server no program can run here: the runner says one runs, as it does while a program's code executes.
-      Object.defineProperty(built.body.runner, "running", { get: () => ({ elapsedMs: 0 }) });
       events.hear({ seq: 1, time: Date.now(), type: "fire", data: {} });
       await setImmediate();
       assert.equal(preempted, 1, "the preemption did not go through the recorder");

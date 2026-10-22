@@ -11,7 +11,8 @@
 // as the supervisor's answer to a run's end reaches it, before it can act on it. With
 // `dieBeforeReadyOnSpawn: n`, the n-th host SIGKILLs itself once its Triggers are built (their
 // counts sent) and before it is ready.
-// A preempting firing stops the running run through `reporter.preempt()`, as the body's Triggers do; `burstOnEvent` queues a burst in the channel ahead of it; `holdPreempt` holds its message until POST /release.
+// A preempting firing stops the running run through `reporter.preempt()`, as the body's Triggers do; `burstOnEvent` queues a burst in the channel ahead of it.
+// The reporter holds the run slot, as the body's does: a /call or firing that arrives while a run holds it is refused as busy, and a firing waiting for it starts when it frees.
 // Requests: GET /ping answers with this pid; GET /triggers with the reflex list; POST /triggers
 // binds the reflex in the body; POST /call runs `{source, timeoutMs}` as a routine the way the body's
 // /call does.
@@ -24,7 +25,7 @@ import { appendFileSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { HostEvents, preemptingRunner, RunReporter } from "../../../src/host/channel.ts";
 import { Triggers } from "../../../src/host/triggers.ts";
-import { BusyError, ProgramRunner } from "../../../src/program/runner.ts";
+import { ProgramRunner } from "../../../src/program/runner.ts";
 import type { ProgramScope } from "../../../src/program/scope.ts";
 import { programFinished, type FromHost, type HostInit, type ToHost } from "../../../src/protocol/host.ts";
 import { ReflexInput } from "../../../src/protocol/index.ts";
@@ -38,23 +39,13 @@ interface Script {
   dieBeforeReadyOnSpawn?: number;
   /** On hearing an event of `type`, before the reflexes do, the host sends `count` events of about `bytes` each: a burst in the channel ahead of whatever the reflexes send next. */
   burstOnEvent?: { type: string; count: number; bytes: number };
-  /** A preemption's message is held in the host, so the run it asks to stop keeps executing, until `POST /release`: the test decides what happens between the ask and the write. */
-  holdPreempt?: boolean;
 }
 
 let killAfterFinished = false;
 let killOnEndAck = false;
-/** With `holdPreempt`: the preemptions asked and not yet written to the channel, and whether `POST /release` has let them (and every later one) go. */
-const heldPreempts: (() => void)[] = [];
-let preemptReleased = false;
-let holdPreempt = false;
 /** Runs whose start was acked: the next ack for one answers its end. */
 const startAcked = new Set<number>();
 function send(message: FromHost, written?: () => void): void {
-  if (message.kind === "preempt" && holdPreempt && !preemptReleased) {
-    heldPreempts.push(() => send(message, written));
-    return;
-  }
   if (written) process.send!(message, () => written());
   else process.send!(message);
   const finished =
@@ -93,17 +84,11 @@ function save(input: { name: string; run: string }): Promise<unknown> {
 async function serve(id: number, method: string, pathname: string, body: string | null): Promise<unknown> {
   if (pathname === "/triggers" && method === "POST") return save(JSON.parse(body ?? "{}"));
   if (pathname === "/triggers") return { triggers: triggers.reflexes() };
-  if (pathname === "/release") {
-    preemptReleased = true;
-    for (const write of heldPreempts.splice(0)) write();
-    return { released: true };
-  }
   if (pathname !== "/call") return { pid: process.pid };
   const { source, timeoutMs } = JSON.parse(body ?? "{}") as { source: string; timeoutMs: number };
   return reporter.record({ code: source, timeoutMs, requestId: id }, async () => {
     const result = await start(source, timeoutMs);
     if (!result.hung) events.push("program_finished", programFinished(result));
-    triggers.idle();
     return result;
   });
 }
@@ -127,7 +112,7 @@ process.on("message", async (message: ToHost) => {
       if (first) store.set(fields.name, { ...ReflexInput.parse({ ...fields, routine: ROUTINE }), updated: new Date().toISOString() });
       killAfterFinished = first && init.script.killAfterFinished === true;
       killOnEndAck = first && init.script.killOnEndAck === true;
-      holdPreempt = init.script.holdPreempt === true;
+      reporter.onIdle(() => triggers.idle());
       const { burstOnEvent } = init.script;
       if (burstOnEvent) {
         events.subscribe((event) => {
@@ -138,7 +123,7 @@ process.on("message", async (message: ToHost) => {
         store,
         events,
         // As the body wires it: a preemption goes through the reporter.
-        runner: preemptingRunner(runner, reporter),
+        runner: preemptingRunner(reporter),
         connected: () => true,
         bot: () => undefined,
         reflexes: true,
@@ -147,7 +132,6 @@ process.on("message", async (message: ToHost) => {
           return reporter.record(
             { code, timeoutMs: reflex.timeoutMs, extra: { trigger: reflex.name, event: { seq: event.seq, type: event.type } }, trigger: { name: reflex.name, updated: reflex.updated } },
             () => {
-              if (runner.running) throw new BusyError();
               started();
               return start(code, reflex.timeoutMs);
             },

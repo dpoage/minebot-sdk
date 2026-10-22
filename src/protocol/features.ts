@@ -80,7 +80,7 @@ export function programApiDoc(features: BodyFeatures): string {
   const caps = capabilities(features);
   const members = contextMembers(features);
   const library = caps.routines
-    ? ` It can also import the library's modules by file name (\`import { helper } from "./helper.ts"\`: the module as saved when the run starts); any other relative path or URL is refused.`
+    ? ` It can also import the library's modules by file name (\`import { helper } from "./helper.ts"\`, with or without a query or fragment after the name: the module as saved when the run starts); importing an absolute path, a URL, or a relative path to anything but a module of the library fails.`
     : " This body has no library of saved modules, so a relative import fails.";
   const sdk = caps.routines ? " such as minebot-sdk/routine" : "";
   const slot = caps.reflexes ? "runs, calls and reflex firings" : "runs and calls";

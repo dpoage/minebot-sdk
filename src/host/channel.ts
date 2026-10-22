@@ -1,10 +1,10 @@
 // The host's side of the supervisor channel, over a `send` function so it runs without a fork:
 // the event sink that hands events to the supervisor's log and hears them back with the log's
-// seq, the reporter that has the supervisor record each program run before its code starts, and
-// the runner view through which the reflex scheduler's preemptions go to that reporter.
+// seq, the reporter that holds the host's one run slot and has the supervisor record each program
+// run before its code starts, and the runner view through which the reflex scheduler sees that slot.
 import { DEFAULT_TIMEOUT_MS, type BodyEvent, type RunResult } from "../protocol/index.ts";
 import type { EventSink, FiringOf, FromHost, TriggerDisabled, TriggerFinished } from "../protocol/host.ts";
-import type { RunOutcome } from "../program/runner.ts";
+import { BusyError, type RunOutcome } from "../program/runner.ts";
 import type { RunRecorder } from "./body.ts";
 
 /**
@@ -50,19 +50,32 @@ export interface RunReporterOptions {
 }
 
 /**
- * The runner as the reflex scheduler sees it: a preemption is the recorder's to carry out, so the
- * supervisor's deadline covers the abort. The body and the reflex fixture both wire their Triggers with this.
+ * The runner as the reflex scheduler sees it: busy while the run slot holds a run (reserved, running, or in its grace), and a
+ * preemption is the recorder's to carry out, so the supervisor's deadline covers the abort. The body and the reflex fixture both wire their Triggers with this.
  */
-export function preemptingRunner(runner: { readonly running: unknown }, recorder: Pick<RunRecorder, "preempt">): { readonly running: unknown; stop(): boolean } {
+export function preemptingRunner(recorder: Pick<RunRecorder, "busy" | "preempt">): { readonly running: boolean; stop(): boolean } {
   return {
     get running() {
-      return runner.running;
+      return recorder.busy;
     },
     stop: () => recorder.preempt(),
   };
 }
 
-/** Reports program runs and registrations to the supervisor, which writes the history. */
+/**
+ * The host's one run slot. A run takes it at its arrival (`reserved`: its start is sent to the supervisor, its code waits for
+ * the ack, and a stop or preemption asked meanwhile waits in `pending`), holds it while its code runs (`running`), and from the
+ * ask of its abort (`grace`) until its end. A run that arrives while the slot is taken is refused as busy.
+ */
+type Slot = { state: "idle" } | { state: "reserved"; runId: number; pending?: "stop" | "preempt" } | { state: "running"; runId: number } | { state: "grace"; runId: number };
+
+const IDLE: Slot = { state: "idle" };
+
+/**
+ * Reports program runs and registrations to the supervisor, which writes the history, and holds the run slot: every run (a
+ * call, a module run, a reflex firing) goes through `record`, and every event of a run (its arrival, the ack of its start,
+ * a stop, a preemption, its end, the end of its grace) acts on the slot by the state it is in.
+ */
 export class RunReporter implements RunRecorder {
   readonly #options: RunReporterOptions;
   readonly #acks = new Map<number, PromiseWithResolvers<void>>();
@@ -71,21 +84,20 @@ export class RunReporter implements RunRecorder {
   readonly #answering = new Map<number, number>();
   /** A reflex run's returned or thrown end → its run, until `deliver`. */
   readonly #delivering = new WeakMap<object, number>();
+  readonly #idleListeners: (() => void)[] = [];
   #nextId = 0;
-  /** Runs reported whose code has not started yet. */
-  #starting = 0;
-  /** A stop that arrived after the supervisor acked a run but before its code started. */
-  #stopPending = false;
-  /**
-   * The latest recorded run whose code started: the runner was idle before its `execute` and runs a
-   * program after it (the program starts synchronously inside `execute`, and the runner runs one at a
-   * time). A run refused as busy, or one that never started, does not touch it. It is the run whose
-   * code executes exactly while the runner runs a program, since every program the runner runs is recorded.
-   */
-  #started: number | undefined;
+  #slot: Slot = IDLE;
 
   constructor(options: RunReporterOptions) {
     this.#options = options;
+  }
+
+  get busy(): boolean {
+    return this.#slot.state !== "idle";
+  }
+
+  onIdle(listener: () => void): void {
+    this.#idleListeners.push(listener);
   }
 
   /** The supervisor's answer to a `run_started` or `register`; `error` means the history could not record it. */
@@ -96,31 +108,61 @@ export class RunReporter implements RunRecorder {
     else ack?.reject(new Error(error));
   }
 
-  /** Aborts the running program. A run the supervisor has acked but that has not started yet is aborted as it starts. */
+  /** Aborts the run that holds the slot; one whose start the supervisor has not acked yet is aborted as it starts. */
   stop(): void {
-    if (!this.#options.stop() && this.#starting > 0) this.#stopPending = true;
+    const slot = this.#slot;
+    switch (slot.state) {
+      case "idle":
+        return;
+      case "reserved":
+        slot.pending = "stop";
+        return;
+      case "running":
+      case "grace":
+        this.#slot = { state: "grace", runId: slot.runId };
+        this.#options.stop();
+    }
   }
 
   /**
-   * Asks the executing recorded run to stop because a preempting firing is waiting; true when one executes at this moment.
+   * Asks the run that holds the slot to stop because a preempting firing is waiting; true when that firing is to wait for the
+   * run's end (the slot frees then), false when no run holds the slot or the one that does runs no program at this moment.
    * The supervisor learns of the preemption (and so arms its kill deadline for the run) before the program is aborted:
    * a program that blocks the host right after its abort would otherwise keep that message queued behind the host's
-   * frozen thread. The abort follows once the message is written, and only if the run is still the one executing then:
-   * a run that settled meanwhile is not followed by an abort of its successor.
+   * frozen thread. The abort follows once the message is written, and only if the run still holds the slot in its grace:
+   * a run that ended meanwhile is not followed by an abort of its successor. A run whose start is not acked yet is preempted as it starts.
    */
   preempt(): boolean {
-    // The recorded run whose code has started and not settled, if one has.
-    const runId = this.#options.running() ? this.#started : undefined;
-    if (runId === undefined) return false;
-    this.#options.send({ kind: "preempt", runId }, () => {
-      if (this.#options.running() && this.#started === runId) this.#options.stop();
-    });
-    return true;
+    const slot = this.#slot;
+    switch (slot.state) {
+      case "idle":
+        return false;
+      case "reserved":
+        slot.pending ??= "preempt";
+        return true;
+      case "grace":
+        // Its abort is asked already.
+        return true;
+      case "running": {
+        // Its code failed to start, or settled and its end is not handled yet: the slot frees without an abort.
+        if (!this.#options.running()) return false;
+        const { runId } = slot;
+        this.#slot = { state: "grace", runId };
+        this.#options.send({ kind: "preempt", runId }, () => {
+          const now = this.#slot;
+          if (now.state === "grace" && now.runId === runId) this.#options.stop();
+        });
+        return true;
+      }
+    }
   }
 
   async record(run: { code: string; timeoutMs?: number; extra?: object; requestId?: number; trigger?: FiringOf }, execute: () => Promise<RunOutcome>): Promise<RunResult> {
+    // Its arrival: the run takes the slot, or is refused before the supervisor hears of it.
+    if (this.#slot.state !== "idle") throw new BusyError();
     const runId = this.#nextId++;
-    this.#starting++;
+    const reserved: Slot & { state: "reserved" } = { state: "reserved", runId };
+    this.#slot = reserved;
     try {
       await this.#acked(runId, {
         kind: "run_started",
@@ -132,24 +174,20 @@ export class RunReporter implements RunRecorder {
         ...(run.trigger && { trigger: run.trigger }),
       });
     } catch (err) {
-      // The run never starts; a stop meant for it must not abort the next one.
-      if (--this.#starting === 0) this.#stopPending = false;
+      // The history refused its start: its code never starts, and what was pending for it goes with it.
+      this.#release();
       throw err;
     }
     // The program starts synchronously inside `execute`, in this same turn.
+    this.#slot = { state: "running", runId };
     let running: Promise<RunOutcome>;
-    const idle = !this.#options.running();
     try {
       running = execute();
     } catch (err) {
       running = Promise.reject(err);
     }
-    if (idle && this.#options.running()) this.#started = runId;
-    this.#starting--;
-    if (this.#stopPending) {
-      this.#stopPending = false;
-      this.#options.stop();
-    }
+    if (reserved.pending === "stop") this.stop();
+    else if (reserved.pending === "preempt") this.preempt();
     // The supervisor holds a reported end, recorded or refused, until this host delivers it: the answer to its request, or `deliver`.
     const owes = (end: object) => {
       if (run.requestId !== undefined) this.#answering.set(run.requestId, runId);
@@ -208,11 +246,16 @@ export class RunReporter implements RunRecorder {
     try {
       outcome = await running;
     } catch (err) {
-      // It threw before producing a result (not connected, busy): the run is over, with nothing to record.
+      // It threw before producing a result (not connected, no routines): the run is over, with nothing to record.
+      this.#release();
       await this.#acked(runId, { kind: "run_finished", runId, result: null });
       throw err;
     }
     const { hung, ...result } = outcome;
+    // The end of its grace with the program unsettled (hung): the runner is free, but the supervisor kills this host on the report
+    // below, so no waiting firing is woken; a run that arrives meanwhile has its start reach the supervisor behind that report.
+    if (hung) this.#slot = IDLE;
+    else this.#release();
     try {
       await this.#acked(runId, { kind: "run_finished", runId, result, ...(hung && { hung }) });
     } catch (err) {
@@ -221,6 +264,12 @@ export class RunReporter implements RunRecorder {
     }
     owes(result);
     return result;
+  }
+
+  /** The run that held the slot has ended: the slot is free, and whoever waits for it (the reflex scheduler) is told, before the end is reported. */
+  #release(): void {
+    this.#slot = IDLE;
+    for (const listener of this.#idleListeners) listener();
   }
 
   #acked(runId: number, message: FromHost): Promise<void> {
