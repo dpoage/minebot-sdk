@@ -3,6 +3,7 @@
 import path from "node:path";
 import { JsonStore } from "../store.ts";
 import { Notes } from "../notes.ts";
+import { checkStoreNamespace } from "../routine/define.ts";
 
 export class BodyState {
   readonly dir: string;
@@ -56,6 +57,12 @@ export class BodyState {
       this.#stores.set(kit, store);
     }
     return store;
+  }
+
+  /** The store a routine opens as `ctx.store(namespace)`: a routine name other than the body's own `notes` and `body`, else it throws naming the rule. */
+  routineStore(namespace: string): JsonStore {
+    checkStoreNamespace(namespace);
+    return this.store(namespace);
   }
 
   /** The body's milestones, or null when none are set. */

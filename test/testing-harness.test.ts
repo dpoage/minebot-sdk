@@ -406,7 +406,7 @@ describe("minebot-sdk/testing routines", () => {
       await (ctx.kit as unknown as Record<string, Record<string, (args: unknown) => Promise<void>>>).probe!.look!({});
       return { keys: Object.keys(ctx).sort(), bot: ctx.bot === h.bot, kitSignal: signals[0] === ctx.signal, signal: ctx.signal.aborted };
     });
-    assert.deepEqual(seen, { keys: ["bot", "kit", "log", "notes", "on", "signal", "sleep", "status", "wiki"], bot: true, kitSignal: true, signal: false });
+    assert.deepEqual(seen, { keys: ["bot", "kit", "log", "notes", "on", "signal", "sleep", "status", "store", "wiki"], bot: true, kitSignal: true, signal: false });
     // The kit ran with that run's signal, which ended with the run.
     assert.deepEqual([signals[0]!.aborted, String(signals[0]!.reason)], [true, "Error: finished"]);
     assert.equal(await h.run((ctx) => ctx.kit!.crafter.make({ item: "oak_planks" })), 4);

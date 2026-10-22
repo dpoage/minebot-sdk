@@ -1,6 +1,5 @@
-import { z } from "zod";
 import type { RoutineContext } from "./context.ts";
-import { metaOf } from "./define.ts";
+import { callOf } from "./define.ts";
 
 /** What a module exports, for the error of one that exports no routine. */
 function describeExports(module: unknown): string {
@@ -15,7 +14,8 @@ function describeExports(module: unknown): string {
  * awaited result. Absent arguments (`undefined`) are `{}`, so a call without arguments gets the
  * schema's defaults. A routine declared with `defineRoutine` has its `args` parsed first (a mismatch
  * rejects with the schema, before the routine runs) and its result checked against `returns`
- * (the parsed value is the result); a plain function is called with the arguments unparsed.
+ * (the parsed value is the result), once each, with the routine called `name` in the messages;
+ * a plain function is called with the arguments unparsed.
  * Rejects when the module's default export is not a function.
  */
 export async function invokeRoutine(module: unknown, name: string, ctx: RoutineContext, args: unknown): Promise<unknown> {
@@ -23,20 +23,7 @@ export async function invokeRoutine(module: unknown, name: string, ctx: RoutineC
   if (typeof routine !== "function") {
     throw new Error(`routine "${name}" must default-export a function (ctx, args) => result; ${describeExports(module)}`);
   }
-  const meta = metaOf(routine);
-  let input: unknown = args === undefined ? {} : args;
-  if (meta?.args) {
-    const parsed = meta.args.safeParse(input);
-    if (!parsed.success) {
-      throw new Error(`routine "${name}" arguments: ${z.prettifyError(parsed.error)}\nargs schema: ${JSON.stringify(z.toJSONSchema(meta.args, { io: "input", unrepresentable: "any" }))}`);
-    }
-    input = parsed.data;
-  }
-  const result: unknown = await routine(ctx, input);
-  if (!meta?.returns) return result;
-  const valid = meta.returns.safeParse(result);
-  if (!valid.success) {
-    throw new Error(`routine "${name}" returned a value that does not match its returns schema: ${z.prettifyError(valid.error)}\nreturns schema: ${JSON.stringify(z.toJSONSchema(meta.returns, { io: "output", unrepresentable: "any" }))}`);
-  }
-  return valid.data;
+  const declared = callOf(routine);
+  if (declared) return declared(name, ctx, args);
+  return routine(ctx, args === undefined ? {} : args);
 }
