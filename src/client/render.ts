@@ -1,6 +1,6 @@
 // Renderers for agent-facing output: program runs, status, notes, wiki hits and pages, routines and their bindings.
 // The CLI and the MCP server share them, so an agent sees the same text through both.
-import type { ActionStats, BindingInfo, BindResponse, KitInfo, KitSearchHit, KitTypeCheck, KitVersion, Note, ReflexBindingInfo, RoutineInfo, RoutineVersion, RunResult, SaveRoutineResponse, SearchHit, StatusResponse } from "../protocol/index.ts";
+import type { ActionStats, BindingInfo, BindResponse, BuiltinInfo, BuiltinSearchHit, KitInfo, KitSearchHit, KitTypeCheck, KitVersion, Note, ReflexBindingInfo, RoutineInfo, RoutineVersion, RunResult, SaveRoutineResponse, SearchHit, StatusResponse } from "../protocol/index.ts";
 
 const json = (value: unknown) => JSON.stringify(value, null, 2);
 
@@ -57,6 +57,31 @@ export function formatKitHits(hits: KitSearchHit[]): string {
       const name = hit.action === undefined ? hit.kit : `kit.${hit.kit}.${hit.action}`;
       const notes = [hit.active ? "active" : "not active", ...(hit.stats ? [formatCounts(hit.stats)] : [])].join(", ");
       return `${name} [${notes}]\n  ${hit.text}`;
+    })
+    .join("\n");
+}
+
+/** Renders the built-in modules an agent may use: one line per module, its uses, its routines, and how often each routine worked. */
+export function formatBuiltins(builtins: BuiltinInfo[]): string {
+  return builtins
+    .map((module) => {
+      const uses = module.uses.length > 0 ? ` (uses ${module.uses.join(", ")})` : "";
+      const head = `${module.name}${uses}: ${module.description}\n    ${module.name}.{${module.routines.join(", ")}}`;
+      const ran = Object.entries(module.stats);
+      if (ran.length === 0) return head;
+      const counts = `    calls: ${ran.map(([routine, stats]) => `${routine}: ${formatCounts(stats)}`).join("; ")}`;
+      const failures = ran.filter(([, stats]) => stats.lastError).map(([routine, stats]) => `    last error of ${routine}: ${stats.lastError!.split("\n")[0]}`);
+      return [head, counts, ...failures].join("\n");
+    })
+    .join("\n");
+}
+
+/** Renders built-in search hits, best first: the routine's call name, what it does, and how often it worked. */
+export function formatBuiltinHits(hits: BuiltinSearchHit[]): string {
+  return hits
+    .map((hit) => {
+      const name = hit.routine === undefined ? hit.module : `${hit.module}.${hit.routine}`;
+      return `${name}${hit.stats ? ` [${formatCounts(hit.stats)}]` : ""}\n  ${hit.text}`;
     })
     .join("\n");
 }

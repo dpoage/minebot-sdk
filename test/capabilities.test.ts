@@ -7,7 +7,7 @@ import { CAPABILITIES, capabilities, CAPABILITY_GATES, programApiDoc, type BodyF
 import { wikiView } from "../src/wiki/access.ts";
 
 /** A body with every capability on: the baseline to switch one off. */
-const EVERYTHING: BodyFeatures = { kits: ["move", "gatherer"], kitsLocked: false, agentKits: true, wiki: "write", lessons: true, milestones: true, reflexes: true, routines: true };
+const EVERYTHING: BodyFeatures = { kits: ["move", "gatherer"], kitsLocked: false, agentKits: true, wiki: "write", lessons: true, milestones: true, reflexes: true, routines: true, builtins: ["move", "gatherer"] };
 
 /** Words an agent must not see when the capability is off. */
 const FORBIDDEN_WORDS: Record<Capability, RegExp> = {
@@ -18,7 +18,11 @@ const FORBIDDEN_WORDS: Record<Capability, RegExp> = {
   lessons: /\blearned\b|add a lesson|wiki lesson|wiki_add_lesson|addLesson/i,
   milestones: /\bmilestones?\b|minebot milestones|body's milestones/i,
   reflexes: /\breflexes?\b|reflex_|--no-reflexes|\btriggers?\b|trigger_|--no-triggers/i,
-  routines: /\broutines?\b|call_routine|bind_routine|--no-routines|\/bind\b|\/call\b|defineRoutine/i,
+  // A body without a routine library still describes its built-ins, which a routine imports: "built-in routine" and the <module>.<routine> call name are theirs.
+  routines: /(?<!built-in |\.<)\broutines?\b|bind_routine|--no-routines|\/bind\b|defineRoutine/i,
+  builtins: /built-in routines?\b|\bbuiltins?\b|builtin_|minebot-sdk\/routines\/|<module>\.<routine>/i,
+  // Calls are served for the library's actions and for built-ins: the words of the call surfaces go only when neither is offered.
+  call: /call_routine|\/call\b|\bcall <|minebot call|\bcall: /i,
 };
 
 function withOff(capability: Capability): BodyFeatures {
@@ -49,6 +53,13 @@ function withOff(capability: Capability): BodyFeatures {
     case "routines":
       features.routines = false;
       break;
+    case "builtins":
+      features.builtins = [];
+      break;
+    case "call":
+      features.routines = false;
+      features.builtins = [];
+      break;
   }
   return features;
 }
@@ -64,8 +75,10 @@ describe("the capability table", () => {
       milestones: true,
       reflexes: true,
       routines: true,
+      builtins: true,
+      call: true,
     });
-    assert.deepEqual(CAPABILITIES, ["kits", "kitSwitching", "agentKits", "wiki", "lessons", "milestones", "reflexes", "routines"]);
+    assert.deepEqual(CAPABILITIES, ["kits", "kitSwitching", "agentKits", "wiki", "lessons", "milestones", "reflexes", "routines", "builtins", "call"]);
   });
 
   it("turns each capability off, alone, in every surface", () => {
@@ -128,7 +141,7 @@ describe("the capability table", () => {
     assert.ok(!routes.some((match) => match[1]!.startsWith("/triggers")), "no route of the code triggers is left");
     // The CLI's feature commands come from the same gates.
     const cli = readFileSync(new URL("../src/cli.ts", import.meta.url), "utf8");
-    assert.match(cli, /const FEATURE_COMMANDS: Record<string, \(features: BodyFeatures\) => boolean> = \{\s*kits: CAPABILITY_GATES\.kits,\s*wiki: CAPABILITY_GATES\.wiki,\s*milestones: CAPABILITY_GATES\.milestones,\s*routines: CAPABILITY_GATES\.routines,\s*bind: CAPABILITY_GATES\.routines,\s*unbind: CAPABILITY_GATES\.routines,\s*call: CAPABILITY_GATES\.routines,\s*\};/);
+    assert.match(cli, /const FEATURE_COMMANDS: Record<string, \(features: BodyFeatures\) => boolean> = \{\s*kits: CAPABILITY_GATES\.kits,\s*wiki: CAPABILITY_GATES\.wiki,\s*milestones: CAPABILITY_GATES\.milestones,\s*routines: CAPABILITY_GATES\.routines,\s*bind: CAPABILITY_GATES\.routines,\s*unbind: CAPABILITY_GATES\.routines,\s*call: CAPABILITY_GATES\.call,\s*builtins: CAPABILITY_GATES\.builtins,\s*\};/);
   });
 
   it("describes reflexes in bind_routine exactly when the body offers reflexes, and the routine tools exactly when it offers routines", () => {
@@ -140,7 +153,8 @@ describe("the capability table", () => {
       assert.equal(withoutReflexes.bind_routine!.enabled, true, "bind_routine stays for actions");
       for (const tool of ROUTINE_TOOLS) {
         assert.equal(withReflexes[tool]!.enabled, toolSet === "full" || tool === "bind_routine" || tool === "call_routine", `${tool} in the ${toolSet} set`);
-        assert.equal(toolPlan(withOff("routines"), toolSet)[tool]!.enabled, false, `${tool} must be off without routines`);
+        // With built-ins still offered, calls are still served.
+        assert.equal(toolPlan(withOff("routines"), toolSet)[tool]!.enabled, tool === "call_routine", `${tool} must be off without routines, except the call of a built-in`);
       }
     }
   });
@@ -156,11 +170,40 @@ describe("the capability table", () => {
       ["GET", "/bindings"],
       ["POST", "/bind"],
       ["POST", "/unbind"],
-      ["POST", "/call"],
     ] as const;
     for (const [method, path] of routineRoutes) {
       assert.match(daemon, new RegExp(`method: "${method}",\\s*path: "${path}",\\s*capability: "routines",`), `${method} ${path} must name the routines capability`);
     }
+  });
+
+  it("tags every built-in route with the builtins capability, and offers built-ins exactly when the offered set is not empty", () => {
+    const daemon = readFileSync(new URL("../src/host/routes.ts", import.meta.url), "utf8");
+    for (const path of ["/builtins", "/builtins/docs", "/builtins/search", "/builtins/source"]) {
+      assert.match(daemon, new RegExp(`method: "GET",\\s*path: "${path}",\\s*capability: "builtins",`), `GET ${path} must name the builtins capability`);
+    }
+    for (const builtins of [[], ["move"], ["move", "gatherer"]]) {
+      const features = { ...EVERYTHING, builtins };
+      assert.equal(capabilities(features).builtins, builtins.length > 0);
+      assert.equal(CAPABILITY_GATES.builtins(features), builtins.length > 0);
+      assert.equal(/\bbuiltins\b/.test(usageFor(features, false)), builtins.length > 0, "usage");
+      assert.equal(/Built-in routines: /.test(programApiDoc(features)), builtins.length > 0, "api doc");
+      assert.equal(toolPlan(features, "full").list_builtins!.enabled, builtins.length > 0, "tool plan");
+    }
+  });
+
+  it("names an offered module only in the program reference's one built-in line: the commands, the tools and the rest of the reference do not depend on which modules are offered", () => {
+    const few = { ...EVERYTHING, builtins: ["move"] };
+    const many = { ...EVERYTHING, builtins: ["move", "gatherer", "crafter"] };
+    for (const toolSet of TOOL_SETS) assert.deepEqual(toolPlan(few, toolSet), toolPlan(many, toolSet), toolSet);
+    assert.equal(usageFor(few, false), usageFor(many, false));
+    const line = /^Built-in routines: .*$/m;
+    assert.match(programApiDoc(many), /^Built-in routines: move, gatherer, crafter\./m);
+    assert.equal(programApiDoc(few).replace(line, ""), programApiDoc(many).replace(line, ""));
+    // And with the library off, the line only describes how to look them up.
+    const withoutLibrary = programApiDoc({ ...many, routines: false });
+    assert.match(withoutLibrary, /^Built-in routines: move, gatherer, crafter\. Reference: minebot builtins docs/m);
+    assert.doesNotMatch(withoutLibrary, /minebot-sdk\/routines\/|with no bind/);
+    assert.match(withoutLibrary, /POST \/call \{ name: "<module>\.<routine>"/);
   });
 
   it("describes routines in the program reference exactly when the body offers them, and lists only the ctx members it offers", () => {
@@ -185,7 +228,7 @@ function capabilitiesOn(features: BodyFeatures): Capability[] {
 }
 
 /** The gated tools the core set serves: the rest of the gated tools are in the full set only. */
-const CORE_GATED_TOOLS = ["kit_docs", "call_routine", "bind_routine"];
+const CORE_GATED_TOOLS = ["kit_docs", "builtin_docs", "call_routine", "bind_routine"];
 const ROUTINE_TOOLS = ["call_routine", "bind_routine", "list_routines", "routine_save", "routine_source", "routine_versions", "routine_revert", "unbind_routine"];
 
 /** The capability a capability-gated tool belongs to. */
@@ -205,7 +248,12 @@ function capabilityOf(tool: string): Capability {
     wiki_read: "wiki",
     wiki_list: "wiki",
     wiki_add_lesson: "lessons",
-    ...Object.fromEntries(ROUTINE_TOOLS.map((routineTool) => [routineTool, "routines" as const])),
+    ...Object.fromEntries(ROUTINE_TOOLS.filter((routineTool) => routineTool !== "call_routine").map((routineTool) => [routineTool, "routines" as const])),
+    call_routine: "call",
+    list_builtins: "builtins",
+    builtin_docs: "builtins",
+    builtin_search: "builtins",
+    builtin_source: "builtins",
   };
   const capability = byTool[tool];
   if (capability === undefined) throw new Error(`unknown tool ${tool}`);

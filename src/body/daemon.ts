@@ -56,6 +56,8 @@ export interface DaemonOptions {
   routines?: boolean;
   /** Where routines are saved; default: the state directory's routines/. Bodies that share the directory share their routines. */
   routinesDir?: string;
+  /** Built-in routine modules the body offers, by name, with every module they use; undefined offers every built-in module, an empty list none. An unknown name fails the start. */
+  builtins?: readonly string[];
 }
 
 /** Starts a body and serves its API. Publishes the endpoint to `.minebot/<name>.json`. */

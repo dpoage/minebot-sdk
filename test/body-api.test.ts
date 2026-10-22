@@ -28,8 +28,11 @@ const { startDaemon } = await import("../src/body/daemon.ts");
 const { endpointFile, programApiDoc } = await import("../src/protocol/index.ts");
 const { MC_VERSION } = await import("../src/mc/version.ts");
 const { BUILTIN_KITS } = await import("../src/kit/index.ts");
+const { BUILTIN_MODULES } = await import("../src/routines/index.ts");
 const { KitHost: KitHostClass } = await import("../src/kit/kit.ts");
 const { JsonStore } = await import("../src/store.ts");
+const { Builtins } = await import("../src/host/routines/builtins.ts");
+const { KitStats } = await import("../src/host/routines/stats.ts");
 const { findEscapeAttempts } = await import("../src/audit.ts");
 
 type Features = BodyFeatures;
@@ -162,6 +165,10 @@ const ROUTES = [
   "POST /bind",
   "POST /unbind",
   "POST /call",
+  "GET /builtins",
+  "GET /builtins/docs",
+  "GET /builtins/search",
+  "GET /builtins/source",
 ] as const;
 
 /** The routes a request reached in a body that serves them (not the missing-token or unknown-route answer). */
@@ -317,7 +324,8 @@ function referenceKits(names: readonly string[], locked = false): KitHost {
   return new KitHostClass({ kits, stores: () => JsonStore.memory(), locked, active: names });
 }
 
-const FEATURES_ALL: Features = { kits: ["move"], kitsLocked: false, agentKits: true, wiki: "write", lessons: true, milestones: true, reflexes: true, routines: true };
+const ALL_BUILTINS = BUILTIN_MODULES.map((module) => module.name);
+const FEATURES_ALL: Features = { kits: ["move"], kitsLocked: false, agentKits: true, wiki: "write", lessons: true, milestones: true, reflexes: true, routines: true, builtins: ALL_BUILTINS };
 
 const NOT_CONNECTED = { error: "the body is not connected to a server" };
 const NO_ROUTE = (method: string, pathname: string) => ({ error: `no route for ${method} ${pathname}` });
@@ -512,6 +520,30 @@ describe("body API on a body with every feature on", () => {
     });
   });
 
+  it("builtins: list, documentation, search, source, each from the catalog and refusing what is not offered", async () => {
+    const reference = new Builtins({ stats: new KitStats(JsonStore.memory()) });
+    await body.call("GET", "/builtins", { body: wire({ builtins: reference.list() }) });
+    await body.call("GET", "/builtins/docs", { body: { docs: reference.docs([]) } });
+    await body.call("GET", "/builtins/docs?names=move", { body: { docs: reference.docs(["move"]) } });
+    await body.call("GET", "/builtins/docs?names=move,", { body: { docs: reference.docs(["move"]) } });
+    await body.call("GET", "/builtins/docs?names=nope", { status: 400, body: { error: `unknown built-in module "nope"; offered: ${ALL_BUILTINS.join(", ")}` } });
+    await body.call("GET", "/builtins/search?q=walk", { body: wire({ hits: reference.search("walk", 5) }) });
+    await body.call("GET", "/builtins/search?q=walk&limit=1", { body: wire({ hits: reference.search("walk", 1) }) });
+    await body.call("GET", "/builtins/search", { status: 400, body: { error: "✖ Invalid input: expected string, received undefined\n  → at q" } });
+    await body.call("GET", "/builtins/source?name=move", { body: { name: "move", source: readFileSync(path.join(import.meta.dirname, "..", "src", "routines", "move.ts"), "utf8") } });
+    await body.call("GET", "/builtins/source?name=nope", { status: 404, body: { error: 'no built-in module "nope"' } });
+    await body.call("GET", "/builtins/source?name=Bad", { status: 400, body: ROUTINE_NAME_RULE.body });
+  });
+
+  it("POST /call of a built-in: the routine's own 503 while disconnected, 404 naming every dotted name that is not an offered routine, 400 for a name of neither form", async () => {
+    await body.call("POST", "/call", { status: 503, body: NOT_CONNECTED }, { json: { name: "move.to", args: { position: [1, 2, 3] } } });
+    for (const name of ["move.nope", "nope.to", "move.to.again", "move.constructor", "Move.to"]) {
+      await body.call("POST", "/call", { status: 404, body: { error: `no built-in routine "${name}"` } }, { json: { name } });
+    }
+    await body.call("POST", "/call", { status: 404, body: { error: 'no action bound to "act"' } }, { json: { name: "act" } });
+    await body.call("POST", "/call", { status: 400, body: { error: CALL_NAME_RULE } }, { json: { name: "Bad name" } });
+  });
+
   it("GET /events and POST /wait: the first connection attempt's events, and refused queries", async () => {
     await body.call("GET", "/events?limit=0", { status: 400, body: { error: "✖ Too small: expected number to be >0\n  → at limit" } });
     await body.call("GET", "/events?since=-1", { status: 400, body: { error: "✖ Too small: expected number to be >=0\n  → at since" } });
@@ -554,10 +586,10 @@ describe("body API: agent kits", () => {
 
 describe("body API on a body with every optional feature off", () => {
   let body: Running;
-  const features: Features = { kits: [], kitsLocked: true, agentKits: false, wiki: "off", lessons: false, milestones: false, reflexes: false, routines: false };
+  const features: Features = { kits: [], kitsLocked: true, agentKits: false, wiki: "off", lessons: false, milestones: false, reflexes: false, routines: false, builtins: [] };
 
   before(async () => {
-    body = await startBody({ kits: [], lockKits: true, wikiMode: "off", milestonesEnabled: false, agentKits: false, triggers: false, routines: false });
+    body = await startBody({ kits: [], lockKits: true, wikiMode: "off", milestonesEnabled: false, agentKits: false, triggers: false, routines: false, builtins: [] });
   });
   after(() => body.close());
 
@@ -593,6 +625,10 @@ describe("body API on a body with every optional feature off", () => {
     await absent("POST", "/bind", { raw: "{ not json" });
     await absent("POST", "/unbind", { json: { name: "act" } });
     await absent("POST", "/call", { json: { name: "act" } });
+    await absent("GET", "/builtins");
+    await absent("GET", "/builtins/docs?names=move");
+    await absent("GET", "/builtins/search?q=walk");
+    await absent("GET", "/builtins/source?name=move");
   });
 
   it("still serves the routes every body has, with the features it lacks left out", async () => {
@@ -608,7 +644,7 @@ describe("body API on a body with every optional feature off", () => {
 describe("body API on a body with locked kits, agent kits off, and a read-only wiki that holds a lesson", () => {
   let body: Running;
   const ref = referenceKits(["move"], true);
-  const features: Features = { kits: ["move"], kitsLocked: true, agentKits: false, wiki: "read", lessons: true, milestones: true, reflexes: true, routines: true };
+  const features: Features = { kits: ["move"], kitsLocked: true, agentKits: false, wiki: "read", lessons: true, milestones: true, reflexes: true, routines: true, builtins: ALL_BUILTINS };
 
   before(async () => {
     body = await startBody({
@@ -665,6 +701,7 @@ interface GatedProbe {
 
 const KIT_NAME_RULE = { status: 400, body: { error: "✖ use 1-32 lowercase letters, digits, and _; start with a letter\n  → at name" } };
 const ROUTINE_NAME_RULE = { status: 400, body: { error: "✖ use 1-48 lowercase letters, digits, _ and -; start with a letter\n  → at name" } };
+const CALL_NAME_RULE = "✖ use an action's name (1-48 lowercase letters, digits, _ and -; start with a letter) or a built-in routine's <module>.<routine>\n  → at name";
 
 /** Every capability-gated route of the table, once, with a request whose answer does not depend on which other capabilities the body offers. */
 const GATED: GatedProbe[] = [
@@ -703,7 +740,12 @@ const GATED: GatedProbe[] = [
   { capability: "routines", method: "GET", url: "/bindings", served: () => ({ body: { bindings: [] } }) },
   { capability: "routines", method: "POST", url: "/bind", call: { json: { kind: "action", name: "act", routine: "ghost" } }, served: () => ({ status: 404, body: { error: 'no routine named "ghost"' } }) },
   { capability: "routines", method: "POST", url: "/unbind", call: { json: { name: "ghost" } }, served: () => ({ status: 404, body: { error: 'no binding "ghost"' } }) },
-  { capability: "routines", method: "POST", url: "/call", call: { json: { name: "ghost" } }, served: () => ({ status: 404, body: { error: 'no action bound to "ghost"' } }) },
+  // Served when the body has actions or built-ins; a dot-free name is an action's, which a body without routines does not keep.
+  { capability: "call", method: "POST", url: "/call", call: { json: { name: "ghost" } }, served: (f) => ({ status: 404, body: { error: f.routines ? 'no action bound to "ghost"' : 'no action named "ghost": this body has no routine library; built-in routines are called as <module>.<routine>' } }) },
+  { capability: "builtins", method: "GET", url: "/builtins", served: () => ({ body: wire({ builtins: new Builtins({ stats: new KitStats(JsonStore.memory()) }).list() }) }) },
+  { capability: "builtins", method: "GET", url: "/builtins/docs?names=move", served: () => ({ body: { docs: new Builtins({ stats: new KitStats(JsonStore.memory()) }).docs(["move"]) } }) },
+  { capability: "builtins", method: "GET", url: "/builtins/search?q=walk&limit=1", served: () => ({ body: wire({ hits: new Builtins({ stats: new KitStats(JsonStore.memory()) }).search("walk", 1) }) }) },
+  { capability: "builtins", method: "GET", url: "/builtins/source?name=nope", served: () => ({ status: 404, body: { error: 'no built-in module "nope"' } }) },
 ];
 
 /** A body that offers every capability; each profile below turns one off. */
@@ -729,6 +771,7 @@ const PROFILES: Profile[] = [
   { off: ["milestones"], scenario: { milestonesEnabled: false }, features: { ...FEATURES_ALL, milestones: false } },
   { off: ["reflexes"], scenario: { triggers: false }, features: { ...FEATURES_ALL, reflexes: false } },
   { off: ["routines"], scenario: { routines: false }, features: { ...FEATURES_ALL, routines: false } },
+  { off: ["builtins"], scenario: { builtins: [] }, features: { ...FEATURES_ALL, builtins: [] } },
 ];
 
 describe("body API: each capability gates exactly its own routes", () => {

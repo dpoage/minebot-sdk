@@ -16,7 +16,7 @@ const exec = promisify(execFile);
 const ROUTINE_KITS = ["gatherer", "crafter", "builder", "explorer", "social"];
 /** What --locks with the routine kits offers: their used primitives come along automatically. */
 const OFFERED_KITS = ["move", "sense", "dig", "place", "inventory", "craft", "items", "furnace", ...ROUTINE_KITS];
-const raw: BodyFeatures = { kits: [], kitsLocked: true, agentKits: false, wiki: "off", lessons: false, milestones: false, reflexes: false, routines: false };
+const raw: BodyFeatures = { kits: [], kitsLocked: true, agentKits: false, wiki: "off", lessons: false, milestones: false, reflexes: false, routines: false, builtins: [] };
 const kitsTier: BodyFeatures = { ...raw, kits: OFFERED_KITS, agentKits: true };
 const wikiTier: BodyFeatures = { ...raw, wiki: "read" };
 const full: BodyFeatures = { ...kitsTier, wiki: "read" };
@@ -142,9 +142,9 @@ describe("tier visibility on a running body", () => {
   let plainKitsBody: BodyClient;
   before(async () => {
     [rawBody, fullBody, plainKitsBody] = await Promise.all([
-      start("features-raw", "--wiki", "off", "--no-milestones", "--no-agent-kits", "--no-reflexes", "--no-routines", "--kits", ""),
+      start("features-raw", "--wiki", "off", "--no-milestones", "--no-agent-kits", "--no-reflexes", "--no-routines", "--kits", "", "--builtins", "none"),
       start("features-full", "--wiki", "read", "--kits", ROUTINE_KITS.join(","), "--no-milestones"),
-      start("features-plainkits", "--wiki", "off", "--no-agent-kits", "--no-milestones", "--no-reflexes", "--kits", ROUTINE_KITS.join(",")),
+      start("features-plainkits", "--wiki", "off", "--no-agent-kits", "--no-milestones", "--no-reflexes", "--kits", ROUTINE_KITS.join(","), "--builtins", "none"),
     ]);
   });
   after(() => {
@@ -167,7 +167,7 @@ describe("tier visibility on a running body", () => {
   const get = (client: BodyClient, route: string) => fetch(new URL(route, client.endpoint.url), { headers: { authorization: `Bearer ${client.endpoint.token}` } });
 
   it("answers requests for a feature it lacks like requests for any unknown route", async () => {
-    for (const route of ["/kits", "/kits/docs", "/kits/source?name=move", "/kits/save", "/wiki/list", "/wiki/search?q=logs", "/wiki/page?id=flows/first-day", "/milestones", "/triggers", "/routines", "/routines/source?name=act", "/routines/versions?name=act", "/bindings"]) {
+    for (const route of ["/kits", "/kits/docs", "/kits/source?name=move", "/kits/save", "/wiki/list", "/wiki/search?q=logs", "/wiki/page?id=flows/first-day", "/milestones", "/triggers", "/routines", "/routines/source?name=act", "/routines/versions?name=act", "/bindings", "/builtins", "/builtins/docs", "/builtins/search?q=walk", "/builtins/source?name=move"]) {
       const res = await get(rawBody, route);
       assert.equal(res.status, 404, route);
       assert.equal(((await res.json()) as { error: string }).error, `no route for GET ${route.split("?")[0]}`);
@@ -202,6 +202,22 @@ describe("tier visibility on a running body", () => {
     assert.equal(saved.status, 200);
     assert.equal(readFileSync(path.join(dir, "act.ts"), "utf8"), "export default () => 1;\n");
     assert.equal(existsSync(path.join(runtime, "features-routines-state", "routines")), false);
+  });
+
+  it("offers the modules --builtins names with the ones they use, to the CLI of that body and no other", async () => {
+    const body = await start("features-builtins", "--wiki", "off", "--no-milestones", "--builtins", "gatherer");
+    assert.deepEqual((await body.features()).builtins, ["move", "sense", "dig", "inventory", "items", "gatherer"]);
+    const help = await cli(body, "--help");
+    assert.match(help.out, /builtins docs \[module\.\.\.\]/);
+    const docs = await cli(body, "builtins", "docs", "gatherer");
+    assert.equal(docs.code, 0, docs.out);
+    assert.match(docs.out, /^## gatherer\n.*\nUses: move, sense, dig, inventory, items\.\n### gatherer\.gather\(ctx, \{ /);
+    const withheld = await cli(body, "builtins", "docs", "place");
+    assert.equal(withheld.code, 1);
+    assert.match(withheld.out, /unknown built-in module "place"; offered: move, sense, dig, inventory, items, gatherer/);
+    assert.match((await cli(body, "builtins", "source", "move")).out, /^\/\/ The move routines:/);
+    assert.deepEqual((await rawBody.features()).builtins, [], "--builtins none offers none");
+    assert.doesNotMatch((await cli(rawBody, "--help")).out, /builtins/);
   });
 
   it("serves a blocking wait on every body", async () => {

@@ -9,11 +9,12 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import type { BodyFeatures } from "../src/protocol/index.ts";
 
-const EVERYTHING: BodyFeatures = { kits: ["move"], kitsLocked: false, agentKits: true, wiki: "write", lessons: true, milestones: true, reflexes: true, routines: true };
+const EVERYTHING: BodyFeatures = { kits: ["move"], kitsLocked: false, agentKits: true, wiki: "write", lessons: true, milestones: true, reflexes: true, routines: true, builtins: ["move"] };
 const CLI = [...process.execArgv, path.join(import.meta.dirname, "..", "src", "cli.ts")];
 
-const CORE = ["api_reference", "bind_routine", "call_routine", "get_events", "kit_docs", "observe", "run_program", "stop_program", "wait_for"];
+const CORE = ["api_reference", "bind_routine", "builtin_docs", "call_routine", "get_events", "kit_docs", "observe", "run_program", "stop_program", "wait_for"];
 const ROUTINE_TOOLS = ["bind_routine", "call_routine", "list_routines", "routine_revert", "routine_save", "routine_source", "routine_versions", "unbind_routine"];
+const BUILTIN_TOOLS = ["builtin_docs", "builtin_search", "builtin_source", "list_builtins"];
 const FULL = [
   ...CORE,
   "kit_remove", "kit_revert", "kit_save", "kit_search", "kit_source", "kit_try", "kit_versions", "list_kits",
@@ -21,6 +22,7 @@ const FULL = [
   "use_kits",
   "wiki_add_lesson", "wiki_list", "wiki_read", "wiki_search",
   "list_routines", "routine_revert", "routine_save", "routine_source", "routine_versions", "unbind_routine",
+  "builtin_search", "builtin_source", "list_builtins",
 ].sort();
 
 /** A body that answers the feature probe with `features`; its URL, and a way to stop it. */
@@ -62,12 +64,25 @@ describe("minebot mcp tool sets", () => {
     assert.deepEqual(await tools(url, "--tools", "full"), FULL);
   });
 
-  it("serves no routine tool, in either set, for a body without routines", async () => {
+  it("serves no routine tool but the call of a built-in, in either set, for a body without routines", async () => {
     const { server, url: bare } = await stubBody({ ...EVERYTHING, routines: false });
     try {
       for (const args of [[], ["--tools", "full"]]) {
         const served = await tools(bare, ...args);
-        assert.deepEqual(served.filter((name) => ROUTINE_TOOLS.includes(name)), [], args.join(" "));
+        // The call of a built-in is served wherever the body offers built-ins, with a library or without.
+        assert.deepEqual(served.filter((name) => ROUTINE_TOOLS.includes(name)), ["call_routine"], args.join(" "));
+      }
+    } finally {
+      server.close();
+    }
+  });
+
+  it("serves the built-in tools exactly when the body offers built-ins, builtin_docs in the core set and the rest with --tools full", async () => {
+    const { server, url: none } = await stubBody({ ...EVERYTHING, builtins: [] });
+    try {
+      for (const args of [[], ["--tools", "full"]]) {
+        assert.deepEqual((await tools(none, ...args)).filter((name) => BUILTIN_TOOLS.includes(name)), [], `no built-ins, ${args.join(" ")}`);
+        assert.deepEqual((await tools(url, ...args)).filter((name) => BUILTIN_TOOLS.includes(name)), args.length === 0 ? ["builtin_docs"] : BUILTIN_TOOLS, `built-ins, ${args.join(" ")}`);
       }
     } finally {
       server.close();

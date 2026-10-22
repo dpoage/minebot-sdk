@@ -9,6 +9,8 @@ import {
   type BindInput,
   type BindingsResponse,
   type BindResponse,
+  type BuiltinSearchHit,
+  type BuiltinsResponse,
   type BodyFeatures,
   type Endpoint,
   type KitSearchHit,
@@ -251,9 +253,29 @@ export class BodyClient {
     return this.#request("POST", "/unbind", { name });
   }
 
-  /** Calls the action bound to `name` with `args` as one run: the result or the error comes back like any run's. */
+  /** Calls the action bound to `name`, or the built-in routine `<module>.<routine>`, with `args` as one run: the result or the error comes back like any run's. */
   call(name: string, args?: Record<string, unknown>, timeoutMs?: number): Promise<RunResult> {
     return this.#request("POST", "/call", { name, args, timeoutMs });
+  }
+
+  /** The built-in routine modules the body offers, each with how often its routines succeeded and failed. */
+  builtins(): Promise<BuiltinsResponse> {
+    return this.#request("GET", "/builtins");
+  }
+
+  /** The reference for the named built-in modules, or for every offered module when `names` is empty. */
+  builtinDocs(names: string[] = []): Promise<{ docs: string }> {
+    return this.#request("GET", `/builtins/docs?names=${encodeURIComponent(names.join(","))}`);
+  }
+
+  /** Ranks the offered built-in modules and routines against a query. */
+  searchBuiltins(query: string, limit = 5): Promise<{ hits: BuiltinSearchHit[] }> {
+    return this.#request("GET", `/builtins/search?q=${encodeURIComponent(query)}&limit=${limit}`);
+  }
+
+  /** A built-in module's source file, as the package ships it. */
+  builtinSource(name: string): Promise<{ name: string; source: string }> {
+    return this.#request("GET", `/builtins/source?name=${encodeURIComponent(name)}`);
   }
 
   async #request<T>(method: string, path: string, body?: unknown): Promise<T> {

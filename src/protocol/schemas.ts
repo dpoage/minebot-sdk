@@ -48,6 +48,21 @@ export const RoutineName = z.string().regex(/^[a-z][a-z0-9_-]{0,47}$/, "use 1-48
  */
 export const BindingName = RoutineName;
 
+/**
+ * The call name of a built-in routine: `<module>.<routine>`, e.g. `move.to` or `gatherer.collectDrops`. Only the
+ * shape is checked here; whether the body offers that routine is the body's to say (a 404 naming it).
+ */
+export const BuiltinCallName = z.string().max(100).regex(/^[^\s.]+(\.[^\s.]+)+$/, "use <module>.<routine>");
+
+/** Query of `GET /builtins/docs`: module names, comma-separated; none means every offered module. */
+export const BuiltinDocsQuery = z.object({ names: z.string().optional() });
+
+/** Query of `GET /builtins/search`. */
+export const BuiltinSearchQuery = z.object({ q: z.string().min(1), limit: z.coerce.number().int().positive().max(20).default(5) });
+
+/** Query of `GET /builtins/source`. */
+export const BuiltinSourceQuery = z.object({ name: RoutineName });
+
 /** The largest routine source the library keeps, in UTF-8 bytes. */
 export const ROUTINE_SOURCE_LIMIT = 128 * 1024;
 
@@ -222,9 +237,12 @@ export type BindInput = z.infer<typeof BindInput>;
 /** Body of `POST /unbind`: any name the store holds (see `StoredName`). */
 export const UnbindInput = z.object({ name: StoredName });
 
-/** Body of `POST /call`: calls the action bound to `name`. `args` default to `{}`; `timeoutMs` as for `POST /run`. */
+/**
+ * Body of `POST /call`: calls the action bound to `name`, or the built-in routine `<module>.<routine>`
+ * (a name with a dot is never a binding). `args` default to `{}`; `timeoutMs` as for `POST /run`.
+ */
 export const CallInput = z.object({
-  name: BindingName,
+  name: z.union([BindingName, BuiltinCallName], { error: "use an action's name (1-48 lowercase letters, digits, _ and -; start with a letter) or a built-in routine's <module>.<routine>" }),
   args: z.record(z.string(), z.unknown()).optional(),
   timeoutMs: RunInput.shape.timeoutMs,
 });

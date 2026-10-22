@@ -7,12 +7,23 @@ import { describe, it } from "node:test";
 const ROOT = path.join(import.meta.dirname, "..");
 
 /** The package's own entry points as the minebot-sdk:source condition resolves them: "minebot-sdk/kit" → src/kit/public.ts. */
-const SELF_EXPORTS = (JSON.parse(readFileSync(path.join(ROOT, "package.json"), "utf8")) as { exports: Record<string, { "minebot-sdk:source"?: string }> }).exports;
+const SELF_EXPORTS = (JSON.parse(readFileSync(path.join(ROOT, "package.json"), "utf8")) as { exports: Record<string, { "minebot-sdk:source"?: string } | null> }).exports;
+
+/** The source file of the export `subpath` (`./kit`), through an exact entry or a `*` pattern (`./routines/*` → src/routines/*.ts); a `null` entry blocks the subpath. */
+function exportedSource(subpath: string): string | undefined {
+  if (subpath in SELF_EXPORTS) return SELF_EXPORTS[subpath]?.["minebot-sdk:source"];
+  for (const [pattern, target] of Object.entries(SELF_EXPORTS)) {
+    const star = pattern.indexOf("*");
+    if (star < 0 || !subpath.startsWith(pattern.slice(0, star)) || !subpath.endsWith(pattern.slice(star + 1))) continue;
+    return target?.["minebot-sdk:source"]?.replace("*", subpath.slice(star, subpath.length - (pattern.length - star - 1)));
+  }
+  return undefined;
+}
 
 /** The source file a local or self-referencing specifier (as `staticImports` returns it) loads. */
 function resolveLocal(from: string, specifier: string): string {
   if (!specifier.startsWith("minebot-sdk/")) return path.resolve(path.dirname(from), specifier);
-  const source = SELF_EXPORTS[`./${specifier.slice("minebot-sdk/".length)}`]?.["minebot-sdk:source"];
+  const source = exportedSource(`./${specifier.slice("minebot-sdk/".length)}`);
   if (!source) throw new Error(`${from} imports ${specifier}, which package.json does not export under the minebot-sdk:source condition`);
   return path.resolve(ROOT, source);
 }

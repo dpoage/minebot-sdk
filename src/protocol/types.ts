@@ -258,6 +258,34 @@ export interface KitSearchHit {
   stats?: ActionStats;
 }
 
+/** A built-in routine module a body offers: `import * as <name> from "minebot-sdk/routines/<name>"`, and each routine callable as `<name>.<routine>`. */
+export interface BuiltinInfo {
+  name: string;
+  description: string;
+  /** The built-in modules this one calls; every one of them is offered too. */
+  uses: string[];
+  /** Routine names, in the order the module declares them, e.g. `to`. */
+  routines: string[];
+  /** Calls so far, by routine name; routines that never ran are absent. Counted per body, and kept across restarts. */
+  stats: Record<string, ActionStats>;
+}
+
+export interface BuiltinsResponse {
+  builtins: BuiltinInfo[];
+}
+
+/** One ranked answer of a built-in search: a module, or one of its routines. */
+export interface BuiltinSearchHit {
+  module: string;
+  /** Absent when the hit is the module as a whole. */
+  routine?: string;
+  score: number;
+  /** The module's description, or the first line of the routine's description. */
+  text: string;
+  /** Calls of the routine so far, when it has run. */
+  stats?: ActionStats;
+}
+
 /** One saved version of an agent kit. */
 export interface KitVersion {
   version: number;

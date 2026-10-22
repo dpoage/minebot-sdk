@@ -21,10 +21,12 @@ export interface BodyFeatures {
   reflexes: boolean;
   /** The body keeps a routine library: modules the agent saves, binds to names, and calls. */
   routines: boolean;
+  /** The built-in routine modules the body offers (the closure of its `--builtins` over each module's `uses`); empty when it offers none. */
+  builtins: string[];
 }
 
 /** Every optional capability a body can offer. */
-export const CAPABILITIES = ["kits", "kitSwitching", "agentKits", "wiki", "lessons", "milestones", "reflexes", "routines"] as const;
+export const CAPABILITIES = ["kits", "kitSwitching", "agentKits", "wiki", "lessons", "milestones", "reflexes", "routines", "builtins", "call"] as const;
 export type Capability = (typeof CAPABILITIES)[number];
 
 /**
@@ -40,6 +42,9 @@ export const CAPABILITY_GATES: Record<Capability, (features: BodyFeatures) => bo
   milestones: (f) => f.milestones,
   reflexes: (f) => f.reflexes && f.routines,
   routines: (f) => f.routines,
+  builtins: (f) => f.builtins.length > 0,
+  // Calling is the library's actions (routines) and the shipped routines (builtins): each name is checked by its kind where the call is made.
+  call: (f) => f.routines || f.builtins.length > 0,
 };
 
 /** Which capabilities a body offers, in CAPABILITIES order. */
@@ -93,7 +98,8 @@ export function programApiDoc(features: BodyFeatures): string {
     const write = caps.lessons ? ", wiki.addLesson({ title, tags, body }) to record what you learned" : "";
     globals.push(`- wiki: notes on mechanics, flows, and quirks${lessons}. wiki.search(query, limit?) -> hits, wiki.read(id) -> markdown, wiki.list(section?)${write}.`);
   }
-  const routines = caps.routines ? `\n\n${routinesDoc(features)}` : "";
+  // The routine-related sections: the library's, then the built-ins' (each only where the body offers it).
+  const routines = `${caps.routines ? `\n\n${routinesDoc(features)}` : ""}${caps.builtins ? `\n\n${builtinsDoc(features)}` : ""}`;
   return `A program is the body of an async JavaScript function. It runs inside the body, against a live Mineflayer bot. require() and import() are not available.
 
 Globals:
@@ -114,5 +120,15 @@ function routinesDoc(features: BodyFeatures): string {
 - Library over HTTP: GET /routines, GET /routines/source?name=, POST /routines/save { name, source } (answers the routine and the type check of its source, which does not stop the save; a source is limited to 128 KiB), GET /routines/versions?name=, POST /routines/revert { name, version }. Routine and binding names are 1-48 lowercase letters, digits, _ and -, starting with a letter.
 - Bindings: POST /bind { kind: "action", name, routine } names a saved routine for calling (the same name replaces it); GET /bindings lists them; POST /unbind { name } removes one. Bindings persist across body restarts.${reflexes}
 - POST /call { name, args?, timeoutMs? } calls the routine bound to name with the JSON args and answers like /run: status, result (the routine's return value), error, logs. A call is a run: one at a time with programs, stopped by /stop, ended by its timeout.`;
+}
+
+/** The built-in routines section of the program reference, for a body that offers any. Importing them is told only where the body also has routines; calling them by name, wherever calls are served. */
+function builtinsDoc(features: BodyFeatures): string {
+  const caps = capabilities(features);
+  const example = features.builtins.includes("move") ? ", e.g. move.to" : "";
+  const imports = caps.routines ? ` A routine imports a module (import * as <module> from "minebot-sdk/routines/<module>") and calls its routines as <module>.<routine>(ctx, { ... }).` : "";
+  // Without a library the routines section, which says what a call is, is absent.
+  const call = ` POST /call { name: "<module>.<routine>"${example}, args?, timeoutMs? } calls one as a run${caps.routines ? ", with no bind" : ""}, and answers like /run: status, result, error, logs.${caps.routines ? "" : " A call is a run: one at a time with programs, stopped by /stop, ended by its timeout."}`;
+  return `Built-in routines: ${features.builtins.join(", ")}. Reference: minebot builtins docs [module...] (GET /builtins/docs?names=), minebot builtins search <query> (GET /builtins/search?q=), minebot builtins source <module> (GET /builtins/source?name=); GET /builtins lists the modules with how often each built-in routine succeeded and failed on this body.${imports}${call}`;
 }
 
