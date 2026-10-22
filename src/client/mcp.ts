@@ -11,8 +11,10 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import {
   BindingName,
+  BuiltinCallName,
   type BindInput,
   capabilities,
+  type Capability,
   CallInput,
   ChatInput,
   DEFAULT_TIMEOUT_MS,
@@ -45,6 +47,16 @@ export type ToolSet = (typeof TOOL_SETS)[number];
 
 /** The tools of the core set. Programs reach everything else through their globals. */
 const CORE_TOOLS: Readonly<Record<string, true>> = { observe: true, run_program: true, stop_program: true, wait_for: true, get_events: true, api_reference: true, kit_docs: true, builtin_docs: true, call_routine: true, bind_routine: true };
+
+/** Which kinds of name a call takes: an action's (the body has routines) and a built-in's (it has built-ins). */
+export type CallKinds = Pick<Record<Capability, boolean>, "routines" | "builtins">;
+
+/** What `call_routine` takes as `name` on a body: the names of the kinds it can call, and no other. */
+export function callNameSchema({ routines, builtins }: CallKinds): z.ZodType<string> {
+  if (routines && builtins) return CallInput.shape.name.describe("The name of an action, as bound by bind_routine, or of a built-in routine: <module>.<routine>, e.g. move.to");
+  if (builtins) return BuiltinCallName.describe("The name of a built-in routine: <module>.<routine>, e.g. move.to");
+  return BindingName.describe("The name of an action, as bound by bind_routine");
+}
 
 /** The description of every capability-gated tool, and whether it is served, by capability state and tool set: one place, reused by apply() and the tests. */
 export function toolPlan(features: BodyFeatures, toolSet: ToolSet): Record<string, { enabled: boolean; description: string }> {
@@ -109,8 +121,12 @@ export function toolPlan(features: BodyFeatures, toolSet: ToolSet): Record<strin
       description: "Record a lesson you verified in game (a mechanic, a pitfall, a working approach) so other agents can find it. Lessons are marked unreviewed.",
     },
     call_routine: {
-      enabled: caps.routines,
-      description: `Call an action: a saved routine that bind_routine bound to a name, with JSON args${caps.builtins ? ", or a built-in routine by its <module>.<routine> name (e.g. move.to), which needs no bind" : ""}. Blocks until the routine returns, fails, or times out, and answers like run_program: status, logs, error or result. One run at a time, programs included.`,
+      enabled: caps.call,
+      description: `${
+        caps.routines
+          ? `Call an action: a saved routine that bind_routine bound to a name, with JSON args${caps.builtins ? ", or a built-in routine by its <module>.<routine> name (e.g. move.to), which needs no bind" : ""}`
+          : "Call a built-in routine by its <module>.<routine> name (e.g. move.to), with JSON args"
+      }. Blocks until the call returns, fails, or times out, and answers like run_program: status, logs, error or result. One run at a time, programs included.`,
     },
     list_builtins: {
       enabled: caps.builtins,
@@ -438,16 +454,14 @@ export async function serveMcp(bodyName: string, toolSet: ToolSet): Promise<void
   );
 
   const routineName = (description: string) => RoutineName.describe(description);
-  const actionCall = {
-    name: BindingName.describe("The name of an action, as bound by bind_routine"),
-    args: CallInput.shape.args.describe("The routine's arguments: a JSON object. Default {}."),
+  const callArguments = {
+    args: CallInput.shape.args.describe("The call's arguments: a JSON object. Default {}."),
     timeout_ms: CallInput.shape.timeoutMs.describe(`Abort the call after this many milliseconds. Default ${DEFAULT_TIMEOUT_MS}.`),
   };
-  // A body that offers built-in routines also takes their call names.
-  const builtinCall = { ...actionCall, name: CallInput.shape.name.describe("The name of an action, as bound by bind_routine, or of a built-in routine: <module>.<routine>, e.g. move.to") };
+  const callParams = (caps: CallKinds) => ({ name: callNameSchema(caps), ...callArguments });
   const callRoutine = server.registerTool(
     "call_routine",
-    { description: "", inputSchema: actionCall },
+    { description: "", inputSchema: callParams({ routines: true, builtins: false }) },
     ({ name, args, timeout_ms }) => call(async (c) => formatRun(await c.call(name, args, timeout_ms))),
   );
   const actionBinding = {
@@ -566,7 +580,7 @@ export async function serveMcp(bodyName: string, toolSet: ToolSet): Promise<void
     }
     // A body without reflexes offers the action kind and none of the reflex fields.
     bindRoutine.update({ paramsSchema: capabilities(features).reflexes ? reflexBinding : actionBinding });
-    callRoutine.update({ paramsSchema: capabilities(features).builtins ? builtinCall : actionCall });
+    callRoutine.update({ paramsSchema: callParams(capabilities(features)) });
     status.update({
       description: capabilities(features).milestones
         ? "Deaths and reconnects since the body started, and progress toward this body's milestones (graded from the server's statistics)."

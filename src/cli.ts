@@ -82,7 +82,7 @@ const FEATURE_COMMANDS: Record<string, (features: BodyFeatures) => boolean> = {
   routines: CAPABILITY_GATES.routines,
   bind: CAPABILITY_GATES.routines,
   unbind: CAPABILITY_GATES.routines,
-  call: CAPABILITY_GATES.routines,
+  call: CAPABILITY_GATES.call,
   builtins: CAPABILITY_GATES.builtins,
 };
 

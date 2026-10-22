@@ -408,9 +408,10 @@ export function bodyRoutes({ body, kits: host, builtins, library, syncKits, save
     },
     {
       // A call is a run: recorded like a program, with the action and its routine and args on the history line; a built-in's line has its call name and args.
+      // Served when the body has actions or built-ins; each name is checked by its kind.
       method: "POST",
       path: "/call",
-      capability: "routines",
+      capability: "call",
       handler: async ({ read, requestId }) => {
         const { name, args, timeoutMs } = parse(CallInput, await read());
         // A name with a dot is a built-in's; it is never a binding.
@@ -418,7 +419,8 @@ export function bodyRoutes({ body, kits: host, builtins, library, syncKits, save
           if (builtins.routine(name) === undefined) throw new HttpError(404, `no built-in routine "${name}"`);
           return recorder.record({ code: "", timeoutMs, requestId, extra: { call: { name, args } } }, () => body.callBuiltin(name, args, timeoutMs));
         }
-        const binding = routines!.bindings.action(name);
+        if (!routines) throw new HttpError(404, `no action named "${name}": this body has no routine library; built-in routines are called as <module>.<routine>`);
+        const binding = routines.bindings.action(name);
         if (!binding) throw new HttpError(404, `no action bound to "${name}"`);
         return recorder.record({ code: "", timeoutMs, requestId, extra: { call: { name, routine: binding.routine, args } } }, () => body.call(binding.routine, args, timeoutMs));
       },

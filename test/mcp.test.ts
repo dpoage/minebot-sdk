@@ -69,7 +69,8 @@ describe("minebot mcp tool sets", () => {
     try {
       for (const args of [[], ["--tools", "full"]]) {
         const served = await tools(bare, ...args);
-        assert.deepEqual(served.filter((name) => ROUTINE_TOOLS.includes(name)), [], args.join(" "));
+        // The call of a built-in is served wherever the body offers built-ins, with a library or without.
+        assert.deepEqual(served.filter((name) => ROUTINE_TOOLS.includes(name)), ["call_routine"], args.join(" "));
       }
     } finally {
       server.close();

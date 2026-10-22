@@ -740,7 +740,8 @@ const GATED: GatedProbe[] = [
   { capability: "routines", method: "GET", url: "/bindings", served: () => ({ body: { bindings: [] } }) },
   { capability: "routines", method: "POST", url: "/bind", call: { json: { kind: "action", name: "act", routine: "ghost" } }, served: () => ({ status: 404, body: { error: 'no routine named "ghost"' } }) },
   { capability: "routines", method: "POST", url: "/unbind", call: { json: { name: "ghost" } }, served: () => ({ status: 404, body: { error: 'no binding "ghost"' } }) },
-  { capability: "routines", method: "POST", url: "/call", call: { json: { name: "ghost" } }, served: () => ({ status: 404, body: { error: 'no action bound to "ghost"' } }) },
+  // Served when the body has actions or built-ins; a dot-free name is an action's, which a body without routines does not keep.
+  { capability: "call", method: "POST", url: "/call", call: { json: { name: "ghost" } }, served: (f) => ({ status: 404, body: { error: f.routines ? 'no action bound to "ghost"' : 'no action named "ghost": this body has no routine library; built-in routines are called as <module>.<routine>' } }) },
   { capability: "builtins", method: "GET", url: "/builtins", served: () => ({ body: wire({ builtins: new Builtins({ stats: new KitStats(JsonStore.memory()) }).list() }) }) },
   { capability: "builtins", method: "GET", url: "/builtins/docs?names=move", served: () => ({ body: { docs: new Builtins({ stats: new KitStats(JsonStore.memory()) }).docs(["move"]) } }) },
   { capability: "builtins", method: "GET", url: "/builtins/search?q=walk&limit=1", served: () => ({ body: wire({ hits: new Builtins({ stats: new KitStats(JsonStore.memory()) }).search("walk", 1) }) }) },

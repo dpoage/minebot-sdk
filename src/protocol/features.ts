@@ -26,7 +26,7 @@ export interface BodyFeatures {
 }
 
 /** Every optional capability a body can offer. */
-export const CAPABILITIES = ["kits", "kitSwitching", "agentKits", "wiki", "lessons", "milestones", "reflexes", "routines", "builtins"] as const;
+export const CAPABILITIES = ["kits", "kitSwitching", "agentKits", "wiki", "lessons", "milestones", "reflexes", "routines", "builtins", "call"] as const;
 export type Capability = (typeof CAPABILITIES)[number];
 
 /**
@@ -43,6 +43,8 @@ export const CAPABILITY_GATES: Record<Capability, (features: BodyFeatures) => bo
   reflexes: (f) => f.reflexes && f.routines,
   routines: (f) => f.routines,
   builtins: (f) => f.builtins.length > 0,
+  // Calling is the library's actions (routines) and the shipped routines (builtins): each name is checked by its kind where the call is made.
+  call: (f) => f.routines || f.builtins.length > 0,
 };
 
 /** Which capabilities a body offers, in CAPABILITIES order. */
@@ -120,13 +122,13 @@ function routinesDoc(features: BodyFeatures): string {
 - POST /call { name, args?, timeoutMs? } calls the routine bound to name with the JSON args and answers like /run: status, result (the routine's return value), error, logs. A call is a run: one at a time with programs, stopped by /stop, ended by its timeout.`;
 }
 
-/** The built-in routines section of the program reference, for a body that offers any. How to import and call them is told only where the body also has routines. */
+/** The built-in routines section of the program reference, for a body that offers any. Importing them is told only where the body also has routines; calling them by name, wherever calls are served. */
 function builtinsDoc(features: BodyFeatures): string {
   const caps = capabilities(features);
   const example = features.builtins.includes("move") ? ", e.g. move.to" : "";
-  const use = caps.routines
-    ? ` A routine imports a module (import * as <module> from "minebot-sdk/routines/<module>") and calls its routines as <module>.<routine>(ctx, { ... }); POST /call { name: "<module>.<routine>"${example}, args?, timeoutMs? } calls one as a run, with no bind, and answers like any call.`
-    : "";
-  return `Built-in routines: ${features.builtins.join(", ")}. Reference: minebot builtins docs [module...] (GET /builtins/docs?names=), minebot builtins search <query> (GET /builtins/search?q=), minebot builtins source <module> (GET /builtins/source?name=); GET /builtins lists the modules with how often each built-in routine succeeded and failed on this body.${use}`;
+  const imports = caps.routines ? ` A routine imports a module (import * as <module> from "minebot-sdk/routines/<module>") and calls its routines as <module>.<routine>(ctx, { ... }).` : "";
+  // Without a library the routines section, which says what a call is, is absent.
+  const call = ` POST /call { name: "<module>.<routine>"${example}, args?, timeoutMs? } calls one as a run${caps.routines ? ", with no bind" : ""}, and answers like /run: status, result, error, logs.${caps.routines ? "" : " A call is a run: one at a time with programs, stopped by /stop, ended by its timeout."}`;
+  return `Built-in routines: ${features.builtins.join(", ")}. Reference: minebot builtins docs [module...] (GET /builtins/docs?names=), minebot builtins search <query> (GET /builtins/search?q=), minebot builtins source <module> (GET /builtins/source?name=); GET /builtins lists the modules with how often each built-in routine succeeded and failed on this body.${imports}${call}`;
 }
 
