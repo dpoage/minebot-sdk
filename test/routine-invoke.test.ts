@@ -11,15 +11,16 @@ const ctx: RoutineContext = {
   signal: new AbortController().signal,
   on: () => {},
   notes: { list: () => [], get: () => undefined, set: (key, text) => ({ key, text, updated: "" }), delete: () => false },
+  store: () => ({ get: () => undefined, set: () => {}, delete: () => false, keys: () => [] }),
   status: async () => ({ connected: true, startedAt: "", deaths: 0, reconnects: 0 }),
 };
 
 // The context offers exactly these members; adding or dropping one fails to compile here.
-const MEMBERS: Record<keyof RoutineContext, true> = { bot: true, log: true, sleep: true, signal: true, on: true, notes: true, status: true, kit: true, wiki: true };
+const MEMBERS: Record<keyof RoutineContext, true> = { bot: true, log: true, sleep: true, signal: true, on: true, notes: true, store: true, status: true, kit: true, wiki: true };
 
 describe("RoutineContext", () => {
   it("offers the bot, the run's tools, and the body's facilities, kit and wiki optionally", () => {
-    assert.deepEqual(Object.keys(MEMBERS).sort(), ["bot", "kit", "log", "notes", "on", "signal", "sleep", "status", "wiki"]);
+    assert.deepEqual(Object.keys(MEMBERS).sort(), ["bot", "kit", "log", "notes", "on", "signal", "sleep", "status", "store", "wiki"]);
     const withOptional: RoutineContext = { ...ctx, kit: {} as NonNullable<RoutineContext["kit"]>, wiki: { search: () => [], read: () => "", list: () => [] } };
     assert.ok(withOptional.wiki && withOptional.kit);
     // The handler of the run-scoped subscription is the one a program's `on` takes, so the host assigns its scope's `on` without a cast.

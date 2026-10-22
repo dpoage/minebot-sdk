@@ -184,7 +184,7 @@ describe("POST /call", () => {
 
 describe("a routine's ctx", () => {
   const KEYS = "export default (ctx: object) => Object.keys(ctx).sort();\n";
-  const BASE = ["bot", "log", "notes", "on", "signal", "sleep", "status"];
+  const BASE = ["bot", "log", "notes", "on", "signal", "sleep", "status", "store"];
   const kitsOptions: [string, FakeBodyOptions["init"], string[]][] = [
     ["with kits", {}, ["kit"]],
     ["without kits", { kits: [], lockKits: true }, []],
@@ -258,7 +258,7 @@ describe("a reflex's run is a call's, fired by an event", () => {
     const body = await bodyWith({ keys: KEYS, notes: NOTES, chatter, reader: READER });
     await using(body, async () => {
       const called = runOf(await body.request("POST", "/call", { name: "keys" })).result;
-      assert.deepEqual(called, ["bot", "kit", "log", "notes", "on", "signal", "sleep", "status", "wiki"]);
+      assert.deepEqual(called, ["bot", "kit", "log", "notes", "on", "signal", "sleep", "status", "store", "wiki"]);
       await body.ok("POST", "/bind", { kind: "reflex", name: "reflex", routine: "notes", on: ["chat"], cooldownMs: 0 });
       runOf(await body.request("POST", "/call", { name: "chatter" }));
       assert.equal((await body.waitFor("trigger_finished")).data.status, "ok");

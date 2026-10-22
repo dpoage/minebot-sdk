@@ -15,6 +15,7 @@ import { formatLogLine } from "../program/runner.ts";
 import type { ProgramScope } from "../program/scope.ts";
 import { JsonStore } from "../store.ts";
 import type { RoutineContext } from "../routine/context.ts";
+import { checkStoreNamespace, type RoutineCallObserver, withObserver } from "../routine/define.ts";
 import { invokeRoutine } from "../routine/invoke.ts";
 import type { Routine } from "../routine/public.ts";
 import { createFakeBot, type EntitySpec, type EquipmentSlot } from "./bot.ts";
@@ -51,7 +52,7 @@ export interface KitHarnessOptions {
   username?: string;
 }
 
-/** One call of one action, as the framework ran it: nested calls through `ctx.kits` included. */
+/** One call of one action, as the framework ran it: nested calls through `ctx.kits` included. A routine value named `module.routine` records as kit `module`, action `routine`. */
 export interface RecordedCall {
   kit: string;
   action: string;
@@ -83,7 +84,7 @@ export interface KitHarness {
   call<R = unknown>(path: string, args?: unknown): Promise<R>;
   /**
    * Runs a routine through the same `invokeRoutine` the body calls, with this harness's bot, logs,
-   * clock, kits, and notes. `routine` is a `defineRoutine` value, a plain function
+   * clock, kits, notes, and in-memory `ctx.store` namespaces. `routine` is a `defineRoutine` value, a plain function
    * `(ctx, args) => result`, or a module namespace whose default export is one (`await import("./mine.ts")`).
    * Arguments and result are validated as in the body, with the same messages; the routine is
    * named "under test" in them. `ctx.status` and `ctx.wiki` throw `UnsupportedApiError`.
@@ -94,7 +95,7 @@ export interface KitHarness {
    */
   run<F extends RoutineFunction>(routine: F, args?: NoInfer<RunArgs<F>>): Promise<RunResult<F>>;
   run<M extends { readonly default: RoutineFunction }>(routine: M, args?: NoInfer<RunArgs<M["default"]>>): Promise<RunResult<M["default"]>>;
-  /** Every action call so far, in order. */
+  /** Every action call so far, in order, and during `run` every call of a routine named `module.routine`, at its start. */
   readonly calls: readonly RecordedCall[];
   /**
    * What kits and routines passed to `ctx.log`. A routine run's lines (its kit calls' included) read
@@ -221,6 +222,8 @@ export function createKitHarness(options: KitHarnessOptions = {}): KitHarness {
   const kit = host.api(scope, bot);
   // The body's notepad over a store that never touches the disk; it belongs to the harness, not to one run.
   const notes = new Notes(JsonStore.memory());
+  /** `ctx.store` namespaces, in memory and per harness, under the body's namespace rule. */
+  const routineStores = new Map<string, JsonStore>();
   const facilities = {
     bot,
     notes: {
@@ -243,7 +246,22 @@ export function createKitHarness(options: KitHarnessOptions = {}): KitHarness {
         throw new UnsupportedApiError("ctx.wiki.list");
       },
     },
+    store: (namespace) => {
+      checkStoreNamespace(namespace);
+      let store = routineStores.get(namespace);
+      if (!store) {
+        store = JsonStore.memory();
+        routineStores.set(namespace, store);
+      }
+      return store;
+    },
   } satisfies Omit<RoutineContext, keyof ProgramScope | "kit">;
+  /** Records each call of a named routine value at its start, as `call` records a kit action; the routines `h.run` runs and the ones they call both pass through it. */
+  const observe: RoutineCallObserver = ({ name, args }) => {
+    const dot = name?.indexOf(".") ?? -1;
+    if (name && dot > 0) calls.push({ kit: name.slice(0, dot), action: name.slice(dot + 1), args });
+    return () => {};
+  };
   /** The runs in progress, by their abort: what `abort` stops. */
   const running = new Set<AbortController>();
 
@@ -272,7 +290,7 @@ export function createKitHarness(options: KitHarnessOptions = {}): KitHarness {
         subscriptions.push([event, handler]);
       },
     };
-    const ctx: RoutineContext = { ...runScope, ...facilities, kit: host.api(runScope, bot) as unknown as Readonly<KitRegistry> };
+    const ctx = withObserver<RoutineContext>({ ...runScope, ...facilities, kit: host.api(runScope, bot) as unknown as Readonly<KitRegistry> }, observe);
     running.add(runAbort);
     try {
       return await invokeRoutine(typeof routine === "function" ? { default: routine } : routine, "under test", ctx, args);

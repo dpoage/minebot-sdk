@@ -26,6 +26,7 @@ const contextOf = (scope: ProgramScope): RoutineContext => ({
   ...scope,
   bot: {} as Bot, // routines under test never touch the bot
   notes: { list: () => [], get: () => undefined, set: (key, text) => ({ key, text, updated: "" }), delete: () => false },
+  store: () => ({ get: () => undefined, set: () => {}, delete: () => false, keys: () => [] }),
   status: async () => ({ connected: true, startedAt: "", deaths: 0, reconnects: 0 }),
 });
 

@@ -157,6 +157,7 @@ export class Body {
       kits: this.kits,
       wiki: this.wiki,
       notes: this.notes,
+      store: (namespace) => this.#options.state.routineStore(namespace),
       features: () => this.features,
       status: () => this.status(),
       ...(this.triggers && { triggers: this.triggers }),
