@@ -1,0 +1,155 @@
+// `minebot init`: the files it writes, that it never overwrites, and that the `types` command it
+// once pointed at is an unknown command. That the workspace type-checks and its test passes against
+// the installed package is measured on the published layout, outside this suite (see dist-routine.test.ts
+// for the published layout's own check).
+import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { after, describe, it } from "node:test";
+import { promisify } from "node:util";
+import { initWorkspace } from "../src/client/init.ts";
+import { usageFor } from "../src/client/usage.ts";
+
+const exec = promisify(execFile);
+const CLI = [...process.execArgv, path.join(import.meta.dirname, "..", "src", "cli.ts")];
+const ROOT = path.join(import.meta.dirname, "..");
+const SCRATCH = mkdtempSync(path.join(tmpdir(), "minebot-init-"));
+after(() => rmSync(SCRATCH, { recursive: true, force: true }));
+
+let next = 0;
+const freshDir = () => path.join(SCRATCH, `ws${next++}`);
+const read = (dir: string, file: string) => readFileSync(path.join(dir, file), "utf8");
+
+/** The CLI with no body to ask: an empty runtime directory, so a command that needs one is unknown or fails to connect. */
+async function minebot(...args: string[]): Promise<{ code: number; out: string; err: string }> {
+  const env = { ...process.env, MINEBOT_RUNTIME_DIR: path.join(SCRATCH, "no-bodies") };
+  try {
+    const { stdout, stderr } = await exec("node", [...CLI, ...args], { env });
+    return { code: 0, out: stdout, err: stderr };
+  } catch (err) {
+    const failed = err as { code: number; stdout: string; stderr: string };
+    return { code: failed.code, out: failed.stdout, err: failed.stderr };
+  }
+}
+
+describe("initWorkspace", () => {
+  it("writes the routine workspace and nothing else", async () => {
+    const dir = freshDir();
+    const written = await initWorkspace(dir);
+    const expected = [".gitignore", "README.md", "package.json", "routines/hello.ts", "runs/say-hello.ts", "test/hello.test.ts", "tsconfig.json"];
+    assert.deepEqual([...written].sort(), expected);
+    assert.deepEqual(readdirSync(dir, { recursive: true, withFileTypes: true }).filter((e) => e.isFile()).map((e) => path.relative(dir, path.join(e.parentPath, e.name))).sort(), expected);
+  });
+
+  it("depends on this package's version and the compiler, and has the check and test scripts", async () => {
+    const dir = freshDir();
+    await initWorkspace(dir);
+    const pkg = JSON.parse(read(dir, "package.json"));
+    const own = JSON.parse(readFileSync(path.join(ROOT, "package.json"), "utf8"));
+    assert.equal(pkg.type, "module");
+    assert.deepEqual(pkg.dependencies, { "minebot-sdk": `^${own.version}` });
+    assert.deepEqual(Object.keys(pkg.devDependencies).sort(), ["@types/node", "typescript"]);
+    assert.deepEqual(pkg.scripts, { check: "tsc", test: "node --test test/" });
+  });
+
+  it("lets a run import a routine by its file name: rootDirs joins the two folders, and the check covers both and the tests", async () => {
+    const dir = freshDir();
+    await initWorkspace(dir);
+    const { compilerOptions, include } = JSON.parse(read(dir, "tsconfig.json"));
+    assert.equal(compilerOptions.module, "nodenext");
+    assert.equal(compilerOptions.strict, true);
+    assert.equal(compilerOptions.noEmit, true);
+    assert.equal(compilerOptions.allowImportingTsExtensions, true);
+    assert.deepEqual(compilerOptions.rootDirs, ["routines", "runs"]);
+    assert.deepEqual(include, ["routines/**/*.ts", "runs/**/*.ts", "test/**/*.ts"]);
+  });
+
+  it("writes a routine that calls a built-in by import, a run that imports it, and a test through the harness", async () => {
+    const dir = freshDir();
+    await initWorkspace(dir);
+    const routine = read(dir, "routines/hello.ts");
+    assert.match(routine, /^import \{ defineRoutine, z \} from "minebot-sdk\/routine";$/m);
+    assert.match(routine, /^import \* as inventory from "minebot-sdk\/routines\/inventory";$/m);
+    assert.match(routine, /^export default defineRoutine\($/m);
+    assert.match(routine, /^ {4}args: z\.object\(/m);
+    assert.match(routine, /^ {4}returns: z\.object\(/m);
+    const run = read(dir, "runs/say-hello.ts");
+    assert.match(run, /^import hello from "\.\/hello\.ts";$/m);
+    assert.match(run, /^export default /m);
+    const test = read(dir, "test/hello.test.ts");
+    assert.match(test, /^import \{ createHarness \} from "minebot-sdk\/testing";$/m);
+    assert.match(test, /h\.run\(hello, \{ message: "hi" \}\)/);
+    assert.match(test, /assert\.rejects\(h\.run\(hello, /);
+  });
+
+  it("gives no run file the file name of a routine: a run's ./x.ts must name the routine, not the run", async () => {
+    const dir = freshDir();
+    await initWorkspace(dir);
+    const routines = new Set(readdirSync(path.join(dir, "routines")));
+    const runs = readdirSync(path.join(dir, "runs"));
+    assert.ok(runs.length > 0 && routines.size > 0);
+    for (const run of runs) assert.ok(!routines.has(run), `runs/${run} shares its name with routines/${run}`);
+  });
+
+  it("has a README with the workspace's commands and the file-name rule", async () => {
+    const dir = freshDir();
+    await initWorkspace(dir);
+    const readme = read(dir, "README.md");
+    for (const command of ["npm install", "minebot routines save routines/*.ts", "minebot bind action hello hello", "minebot call hello", "minebot run runs/say-hello.ts", "npm test", "npx tsc"]) {
+      assert.ok(readme.includes(command), command);
+    }
+    assert.match(readme, /must not have the same file name as a routine/);
+    assert.doesNotMatch(readme, /minebot\s+types|env\.d\.ts/);
+  });
+
+  it("never overwrites an existing file", async () => {
+    const dir = freshDir();
+    await initWorkspace(dir);
+    writeFileSync(path.join(dir, "routines/hello.ts"), "// mine\n");
+    writeFileSync(path.join(dir, "tsconfig.json"), "{}\n");
+    assert.deepEqual(await initWorkspace(dir), []);
+    assert.equal(read(dir, "routines/hello.ts"), "// mine\n");
+    assert.equal(read(dir, "tsconfig.json"), "{}\n");
+  });
+
+  it("writes only the files that are missing", async () => {
+    const dir = freshDir();
+    await initWorkspace(dir);
+    rmSync(path.join(dir, "runs"), { recursive: true });
+    writeFileSync(path.join(dir, "README.md"), "mine\n");
+    assert.deepEqual(await initWorkspace(dir), ["runs/say-hello.ts"]);
+    assert.equal(read(dir, "README.md"), "mine\n");
+  });
+});
+
+describe("the minebot command", () => {
+  it("`minebot init` names the next steps, and no `types` among them", async () => {
+    const dir = freshDir();
+    const result = await minebot("init", dir);
+    assert.equal(result.code, 0, result.err);
+    assert.match(result.out, new RegExp(`wrote ${path.join(dir, "runs/say-hello.ts").replaceAll("/", "\\/")}`));
+    assert.match(result.out, /Next: .*npm install.*minebot routines save routines\/\*\.ts.*minebot bind action hello hello/);
+    assert.doesNotMatch(result.out, /types/);
+    const again = await minebot("init", dir);
+    assert.match(again.out, /already has every workspace file/);
+  });
+
+  it("answers the `types` command as any unknown command, and its usage has no `types`", async () => {
+    const types = await minebot("types");
+    const other = await minebot("no-such-command");
+    assert.equal(types.code, 1);
+    assert.equal(types.err, other.err.replaceAll("no-such-command", "types"));
+    assert.match(types.err, /^unknown command: types\n/);
+    assert.doesNotMatch(types.err.slice(types.err.indexOf("\n")), /^ {2}types\b|declarations|env\.d\.ts/m);
+    const refused = await minebot("types", "--out", path.join(SCRATCH, "env.d.ts"));
+    assert.equal(refused.code, 1);
+  });
+
+  it("lists no `types` in the usage of an install that can start bodies, and still lists init", () => {
+    const usage = usageFor(null, true);
+    assert.doesNotMatch(usage, /^ {2}types\b/m);
+    assert.match(usage, /^ {2}init \[dir\]/m);
+  });
+});

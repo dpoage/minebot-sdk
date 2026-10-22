@@ -66,7 +66,6 @@ export function usageFor(features: BodyFeatures | null, hasBody = HAS_BODY, oper
     "  events               Print buffered events as JSON.",
     "  wait                 Block until a matching event arrives (chat, nightfall, a death, a hostile nearby, low health...), then print it.",
     "  chat <message>       Send a chat message.",
-    "  types                Print TypeScript declarations for the program globals of this body (--out <file> writes them); `tsc` then checks what you write.",
     ...(caps.wiki
       ? [
           `  wiki search <query>  Search the wiki (game mechanics, flows, quirks${caps.lessons ? ", and agents' lessons" : ""}).`,
