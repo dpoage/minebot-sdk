@@ -3,7 +3,7 @@
 // and its top stack frame. The host is the real one (src/host/main.ts) with a fake player; routines
 // are saved in a temporary library, bound, and called over the supervisor, as an agent does.
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { after, describe, it } from "node:test";
@@ -170,6 +170,38 @@ describe("a host that dies of an uncaught error names it in the restart's discon
         const { reason, before, after } = await death(scene, () => scene.api("GET", `/crash?mode=${mode}`));
         const fixture = path.join(FIXTURES, "crash-host.ts");
         assert.match(reason, new RegExp(`^${RegExp.escape(FIRST)}Error: ${RegExp.escape(message)} \\(at ${RegExp.escape(fixture)}:\\d+:\\d+\\)$`));
+        assert.notEqual(after, before, "the same host answered");
+      });
+    });
+  }
+
+  // A function with no name has no parentheses around its frame's location: the location is all that follows `at ` (or `at async `), whatever the path holds.
+  const unnamed = [
+    {
+      what: "thrown by a function with no name",
+      file: "throws.cjs",
+      message: "thrown by a function with no name",
+      source: "[1].forEach(() => {\n  throw new Error('thrown by a function with no name');\n});\n",
+      line: "throw new Error",
+    },
+    {
+      what: "rejected with an async frame of a function with no name on top",
+      file: "rejects.cjs",
+      message: "rejected under an async frame",
+      source:
+        "async function inner() {\n  await null;\n  const error = new Error('rejected under an async frame');\n  Error.captureStackTrace(error, inner);\n  throw error;\n}\nsetTimeout(() => {\n  void (async () => {\n    await inner();\n  })();\n}, 0);\n",
+      line: "await inner()",
+    },
+  ];
+  for (const { what, file, message, source, line } of unnamed) {
+    it(`(c) ${what}, in a file whose path holds spaces, parentheses and non-ASCII letters: the whole path, line and column`, { timeout: 60_000 }, async () => {
+      const dir = path.join(ROOT, "sp ace ünï (cødé)");
+      mkdirSync(dir, { recursive: true });
+      const thrower = path.join(realpathSync(dir), file);
+      writeFileSync(thrower, source);
+      await withHost({}, async (scene) => {
+        const { reason, before, after } = await death(scene, () => scene.api("GET", `/crash?mode=require&file=${encodeURIComponent(thrower)}`));
+        assert.match(reason, new RegExp(`^${RegExp.escape(FIRST)}Error: ${RegExp.escape(message)} \\(at ${RegExp.escape(thrower)}:${lineOf(source, line)}:\\d+\\)$`));
         assert.notEqual(after, before, "the same host answered");
       });
     });

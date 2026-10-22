@@ -104,18 +104,18 @@ function topFrame(stack: string, library: string | undefined): string | undefine
   let first: string | undefined;
   for (const line of stack.split("\n")) {
     if (!line.startsWith("    at ")) continue;
-    // A frame ends with `<url or path>:<line>:<column>`, in parentheses unless the function has no name; a module's `file:` URL names it with a query that is no part of its path.
-    const location = /\((.+):(\d+:\d+)\)$|\s(\S+):(\d+:\d+)$/.exec(line);
+    // A frame ends with `<url or path>:<line>:<column>`: in parentheses after the function's name, else all that follows `at ` (or `at async `), spaces and parentheses included; a module's `file:` URL names it with a query that is no part of its path.
+    const location = /\((.+):(\d+:\d+)\)$/.exec(line) ?? /^ {4}at (?:async )?(.+):(\d+:\d+)$/.exec(line);
     let located: string | undefined;
     let file: string | undefined;
     if (location) {
-      file = location[1] ?? location[3]!;
+      file = location[1]!;
       if (file.startsWith("file:")) {
         try {
           file = fileURLToPath(file);
         } catch {}
       }
-      located = `${file}:${location[2] ?? location[4]!}`;
+      located = `${file}:${location[2]!}`;
     }
     first ??= located ?? line.trim().slice("at ".length);
     if (located !== undefined && inside !== undefined && file!.startsWith(inside)) return located;
