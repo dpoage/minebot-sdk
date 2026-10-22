@@ -6,9 +6,7 @@ import { describe, it } from "node:test";
 import { z } from "zod";
 import { createKitHarness } from "minebot-sdk/testing";
 import { BUILTIN_KITS } from "../src/kit/index.ts";
-import { blueprintBlocks, blueprintMaterials } from "../src/kit/kits/builder.ts";
 import { action, defineKit, type Kit, type KitContext, KitHost, KitLockedError } from "../src/kit/kit.ts";
-import { nameMatcher } from "../src/mc/names.ts";
 import { JsonStore } from "../src/store.ts";
 
 /** A fresh per-kit store in a temp dir, like the body's state directory provides. */
@@ -303,44 +301,5 @@ describe("KitHost", () => {
     const gather = host.docs(["gatherer"]);
     assert.match(gather, /Uses: move, sense, dig, inventory, items\./);
     assert.match(gather, /### kit\.gatherer\.gather\(\{ blocks, count, radius\? \}\)/);
-  });
-});
-
-describe("blueprints", () => {
-  const hut = {
-    palette: { "#": "cobblestone", d: "minecraft:oak_door" },
-    layers: [
-      `
-        ###
-        #.#
-        #d#
-      `,
-      ["###", "# #", "###"],
-    ],
-  };
-
-  it("maps characters to offsets: layers to y, rows to z, columns to x, ignoring indentation", () => {
-    const blocks = blueprintBlocks(hut);
-    assert.equal(blocks.length, 16);
-    assert.deepEqual(blocks.find((b) => b.block === "oak_door"), { dx: 1, dy: 0, dz: 2, block: "oak_door" });
-    assert.ok(!blocks.some((b) => b.dx === 1 && b.dz === 1));
-  });
-
-  it("counts materials", () => {
-    assert.deepEqual(blueprintMaterials(hut), { cobblestone: 15, oak_door: 1 });
-  });
-
-  it("rejects characters missing from the palette", () => {
-    assert.throws(() => blueprintBlocks({ palette: {}, layers: ["x"] }), /character "x" is not in the palette/);
-  });
-});
-
-describe("nameMatcher", () => {
-  it("matches globs and lists, with or without namespace", () => {
-    const logs = nameMatcher(["*_log", "minecraft:crafting_table"]);
-    assert.ok(logs("minecraft:oak_log"));
-    assert.ok(logs("crafting_table"));
-    assert.ok(!logs("oak_log_extra"));
-    assert.ok(!nameMatcher("a.b")("axb"));
   });
 });

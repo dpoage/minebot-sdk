@@ -20,6 +20,12 @@
       "types": "./dist/client/public.d.ts",
       "default": "./dist/client/public.js"
     },
+    "./routines/index": null,
+    "./routines/*": {
+      "minebot-sdk:source": "./src/routines/*.ts",
+      "types": "./dist/routines/*.d.ts",
+      "default": "./dist/routines/*.js"
+    },
     "./testing": {
       "minebot-sdk:source": "./src/testing/index.ts",
       "types": "./dist/testing/index.d.ts",
@@ -30,6 +36,7 @@
   "files": [
     "dist",
     "src/kit/kits",
+    "src/routines",
     "wiki",
     "LICENSE",
     "README.md"
