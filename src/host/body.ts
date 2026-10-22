@@ -1,16 +1,16 @@
 // One Minecraft player: a Mineflayer connection that reconnects, an event log, a program runner,
 // the built-in routines, the wiki, and persistent notes and milestones. The composition root (the daemon) injects
-// the built-in offer and the wiki; Body wires them into the program environment.
+// the built-in offer and the wiki; Body wires them into the routine context.
 import { grade, MilestoneSet, type MilestoneProgress } from "../milestones/milestones.ts";
 import { capabilities, type BodyEvent, type BodyFeatures, type Observation, type RunResult, type StatusResponse, type WikiMode } from "../protocol/index.ts";
-import { BusyError, ProgramRunner, type RunOutcome } from "../program/runner.ts";
+import { ProgramRunner, type RunOutcome } from "../program/runner.ts";
 import type { Wiki } from "../wiki/wiki.ts";
 import { WikiAccess, wikiView } from "../wiki/access.ts";
 import { Connection, type ServerAuth } from "./connection.ts";
 import { programFinished, type EventSink, type FiringOf, type LostFiring, type TriggerDisabled, type TriggerFinished } from "../protocol/host.ts";
 import { invokeRoutine } from "../routine/invoke.ts";
 import type { RoutineContext } from "../routine/public.ts";
-import { programGlobals, routineContext, type GlobalsDeps } from "./globals.ts";
+import { routineContext, type GlobalsDeps } from "./globals.ts";
 import type { Builtins } from "./routines/builtins.ts";
 import type { RoutineLoader } from "./routines/loader.ts";
 import { briefOf, observation } from "./observation.ts";
@@ -40,8 +40,8 @@ export interface BodyOptions {
   milestonesEnabled?: boolean;
   /** Let the agent bind reflexes. Default: true. A body without them neither mentions nor serves them. */
   triggersEnabled?: boolean;
-  /** Loads the routines a call runs; undefined for a body without routines. */
-  routines?: RoutineLoader;
+  /** Loads the routines a call runs and the modules a run evaluates; `loader.library` says whether the body has routines. */
+  loader: RoutineLoader;
   /** Where the body's events go; the supervisor's log numbers them and echoes them back. */
   events: EventSink;
   /** Where reflex runs and registrations are reported, as calls are. */
@@ -62,8 +62,14 @@ export interface RunRecorder {
    * Records the start of `execute`, runs it once the history has it, and records its end. A run that
    * throws leaves no end; a start or end the history cannot write fails the run. `requestId` is the
    * API request the run answers and `trigger` the definition it fires, so the supervisor can end the run if this host is killed.
+   * The run takes the body's one run slot at this call and holds it until its end: a run recorded while the slot is taken
+   * (another run's start not yet acked, its code running, or its abort's grace) is refused with `BusyError` at once, and is never reported.
    */
   record(run: { code: string; timeoutMs?: number; extra?: object; requestId?: number; trigger?: FiringOf }, execute: () => Promise<RunOutcome>): Promise<RunResult>;
+  /** Whether a run holds the slot: `record` would refuse a run now. */
+  readonly busy: boolean;
+  /** Calls `listener` each time the slot frees: a run's end, or a start the history refused. */
+  onIdle(listener: () => void): void;
   /**
    * Ends a reflex's run: `end` is what `record` returned or threw for it. The reflex_finished, the
    * reflex_disabled it caused, and the failures with the firing counted go to the supervisor as
@@ -77,9 +83,10 @@ export interface RunRecorder {
    */
   counts(triggerFailures: Record<string, number>, ended?: { finished?: TriggerFinished; disabled?: TriggerDisabled }): void;
   /**
-   * Asks the recorded run whose code executes to stop, for a preempting firing that waits on it: true
-   * when one does at this moment, and the abort is then on its way (after the history's holder has been told, and only if that run still executes).
-   * False when no recorded run executes, a run acked but not started included; nothing is aborted.
+   * Asks the run that holds the slot to stop, for a preempting firing that waits on it: true when the firing is to wait for
+   * that run's end (the abort is on its way, after the history's holder has been told, and only if that run still holds the
+   * slot; a run whose start is not acked yet is preempted as it starts). False when no run holds the slot, or the one that
+   * does runs no program at this moment; nothing is aborted.
    */
   preempt(): boolean;
   /** Records code the body will run later. */
@@ -119,8 +126,6 @@ export class Body {
     });
     this.wiki = new WikiAccess(options.wiki, options.wikiMode, options.username, () => wikiView(this.features));
     this.runner = new ProgramRunner({
-      // Only the features the body offers become globals, so a program cannot find the others.
-      globals: () => programGlobals(this.#environment()),
       events: () => this.#connection.bot ?? undefined,
       onAbort: () => this.#connection.halt(),
     });
@@ -130,10 +135,10 @@ export class Body {
         : new Triggers({
             store: options.state.triggers,
             events: this.events,
-            runner: preemptingRunner(this.runner, options.recorder),
+            runner: preemptingRunner(options.recorder),
             connected: () => this.#connection.spawned,
             bot: () => this.#connection.bot ?? undefined,
-            reflexes: options.routines !== undefined,
+            reflexes: options.loader.library,
             run: (reflex, event, started) => this.#runTrigger(reflex, event, started),
             deliver: (end, finished, disabled, failures) => options.recorder.deliver(end, finished, disabled, failures),
             counts: (failures, ended) => options.recorder.counts(failures, ended),
@@ -141,9 +146,11 @@ export class Body {
             failures: options.triggerFailures,
             lost: options.lostFiring,
           });
+    // A firing that waits for the slot starts when it frees.
+    options.recorder.onIdle(() => this.triggers?.idle());
   }
 
-  /** What programs and routines are built from: the body's facilities, with the optional ones only where the body offers them. */
+  /** What a run's context is built from: the body's facilities, with the optional ones only where the body offers them. */
   #environment(): GlobalsDeps {
     return {
       connection: this.#connection,
@@ -163,18 +170,22 @@ export class Body {
       lessons: this.wiki.lessons,
       milestones: this.#options.milestonesEnabled ?? true,
       reflexes: this.triggers !== null,
-      routines: this.#options.routines !== undefined,
+      routines: this.#options.loader.library,
       builtins: [...this.#options.builtins.offered],
     };
   }
 
   /**
-   * Runs a program and records its end in the event log. The result is exactly what the program
-   * produced: facts such as an unchanged world stay in the observation, read on request.
-   * A hung run comes back flagged: its host is about to be killed, and the supervisor logs its end.
+   * Runs `code` as a module: one run, with the duties of `call`, whose module is evaluated inside the run
+   * (what its top level does is bounded by the run's timeout, stop, and kill deadline). The result is the
+   * default export: called with the run's context and `args` when it is a function, else awaited as it is;
+   * a module with no default export has no result. Throws when the body is not connected, and `BusyError`
+   * while another run is active. A hung run comes back flagged: its host is about to be killed, and the
+   * supervisor logs its end.
    */
-  async run(code: string, timeoutMs?: number): Promise<RunOutcome> {
-    return this.#ended(await this.runner.run(code, timeoutMs));
+  async run(code: string, args: unknown, timeoutMs?: number): Promise<RunOutcome> {
+    const { loader } = this.#options;
+    return this.#called(async (ctx) => resultOf(await loader.run(code), ctx, args), loader.dir, timeoutMs);
   }
 
   /**
@@ -184,8 +195,8 @@ export class Body {
    * Throws when the body is not connected, and `BusyError` while another run is active.
    */
   async call(routine: string, args: unknown, timeoutMs?: number): Promise<RunOutcome> {
-    const loader = this.#options.routines;
-    if (!loader) throw new Error("this body has no routines");
+    const { loader } = this.#options;
+    if (!loader.library) throw new Error("this body has no routines");
     return this.#called(async (ctx) => invokeRoutine(await loader.load(routine), routine, ctx, args), loader.dir, timeoutMs);
   }
 
@@ -209,12 +220,11 @@ export class Body {
     return this.#ended(result);
   }
 
-  /** What a program's or a call's end does for the body: the event, the reflexes waiting for an idle runner, the stall record. */
+  /** What a program's or a call's end does for the body: the event, the stall record. The reflexes waiting for the run slot hear of its end from the recorder. */
   #ended(result: RunOutcome): RunOutcome {
     // A hung run ends with its host: the supervisor, which kills it, logs the end of the program.
     if (result.hung) return result;
     this.events.push("program_finished", programFinished(result));
-    this.triggers?.idle();
     const bot = this.#connection.bot;
     if (!bot || !this.#connection.spawned) return result;
     const inventory: Record<string, number> = {};
@@ -234,7 +244,6 @@ export class Body {
    */
   async #runTrigger(reflex: StoredReflex, event: BodyEvent, started: () => void): Promise<RunResult> {
     const run = () => {
-      if (this.runner.running) throw new BusyError();
       started();
       return this.#callReflex(reflex, event);
     };
@@ -251,8 +260,8 @@ export class Body {
 
   /** Calls a reflex's routine with `{ event }` as one run, loading its module inside the run as a call does. */
   #callReflex(reflex: StoredReflex, event: BodyEvent): Promise<RunOutcome> {
-    const loader = this.#options.routines;
-    if (!loader) throw new Error("this body has no routines");
+    const { loader } = this.#options;
+    if (!loader.library) throw new Error("this body has no routines");
     const environment = this.#environment();
     return this.runner.call(
       async (scope) => {
@@ -339,4 +348,14 @@ export class Body {
   brief(): string {
     return briefOf(this.observe(), this.runner.running);
   }
+}
+
+/**
+ * What a run answers with, given the namespace of its module: a default export that is a function is called as a
+ * routine is (`invokeRoutine`: absent args are `{}`, a routine value validates its args and return); any other
+ * default export is the result itself (the run awaits it); a module with no default export has none.
+ */
+async function resultOf(module: unknown, ctx: RoutineContext, args: unknown): Promise<unknown> {
+  const exported = typeof module === "object" && module !== null && "default" in module ? module.default : undefined;
+  return typeof exported === "function" ? invokeRoutine(module, "run", ctx, args) : exported;
 }

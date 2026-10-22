@@ -377,7 +377,7 @@ describe("reflexes and the body's features", () => {
       const file = path.join(body.stateDir, "triggers.json");
       const before = readFileSync(file, "utf8");
       assert.deepEqual(body.eventsOf("reflex_error").map((event) => event.data.name), ["rfx", "tgr"]);
-      for (let i = 0; i < 3; i++) runOf(await body.request("POST", "/run", { code: "bot.emit('chat', 'ana', 'go')" }));
+      for (let i = 0; i < 3; i++) runOf(await body.request("POST", "/run", { code: "export default (ctx) => ctx.bot.emit('chat', 'ana', 'go');" }));
       await sleep(200);
       assert.deepEqual(body.eventsOf("reflex_fired"), [], "nothing fires on a body without routines");
       assert.equal(readFileSync(file, "utf8"), before, "triggers.json was written");

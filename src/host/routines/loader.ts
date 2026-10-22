@@ -3,12 +3,12 @@
 // directory). Library modules are flat `<dir>/<name>.ts` files that may import each other, the
 // body's packages, and Node built-ins.
 //
-// The hooks touch only library modules: a `<dir>/<name>.ts` of a library directory, under a URL
-// stamped with one of that library's generations (only this loader writes such URLs), and the
-// imports such a module makes (a CommonJS package it imports is fronted by a facade, below); and
-// the probes this module compiles itself, under URLs only it makes (see `withRequire`). Every other
-// module — the body package, node_modules, any file in or under a library directory that was not
-// loaded as a routine — resolves and loads as Node would.
+// The hooks touch only library modules and runs: a `<dir>/<name>.ts` of a library directory, under a URL
+// stamped with one of that library's generations (only this loader writes such URLs), a run under
+// its own URL, and the imports such a module makes (a CommonJS package it imports is fronted by a
+// facade, below); and the probes this module compiles itself, under URLs only it makes (see
+// `withRequire`). Every other module — the body package, node_modules, any file in or under a
+// library directory that was not loaded as a routine — resolves and loads as Node would.
 //
 // A library module's bare specifiers resolve as the body package's own would (the library
 // usually sits outside the package, where `vec3` or `minebot-sdk/routine` cannot be found).
@@ -26,12 +26,19 @@
 //
 // A library module may not import (or `require`) a built-in routine module the body does not offer:
 // the body sets that offer once, process-wide (`setOfferGate`), and the hook refuses the specifier.
+//
+// A run (`RoutineLoader.run`) is a module of its own, evaluated once per run, whose imports resolve
+// as a library module's do: `./<name>.ts` is the library's module of that name at the library's
+// generation when the run starts, and any other path or URL (an absolute path or a `file:` URL
+// too, whatever it names) is refused. A run never changes a generation: its text is kept apart
+// from the library's, under a URL no library module has (`<dir>/.run.ts` with a query of its own;
+// the hooks serve it, and its imports, like a library module's). A body without a library has runs
+// too, which import packages and Node built-ins only.
 import { createHash, randomUUID } from "node:crypto";
 import { readdirSync, readFileSync, realpathSync } from "node:fs";
 import { createRequire, findPackageJSON, registerHooks, type ResolveFnOutput } from "node:module";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { compileFunction } from "node:vm";
 import { PACKAGE_ROOT } from "../../package.ts";
 import { moduleName, readModule } from "./library.ts";
 
@@ -39,11 +46,32 @@ export class RoutineNotFoundError extends Error {}
 
 /** One library directory: the module texts of every generation loaded so far. */
 interface Library {
+  /** The directory's `file:` URL, ending in `/`: the key of `libraries`. */
+  readonly url: string;
   /** Generation → module name → the text the load hook serves. Generations share the text of a module whose bytes they share. */
   readonly generations: Map<string, Map<string, string>>;
   /** The text the load hook serves for every module loaded so far (see `withRequire`), by the hash of its bytes. */
   readonly texts: Map<string, Promise<string>>;
 }
+
+/** Where a module the hooks serve imports its relative specifiers from: a library at one of its generations. A run on a body without a library has none. */
+interface Home {
+  library: Library;
+  generation: string;
+}
+
+/** A module the hooks serve: its text, and the library its imports are modules of. */
+interface Served {
+  source: string;
+  home: Home | undefined;
+}
+
+/** The file name every run has in its directory; no routine can be named so, and each run's URL has a query of its own. */
+const RUN_FILE = ".run.ts";
+
+/** The runs of this process by URL, each with the text the load hook serves for it. */
+const runs = new Map<string, Served>();
+let runCount = 0;
 
 /** Library directories by the `file:` URL of their real path, ending in `/`. */
 const libraries = new Map<string, Library>();
@@ -60,16 +88,24 @@ function stamped(url: URL, generation: string): string {
   return url.href;
 }
 
-/** The library module `url` names, or undefined when it names any other module (see the top of this file). */
-function moduleOf(url: string | undefined): { library: Library; generation: string; source: string } | undefined {
-  if (url === undefined || !url.startsWith("file:") || !url.includes("?")) return undefined;
+/** The module `url` names (a library module or a run), or undefined when it names any other module (see the top of this file). */
+function moduleOf(url: string | undefined): Served | undefined {
+  if (url === undefined) return undefined;
+  const run = runs.get(url);
+  if (run) return run;
+  if (!url.startsWith("file:") || !url.includes("?")) return undefined;
   const parsed = new URL(url);
   const generation = parsed.searchParams.get(STAMP);
   if (generation === null) return undefined;
   const library = libraries.get(new URL(".", parsed).href);
   const name = moduleName(parsed.pathname.slice(parsed.pathname.lastIndexOf("/") + 1));
   const source = name === undefined ? undefined : library?.generations.get(generation)?.get(name);
-  return library === undefined || source === undefined ? undefined : { library, generation, source };
+  return library === undefined || source === undefined ? undefined : { source, home: { library, generation } };
+}
+
+/** The error for a relative specifier that names no module of the importer's library. */
+function refusal(specifier: string): Error {
+  return new Error(`routine modules may import only the library's own modules (<name>.ts next to them), packages, and Node built-ins; "${specifier}" is none of these`);
 }
 
 /** A specifier that names a file by path or URL, rather than a package, a built-in, or another kind of URL. */
@@ -169,7 +205,7 @@ function isCommonJs(resolved: ResolveFnOutput): boolean {
 /** Whether `source` parses as the body of a CommonJS module, which Node's detection of a type-less `.js` file asks of it before it takes it for ES. */
 function parsesAsCommonJs(source: string): boolean {
   try {
-    compileFunction(source.replace(/^#!.*/, ""), ["exports", "require", "module", "__filename", "__dirname"]);
+    new Function("exports", "require", "module", "__filename", "__dirname", source.replace(/^#!.*/, ""));
     return true;
   } catch {
     return false;
@@ -197,7 +233,7 @@ function facadeSource(real: string): string {
 
 registerHooks({
   resolve(specifier, context, nextResolve) {
-    if (context.parentURL === import.meta.url && probes.has(specifier)) return { url: specifier, format: "module-typescript", shortCircuit: true };
+    if (context.parentURL === import.meta.url && (probes.has(specifier) || runs.has(specifier))) return { url: specifier, format: "module-typescript", shortCircuit: true };
     if (context.parentURL !== undefined && probes.has(context.parentURL)) throw PROBE_PARSED;
     const parent = moduleOf(context.parentURL);
     if (!parent) return nextResolve(specifier, context);
@@ -212,12 +248,14 @@ registerHooks({
       facades.set(url, resolved.url);
       return { ...resolved, url, format: "module" };
     }
+    const { home } = parent;
+    if (!home) throw new Error(`"${specifier}" names a library module, and this body has no routine library: a run here imports only packages and Node built-ins`);
+    // A run names a library module as `./<name>.ts`; an absolute path or a URL, even into the library, is refused. Any path or URL that leaves the importer's directory is refused whether or not a file is there.
+    if (!isInLibrary(specifier, context.parentURL!, home.library) || (runs.has(context.parentURL!) && !specifier.startsWith("."))) throw refusal(specifier);
     const resolved = nextResolve(specifier, context);
-    // Only a file of the importer's library and generation is a module of it; any other URL is refused below.
-    const url = stamped(new URL(resolved.url), parent.generation);
-    if (moduleOf(url)?.library !== parent.library) {
-      throw new Error(`routine modules may import only the library's own modules (<name>.ts next to them), packages, and Node built-ins; "${specifier}" is none of these`);
-    }
+    // Only a file of the importer's library and generation is a module of it.
+    const url = stamped(new URL(resolved.url), home.generation);
+    if (moduleOf(url)?.home?.library !== home.library) throw refusal(specifier);
     return { ...resolved, url };
   },
   load(url, context, nextLoad) {
@@ -232,23 +270,53 @@ registerHooks({
   },
 });
 
-/** Loads routines from the library in `dir`. */
+/** Whether `specifier`, imported from `parentURL`, names a file in the directory of `library`. */
+function isInLibrary(specifier: string, parentURL: string, library: Library): boolean {
+  try {
+    return new URL(".", new URL(specifier, parentURL)).href === library.url;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * What `RoutineLoader.run` says of a source with a top-level `return`, which only a function body may have. Only the run's own
+ * parse error is explained: Node opens the stack of a module's parse error with that module's URL (`<url>:<line>`), so a
+ * library module's parse error, and a SyntaxError the run's code throws or causes (`JSON.parse`), are left as they are.
+ */
+function explainReturn(err: unknown, url: string): unknown {
+  if (err instanceof SyntaxError && err.stack?.startsWith(`${url}:`) && /return statement/i.test(err.message)) {
+    err.message = `a run is a module, so its source cannot return: write the result as \`export default <value>\`, or \`export default async (ctx, args) => <value>\` (${err.message})`;
+  }
+  return err;
+}
+
+/** A scan of the library's bytes: the generation they make and the text each module has in it. */
+interface Scan {
+  generation: string;
+  texts: Map<string, Promise<string>>;
+}
+
+/** Loads routines from the library in `dir`, and evaluates runs whose relative imports are the library's modules. */
 export class RoutineLoader {
-  /** The library directory's real path; every module URL and every error frame uses it. */
+  /** The directory's real path; every module URL and every error frame uses it. */
   readonly dir: string;
-  readonly #library: Library;
+  /** Whether `dir` is a routine library; a loader that is not has no routines to load, and its runs import only packages and Node built-ins. */
+  readonly library: boolean;
+  readonly #library: Library | undefined;
 
   /** `dir` must exist. */
-  constructor(dir: string) {
+  constructor(dir: string, options: { library?: boolean } = {}) {
     this.dir = realpathSync(dir);
+    this.library = options.library ?? true;
+    if (!this.library) return;
     const url = pathToFileURL(path.join(this.dir, path.sep)).href;
-    const existing = libraries.get(url);
-    if (existing) {
-      this.#library = existing;
-    } else {
-      this.#library = { generations: new Map(), texts: new Map() };
-      libraries.set(url, this.#library);
+    let library = libraries.get(url);
+    if (!library) {
+      library = { url, generations: new Map(), texts: new Map() };
+      libraries.set(url, library);
     }
+    this.#library = library;
   }
 
   /**
@@ -258,6 +326,41 @@ export class RoutineLoader {
    * Throws `RoutineNotFoundError` when no such module exists.
    */
   async load(name: string): Promise<unknown> {
+    const library = this.#library;
+    if (!library) throw new RoutineNotFoundError(`no routine named "${name}"`);
+    const scan = this.#scan(library);
+    if (!scan.texts.has(name)) throw new RoutineNotFoundError(`no routine named "${name}"`);
+    await register(library, scan);
+    return import(stamped(pathToFileURL(path.join(this.dir, `${name}.ts`)), scan.generation));
+  }
+
+  /**
+   * Evaluates `source` as a module of its own, once, and resolves with its namespace: a module record
+   * made for this call alone, whatever bytes it has. Its imports resolve as a library module's do, with
+   * `./<name>.ts` the library's module of that name as of the library's bytes now (the generation
+   * `load` would use); this changes no generation, so a later `load` returns what an earlier one did.
+   * A source with a top-level `return` rejects with an error that names `export default`.
+   */
+  async run(source: string): Promise<unknown> {
+    const library = this.#library;
+    let home: Home | undefined;
+    if (library) {
+      const scan = this.#scan(library);
+      await register(library, scan);
+      home = { library, generation: scan.generation };
+    }
+    const url = pathToFileURL(path.join(this.dir, RUN_FILE));
+    url.search = `?run=${++runCount}`;
+    runs.set(url.href, { source: await withRequire(source), home });
+    try {
+      return await import(url.href);
+    } catch (err) {
+      throw explainReturn(err, url.href);
+    }
+  }
+
+  /** The generation the library's bytes make now, with the text of each module in it. */
+  #scan(library: Library): Scan {
     const texts = new Map<string, Promise<string>>();
     const hash = createHash("sha256");
     for (const file of readdirSync(this.dir).sort()) {
@@ -267,14 +370,16 @@ export class RoutineLoader {
       const digest = createHash("sha256").update(source).digest("hex");
       hash.update(`${file}\0${digest}\0`);
       // A generation holds the text every earlier generation with these bytes holds, so a save costs the changed modules only.
-      let text = this.#library.texts.get(digest);
-      if (text === undefined) this.#library.texts.set(digest, (text = withRequire(source)));
+      let text = library.texts.get(digest);
+      if (text === undefined) library.texts.set(digest, (text = withRequire(source)));
       texts.set(module, text);
     }
-    if (!texts.has(name)) throw new RoutineNotFoundError(`no routine named "${name}"`);
-    const generation = hash.digest("hex").slice(0, 16);
-    const sources = new Map(await Promise.all(Array.from(texts, async ([module, text]) => [module, await text] as const)));
-    if (!this.#library.generations.has(generation)) this.#library.generations.set(generation, sources);
-    return import(stamped(pathToFileURL(path.join(this.dir, `${name}.ts`)), generation));
+    return { generation: hash.digest("hex").slice(0, 16), texts };
   }
+}
+
+/** Makes the generation of `scan` known to the load hook, which serves the texts it holds. */
+async function register(library: Library, { generation, texts }: Scan): Promise<void> {
+  const sources = new Map(await Promise.all(Array.from(texts, async ([module, text]) => [module, await text] as const)));
+  if (!library.generations.has(generation)) library.generations.set(generation, sources);
 }

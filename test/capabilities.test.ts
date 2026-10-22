@@ -5,6 +5,27 @@ import { TOOL_SETS, toolPlan } from "../src/client/mcp.ts";
 import { usageFor } from "../src/client/usage.ts";
 import { CAPABILITIES, capabilities, CAPABILITY_GATES, programApiDoc, type BodyFeatures, type Capability } from "../src/protocol/index.ts";
 import { wikiView } from "../src/wiki/access.ts";
+import { routineContext, type GlobalsDeps } from "../src/host/globals.ts";
+import { Notes } from "../src/notes.ts";
+import { JsonStore } from "../src/store.ts";
+import type { Connection } from "../src/host/connection.ts";
+import type { WikiAccess } from "../src/wiki/access.ts";
+import type { Bot } from "mineflayer";
+
+const SCOPE = { log: () => {}, sleep: async () => {}, signal: new AbortController().signal, on: () => {} };
+
+/** The facilities a body wires into a run's context, over stubs: only the members `routineContext` builds matter here. */
+function depsFor(features: BodyFeatures): GlobalsDeps {
+  return {
+    connection: { requireBot: () => ({}) as Bot } as unknown as Connection,
+    wiki: {} as WikiAccess,
+    notes: new Notes(JsonStore.memory()),
+    store: () => JsonStore.memory(),
+    observe: () => () => {},
+    features: () => features,
+    status: async () => ({ connected: true, startedAt: "", deaths: 0, reconnects: 0 }),
+  };
+}
 
 /** A body with every capability on: the baseline to switch one off. */
 const EVERYTHING: BodyFeatures = { wiki: "write", lessons: true, milestones: true, reflexes: true, routines: true, builtins: ["move", "gatherer"] };
@@ -191,13 +212,33 @@ describe("the capability table", () => {
     assert.match(withoutLibrary, /POST \/call \{ name: "<module>\.<routine>"/);
   });
 
-  it("describes routines in the program reference exactly when the body offers them, and lists only the ctx members it offers", () => {
+  it("describes routines in the program reference exactly when the body offers them", () => {
     assert.match(programApiDoc(EVERYTHING), /Routines: /);
     assert.doesNotMatch(programApiDoc(withOff("routines")), /Routines: /);
-    const members = (features: BodyFeatures) => /ctx has exactly: ([^.]*)\./.exec(programApiDoc(features))?.[1];
-    assert.equal(members(EVERYTHING), "bot, log, sleep, signal, on, notes, status, wiki");
-    assert.equal(members(withOff("wiki")), "bot, log, sleep, signal, on, notes, status");
   });
+
+  // Every feature set: all on, each capability off alone, and a body with nothing optional.
+  const FEATURE_SETS: [string, BodyFeatures][] = [
+    ["everything", EVERYTHING],
+    ...CAPABILITIES.map((capability): [string, BodyFeatures] => [`${capability} off`, withOff(capability)]),
+    ["nothing optional", { wiki: "off", lessons: false, milestones: false, reflexes: false, routines: false, builtins: [] }],
+  ];
+  for (const [name, features] of FEATURE_SETS) {
+    it(`describes a module run, not a program: ${name}`, () => {
+      const doc = programApiDoc(features);
+      assert.match(doc, /^A run is a TypeScript or JavaScript module/);
+      assert.match(doc, /export default/);
+      assert.doesNotMatch(doc, /^Globals:/m, "a Globals: section");
+      assert.doesNotMatch(doc, /top-level return|body of an async function|The value you return is sent back/i, "a program's wording");
+    });
+
+    it(`lists exactly the members of ctx, in the order Object.keys(ctx) gives them: ${name}`, () => {
+      const listed = /^ctx, the default function's first argument, has exactly: (.*)\.$/m.exec(programApiDoc(features))?.[1]?.split(", ");
+      assert.deepEqual(listed, Object.keys(routineContext(SCOPE, depsFor(features))));
+      // Each listed member has its reference line.
+      for (const member of listed ?? []) assert.match(programApiDoc(features), new RegExp(`^- ${member}[:(]`, "m"), member);
+    });
+  }
 
   it("does not mention milestones anywhere a body without them looks", () => {
     assert.doesNotMatch(programApiDoc(withOff("milestones")), FORBIDDEN_WORDS.milestones);

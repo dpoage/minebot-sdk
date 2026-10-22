@@ -388,7 +388,7 @@ describe("minebot-sdk/testing routines", () => {
       ctx.log("plain", null, undefined, 3n);
     };
     // The body's reference: the same routine run by ProgramRunner.call.
-    const body = await new ProgramRunner({ globals: () => ({}) }).call(async (scope) => talk(scope), { sourceDir: "/" });
+    const body = await new ProgramRunner().call(async (scope) => talk(scope), { sourceDir: "/" });
     assert.equal(body.status, "ok");
     await h.run(async (ctx) => {
       talk(ctx);
@@ -424,7 +424,7 @@ describe("minebot-sdk/testing routines", () => {
     const h = createHarness();
     const ended = await h.run((ctx) => ctx);
     const scopes: { sleep: (ms: number) => Promise<void>; signal: AbortSignal }[] = [];
-    await new ProgramRunner({ globals: () => ({}) }).call(async (scope) => void scopes.push(scope), { sourceDir: "/" });
+    await new ProgramRunner().call(async (scope) => void scopes.push(scope), { sourceDir: "/" });
     const body = scopes[0]!;
     assert.deepEqual([ended.signal.aborted, String(ended.signal.reason)], [body.signal.aborted, String(body.signal.reason)]);
     assert.deepEqual(await outcome(ended.sleep(10)), await outcome(body.sleep(10)));

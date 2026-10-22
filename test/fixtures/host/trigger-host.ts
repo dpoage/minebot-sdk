@@ -12,6 +12,7 @@
 // `dieBeforeReadyOnSpawn: n`, the n-th host SIGKILLs itself once its Triggers are built (their
 // counts sent) and before it is ready.
 // A preempting firing stops the running run through `reporter.preempt()`, as the body's Triggers do; `burstOnEvent` queues a burst in the channel ahead of it.
+// The reporter holds the run slot, as the body's does: a /call or firing that arrives while a run holds it is refused as busy, and a firing waiting for it starts when it frees.
 // Requests: GET /ping answers with this pid; GET /triggers with the reflex list; POST /triggers
 // binds the reflex in the body; POST /call runs `{source, timeoutMs}` as a routine the way the body's
 // /call does.
@@ -24,7 +25,7 @@ import { appendFileSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { HostEvents, preemptingRunner, RunReporter } from "../../../src/host/channel.ts";
 import { Triggers } from "../../../src/host/triggers.ts";
-import { BusyError, ProgramRunner } from "../../../src/program/runner.ts";
+import { ProgramRunner } from "../../../src/program/runner.ts";
 import type { ProgramScope } from "../../../src/program/scope.ts";
 import { programFinished, type FromHost, type HostInit, type ToHost } from "../../../src/protocol/host.ts";
 import { ReflexInput } from "../../../src/protocol/index.ts";
@@ -88,7 +89,6 @@ async function serve(id: number, method: string, pathname: string, body: string 
   return reporter.record({ code: source, timeoutMs, requestId: id }, async () => {
     const result = await start(source, timeoutMs);
     if (!result.hung) events.push("program_finished", programFinished(result));
-    triggers.idle();
     return result;
   });
 }
@@ -97,7 +97,7 @@ process.on("message", async (message: ToHost) => {
   switch (message.kind) {
     case "init": {
       const init = message.init as HostInit & { script: Script };
-      runner = new ProgramRunner({ globals: () => ({}), graceMs: init.script.graceMs });
+      runner = new ProgramRunner({ graceMs: init.script.graceMs });
       sourceDir = init.stateDir;
       reporter = new RunReporter({ send, stop: () => runner.stop(), running: () => runner.running !== null });
       const reportState = () => send({ kind: "state", connected: true, deaths: init.deaths, reconnects: init.reconnects });
@@ -112,6 +112,7 @@ process.on("message", async (message: ToHost) => {
       if (first) store.set(fields.name, { ...ReflexInput.parse({ ...fields, routine: ROUTINE }), updated: new Date().toISOString() });
       killAfterFinished = first && init.script.killAfterFinished === true;
       killOnEndAck = first && init.script.killOnEndAck === true;
+      reporter.onIdle(() => triggers.idle());
       const { burstOnEvent } = init.script;
       if (burstOnEvent) {
         events.subscribe((event) => {
@@ -122,7 +123,7 @@ process.on("message", async (message: ToHost) => {
         store,
         events,
         // As the body wires it: a preemption goes through the reporter.
-        runner: preemptingRunner(runner, reporter),
+        runner: preemptingRunner(reporter),
         connected: () => true,
         bot: () => undefined,
         reflexes: true,
@@ -131,7 +132,6 @@ process.on("message", async (message: ToHost) => {
           return reporter.record(
             { code, timeoutMs: reflex.timeoutMs, extra: { trigger: reflex.name, event: { seq: event.seq, type: event.type } }, trigger: { name: reflex.name, updated: reflex.updated } },
             () => {
-              if (runner.running) throw new BusyError();
               started();
               return start(code, reflex.timeoutMs);
             },

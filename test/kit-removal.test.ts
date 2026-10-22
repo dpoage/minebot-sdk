@@ -1,10 +1,10 @@
-// What the body no longer has once the kits are gone, checked on the surfaces that stay: the globals of a program and the context
-// of a routine lose `kit` and `kits` and nothing else, and the lines of the program history carry no kit field and still parse as the benchmark's verifier reads them.
+// What the body no longer has once the kits are gone, checked on the surfaces that stay: the context
+// of a run loses `kit` and `kits` and nothing else, and the lines of the program history carry no kit field and still parse as the benchmark's verifier reads them.
 import assert from "node:assert/strict";
 import { after, describe, it } from "node:test";
 import type { Bot } from "mineflayer";
 import { HistoryRecord } from "../bench/verify/history.ts";
-import { programGlobals, routineContext, type GlobalsDeps } from "../src/host/globals.ts";
+import { routineContext, type GlobalsDeps } from "../src/host/globals.ts";
 import { Notes } from "../src/notes.ts";
 import type { BodyFeatures } from "../src/protocol/index.ts";
 import { JsonStore } from "../src/store.ts";
@@ -30,19 +30,6 @@ function depsFor(features: BodyFeatures): GlobalsDeps {
 
 const SCOPE = { log: () => {}, sleep: async () => {}, signal: new AbortController().signal, on: () => {} };
 
-/** The global names a program had at 5218f99 on a body with its wiki on and kits offered, from that commit's `programGlobals`. */
-const BASE_PROGRAM_GLOBALS = ["Movements", "Vec3", "bot", "goals", "kit", "kits", "notes", "status", "wiki"];
-
-describe("the globals of a program", () => {
-  it("are the base's less `kit` and `kits`: exactly bot, goals, Movements, Vec3, notes, and status, with wiki where the wiki is on", () => {
-    for (const wiki of ["off", "read", "write"] as const) {
-      const features = { ...FEATURES, wiki, lessons: wiki === "write" };
-      const names = Object.keys(programGlobals(depsFor(features))).sort();
-      assert.deepEqual(names, BASE_PROGRAM_GLOBALS.filter((name) => name !== "kit" && name !== "kits" && (name !== "wiki" || wiki !== "off")), `wiki ${wiki}`);
-    }
-  });
-});
-
 describe("the context of a routine", () => {
   it("has exactly bot, log, sleep, signal, on, notes, status, and store, with wiki where the wiki is on", () => {
     for (const wiki of ["off", "read", "write"] as const) {
@@ -63,16 +50,20 @@ describe("the program history of a body", () => {
       await body.ok("POST", "/bind", reflex);
       const answer = await body.request("POST", "/call", { name: "act" });
       assert.equal(answer.status, 200, JSON.stringify(answer.body));
+      const source = "export default (_ctx: unknown, args: { n: number }) => args.n;\n";
+      const ran = await body.request("POST", "/run", { code: source, args: { n: 2 } });
+      assert.equal(ran.status, 200, JSON.stringify(ran.body));
 
       const lines = body.history();
-      // The registration of the reflex's `when`, the call's start, and its end.
-      assert.deepEqual(lines.map((line) => line.status), ["registered", "ok"]);
+      // The registration of the reflex's `when`, the call's start, and its end; then the run's.
+      assert.deepEqual(lines.map((line) => line.status), ["registered", "ok", "ok"]);
       for (const line of lines) {
         const record = HistoryRecord.parse(line);
         assert.equal(typeof record.code, "string");
         assert.deepEqual(Object.keys(line).filter((key) => /kit|active/i.test(key)), [], JSON.stringify(line));
       }
       assert.equal(HistoryRecord.parse(lines[0]).code, "event.data.message.length > 0");
+      assert.equal(HistoryRecord.parse(lines[2]).code, source);
     } finally {
       await body.close();
     }

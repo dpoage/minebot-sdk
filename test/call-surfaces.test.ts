@@ -72,7 +72,7 @@ describe("what each surface says is callable, in each combination of routines an
       assert.equal(/POST \/call \{/.test(doc), callable, "POST /call");
       assert.equal(/calls the routine bound to name/.test(doc), cell.routines, "action names in the reference");
       assert.equal(/POST \/call \{ name: "<module>\.<routine>"/.test(doc), cell.builtins, "built-in names in the reference");
-      assert.equal(/A call is a run: one at a time with programs/.test(doc), callable, "what a call is");
+      assert.equal(/A call is a run: one at a time with the other runs/.test(doc), callable, "what a call is");
     });
   }
 });

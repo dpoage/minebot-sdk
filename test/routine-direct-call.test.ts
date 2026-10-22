@@ -358,7 +358,7 @@ const untilAborted = (signal: AbortSignal) => new Promise<never>((_, reject) => 
 /** One `ProgramRunner.call` that ends as `how` says, and the scope it handed out. */
 async function bodyRun(how: Ending): Promise<Run> {
   const emitter = new EventEmitter();
-  const runner = new ProgramRunner({ globals: () => ({}), events: () => emitter });
+  const runner = new ProgramRunner({ events: () => emitter });
   const scopes = Promise.withResolvers<ProgramScope>();
   const ended = runner.call(
     async (scope) => {
@@ -411,7 +411,7 @@ describe("a run scope after the run's abort (mb-jg8)", () => {
 
   it("still delivers events to a subscription made while the run was live, until the run ends", async () => {
     const emitter = new EventEmitter();
-    const runner = new ProgramRunner({ globals: () => ({}), events: () => emitter });
+    const runner = new ProgramRunner({ events: () => emitter });
     let heard = 0;
     await runner.call(
       async (scope) => {

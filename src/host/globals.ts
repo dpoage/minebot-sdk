@@ -1,7 +1,5 @@
-// Assembling the globals a program sees, from the body's features. Only what the capability
-// table allows is present; a program on a body without a feature finds no such global.
-import pathfinderPkg from "mineflayer-pathfinder";
-import { Vec3 } from "vec3";
+// Assembling the context a routine run sees, from the body's features. Only what the capability
+// table allows is present; a routine on a body without a feature finds no such member.
 import { withObserver, type RoutineCallObserver } from "../routine/define.ts";
 import type { RoutineContext } from "../routine/public.ts";
 import { capabilities, type BodyFeatures, type LessonInput, type StatusResponse } from "../protocol/index.ts";
@@ -9,8 +7,6 @@ import type { ProgramScope } from "../program/scope.ts";
 import type { WikiAccess } from "../wiki/access.ts";
 import type { Connection } from "./connection.ts";
 import type { Notes } from "../notes.ts";
-
-const { goals, Movements } = pathfinderPkg;
 
 export interface GlobalsDeps {
   connection: Connection;
@@ -24,10 +20,7 @@ export interface GlobalsDeps {
   status: () => Promise<StatusResponse>;
 }
 
-/**
- * What programs and routines both get, from one place: the notes, `status`, and `wiki` when the
- * body's wiki is on. A fact about these members changes here only.
- */
+/** The notes, `status`, and `wiki` when the body's wiki is on: the members of the context that depend on the body's features. */
 function facilities(deps: GlobalsDeps) {
   const caps = capabilities(deps.features());
   return {
@@ -49,15 +42,9 @@ function facilities(deps: GlobalsDeps) {
   };
 }
 
-/** The globals of one program run: the base environment plus exactly the features the body offers. */
-export function programGlobals(deps: GlobalsDeps): Record<string, unknown> {
-  const bot = deps.connection.requireBot();
-  return { bot, goals, Movements, Vec3, ...facilities(deps) };
-}
-
 /**
- * What a routine's default export receives for one call: the run's scope, the live bot, and the
- * facilities the body offers programs, plus `store`, which programs have no global for.
+ * What a run's default export receives: the run's scope, the live bot, the facilities the body
+ * offers, and `store`. A routine call, a module run, and a reflex firing all get it.
  */
 export function routineContext(scope: ProgramScope, deps: GlobalsDeps): RoutineContext {
   const bot = deps.connection.requireBot();

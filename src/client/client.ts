@@ -106,8 +106,9 @@ export class BodyClient {
     return this.#request("DELETE", `/notes/${encodeURIComponent(key)}`);
   }
 
-  run(code: string, timeoutMs?: number): Promise<RunResult> {
-    return this.#request("POST", "/run", { code, timeoutMs });
+  /** Runs `code` as a module on the body; `args` go to its default function. */
+  run(code: string, args?: Record<string, unknown>, timeoutMs?: number): Promise<RunResult> {
+    return this.#request("POST", "/run", { code, args, timeoutMs });
   }
 
   stop(): Promise<{ stopped: boolean }> {

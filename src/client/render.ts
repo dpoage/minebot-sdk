@@ -1,10 +1,10 @@
-// Renderers for agent-facing output: program runs, status, notes, wiki hits and pages, routines and their bindings.
+// Renderers for agent-facing output: runs, status, notes, wiki hits and pages, routines and their bindings.
 // The CLI and the MCP server share them, so an agent sees the same text through both.
 import type { ActionStats, BindingInfo, BindResponse, BuiltinInfo, BuiltinSearchHit, Note, ReflexBindingInfo, RoutineInfo, RoutineVersion, RunResult, SaveRoutineResponse, SearchHit, StatusResponse, TypeCheck } from "../protocol/index.ts";
 
 const json = (value: unknown) => JSON.stringify(value, null, 2);
 
-/** Renders a program run for an agent: status line, then logs, then error or result. */
+/** Renders a run (a module run or a call) for an agent: status line, then logs, then error or result. */
 export function formatRun(run: RunResult): string {
   const parts = [`status: ${run.status} (${run.durationMs} ms)`];
   if (run.logs) parts.push(`logs:\n${run.logs}`);

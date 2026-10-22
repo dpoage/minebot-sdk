@@ -384,10 +384,11 @@ describe("body API on a body with every feature on", () => {
     await body.call("GET", "/api", { body: { doc: programApiDoc(FEATURES_ALL) } });
   });
 
-  it("answers programs and /chat with 503 while disconnected, and /stop with stopped false", async () => {
-    await body.call("POST", "/run", { status: 503, body: NOT_CONNECTED }, { json: { code: "return 1" } });
-    await body.call("POST", "/run", { status: 503, body: NOT_CONNECTED }, { json: { code: "return 1", timeoutMs: 1000 } });
+  it("answers runs and /chat with 503 while disconnected, and /stop with stopped false", async () => {
+    await body.call("POST", "/run", { status: 503, body: NOT_CONNECTED }, { json: { code: "export default 1;" } });
+    await body.call("POST", "/run", { status: 503, body: NOT_CONNECTED }, { json: { code: "export default 1;", args: { n: 1 }, timeoutMs: 1000 } });
     await body.call("POST", "/run", { status: 400, body: { error: "✖ Invalid input: expected string, received undefined\n  → at code" } }, { json: {} });
+    await body.call("POST", "/run", { status: 400, body: { error: "✖ Invalid input: expected record, received number\n  → at args" } }, { json: { code: "x", args: 5 } });
     await body.call("POST", "/run", { status: 400, body: { error: "✖ Too big: expected number to be <=1800000\n  → at timeoutMs" } }, { json: { code: "x", timeoutMs: 1_800_001 } });
     await body.call("POST", "/chat", { status: 503, body: NOT_CONNECTED }, { json: { message: "hello" } });
     await body.call("POST", "/chat", { status: 400, body: { error: "✖ Too small: expected string to have >=1 characters\n  → at message" } }, { json: { message: "" } });
@@ -560,7 +561,7 @@ describe("body API on a body with every optional feature off", () => {
     await body.call("GET", "/api", { body: { doc: programApiDoc(features) } });
     await body.call("GET", "/status", { body: { connected: false, startedAt: "<timestamp>", deaths: 0, reconnects: 0 } });
     await body.call("GET", "/notes", { body: { notes: [] } });
-    await body.call("POST", "/run", { status: 503, body: NOT_CONNECTED }, { json: { code: "return 1" } });
+    await body.call("POST", "/run", { status: 503, body: NOT_CONNECTED }, { json: { code: "export default 1;" } });
     await body.call("POST", "/stop", { body: { stopped: false } });
   });
 });
@@ -966,7 +967,7 @@ describe("body API: routine calls on a body that is not connected", () => {
   it("lists the stored binding, and answers /call with 503 as /run does", async () => {
     await body.call("GET", "/bindings", { body: { bindings: [{ kind: "action", name: "act", routine: "act" }] } });
     await body.call("POST", "/call", { status: 503, body: NOT_CONNECTED }, { json: { name: "act", args: { a: 1 } } });
-    await body.call("POST", "/run", { status: 503, body: NOT_CONNECTED }, { json: { code: "return 1" } });
+    await body.call("POST", "/run", { status: 503, body: NOT_CONNECTED }, { json: { code: "export default 1;" } });
   });
 });
 
