@@ -2,9 +2,9 @@
 
 The minebot SDK gives AI agents a body in Minecraft Java Edition. A body is a long-running supervisor process that serves an API and forks a bot host process. The bot host holds one Mineflayer player connection and runs the programs. Any agent harness, such as Claude Code, Codex, or your own loop, controls the body through MCP, a CLI, or HTTP.
 
-The agent acts by writing JavaScript programs. The body runs each program against the live bot and returns the logs and the result.
+The agent acts by writing JavaScript programs. The body runs each program against the live bot and returns the logs and the result. The agent keeps code that it wants to call again as a routine: a TypeScript module in a library on the body. See [Routines](#routines).
 
-The SDK does not decide anything for the agent. The harness owns the turn loop, the context, the prompts, and every decision. The body acts on its own only where the connection requires it (it reconnects after a disconnect, restarts a bot host that crashed, and paces inventory clicks) or where the agent registered a trigger. See [docs/sdk.md](docs/sdk.md) for the layers and the boundary between the SDK and a harness.
+The SDK does not decide anything for the agent. The harness owns the turn loop, the context, the prompts, and every decision. The body acts on its own only where the connection requires it (it reconnects after a disconnect, restarts a bot host that crashed, and paces inventory clicks) or where the agent registered a trigger or bound a reflex. See [docs/sdk.md](docs/sdk.md) for the layers and the boundary between the SDK and a harness.
 
 ## Requirements
 
@@ -19,13 +19,14 @@ npm install minebot-sdk
 npx minebot --help
 ```
 
-The package is the authoring library plus the `minebot` command. The body stays a separate process: `minebot body` starts it, and everything else talks to it over HTTP. The package has three entry points:
+The package is the authoring library plus the `minebot` command. The body stays a separate process: `minebot body` starts it, and everything else talks to it over HTTP. The package has four entry points:
 
 | Import | What it is |
 | - | - |
 | `minebot-sdk/kit` | The surface for writing kits, built-in and agent-written: `defineKit`, `action`, `z`, and the helpers and types that kits use. |
+| `minebot-sdk/routine` | The surface for writing routines: `defineRoutine`, the `RoutineContext` type, and `z`. |
 | `minebot-sdk/client` | A typed HTTP client for a running body (`BodyClient`), and the request and response types of its API. It contains no CLI or MCP code. |
-| `minebot-sdk/testing` | A test harness that runs kits against a fake bot. |
+| `minebot-sdk/testing` | A test harness that runs kits and routines against a fake bot. |
 
 The package ships its kit sources (`minebot kits source <kit>` prints one) and the wiki pages. Each entry point resolves to compiled JavaScript with type declarations.
 
@@ -73,7 +74,7 @@ From a checkout of this repository, point the harness at the source instead:
 claude mcp add minebot -- node --conditions=minebot-sdk:source /absolute/path/to/minebot/src/cli.ts mcp --bot alpha
 ```
 
-By default, the MCP server serves the core tools. The agent acts through programs, and programs reach everything else through their globals (`notes`, `status()`, `bot.chat`, `kits`, `wiki`, `triggers`). A short tool list keeps the agent's context small.
+By default, the MCP server serves the core tools. The agent acts through programs, and programs reach most other operations through their globals (`notes`, `status()`, `bot.chat`, `kits`, `wiki`, `triggers`). Programs have no global for routines, so the core set holds the two tools that call and bind them. A short tool list keeps the agent's context small.
 
 | Core tool | What it does |
 | - | - |
@@ -84,6 +85,8 @@ By default, the MCP server serves the core tools. The agent acts through program
 | `wait_for` | Blocks until a matching event arrives (chat, whisper, system message, night, day, hostile_near, low_health, low_food, item_picked_up, ...) or the timeout, then returns it. The cheap way to idle. |
 | `api_reference` | Returns the globals available to programs on this body. |
 | `kit_docs` | Returns the action reference for kits. Only on a body that offers kits. |
+| `call_routine` | Calls an action: a saved routine that `bind_routine` bound to a name, with JSON arguments. Blocks until the routine returns, fails, or times out, and answers like `run_program`. Only on a body that offers routines. |
+| `bind_routine` | Binds a name to a saved routine, as an action or, on a body with triggers, as a reflex. With `source`, it saves the module first. Only on a body that offers routines. |
 
 `minebot mcp --tools full` also serves every other operation as a tool of its own:
 
@@ -101,12 +104,17 @@ By default, the MCP server serves the core tools. The agent acts through program
 | `kit_try` | Runs one action of kit source once, without saving it, and returns the result or the error. The logs hold the type errors of the source. |
 | `kit_versions`, `kit_revert` | Lists the saved versions of an agent kit; saves an earlier version again. |
 | `trigger_add`, `trigger_list`, `trigger_remove`, `trigger_set_enabled` | Register, list, delete, and switch off triggers: programs the body runs when an event arrives. |
+| `list_routines` | Lists the saved routines with their versions, and the names bound to them. |
+| `routine_save` | Saves a routine from TypeScript source and returns its type check. |
+| `routine_source` | Prints a routine's source. |
+| `routine_versions`, `routine_revert` | Lists the saved versions of a routine; saves an earlier version again. |
+| `unbind_routine` | Removes a binding. The saved routine stays. |
 | `wiki_search`, `wiki_read`, `wiki_list` | Search and read the wiki. |
 | `wiki_add_lesson` | Adds a lesson to the wiki, when the body allows writes. |
 
 The MCP server reads the body endpoint on every call. If the body restarts, the MCP server keeps working.
 
-The MCP server asks the body which features it offers: before it connects, and before every tool call. It lists the kit tools only when the body offers kits (`use_kits` only when the set can change, `kit_save`, `kit_remove`, `kit_source`, `kit_try`, `kit_versions`, and `kit_revert` only when agent kits are on), the wiki tools only when the wiki is not `off`, `wiki_add_lesson` only in `write` mode, and the `trigger_*` tools only on a body that has triggers. When the answer changes, tools appear or disappear and the server sends `notifications/tools/list_changed`. The `run_program` and `status` descriptions and `minebot api` describe only the offered features. While the body cannot be reached, the MCP server lists only the ungated tools of its tool set: `observe`, `run_program`, `api_reference`, `stop_program`, `get_events`, and `wait_for`, plus `status`, the `notes_*` tools, and `send_chat` with `--tools full`.
+The MCP server asks the body which features it offers: before it connects, and before every tool call. It lists the kit tools only when the body offers kits (`use_kits` only when the set can change, `kit_save`, `kit_remove`, `kit_source`, `kit_try`, `kit_versions`, and `kit_revert` only when agent kits are on), the wiki tools only when the wiki is not `off`, `wiki_add_lesson` only in `write` mode, the `trigger_*` tools only on a body that has triggers, and the routine tools only on a body that offers routines. `bind_routine` takes the reflex fields (`on`, `when`, and so on) only when the body also has triggers. When the answer changes, tools appear or disappear and the server sends `notifications/tools/list_changed`. The `run_program` and `status` descriptions and `minebot api` describe only the offered features. While the body cannot be reached, the MCP server lists only the ungated tools of its tool set: `observe`, `run_program`, `api_reference`, `stop_program`, `get_events`, and `wait_for`, plus `status`, the `notes_*` tools, and `send_chat` with `--tools full`.
 
 ## Programs
 
@@ -141,7 +149,7 @@ await bot.dig(bot.blockAt(block.position));
 return block.name;
 ```
 
-The body runs one program at a time. A second request gets HTTP 409. The default timeout is 60 seconds; the maximum is 30 minutes. If a program times out or stops, the body halts pathfinding, digging, item use, and movement keys, clears the timers that exist at that moment, and removes the `on` handlers that exist at that moment. The program then gets a grace period to end. If it does not end, the body can kill the bot host and restart it: the restart reconnects as the same player, and the run answers with its `status` (`stopped` or `timeout`) and an `error` that says the program did not stop. The kill time is not fixed: a program that blocks the host with synchronous code after it catches the abort can run on without being killed. The restart can start late: it waits 1 second, and the wait doubles after each restart in quick succession, up to 60 seconds. See [How it works](#how-it-works). Long loops must check `signal.aborted` so the program ends in time.
+The body runs one program at a time. A second request gets HTTP 409. The default timeout is 60 seconds; the maximum is 30 minutes. If a program times out or stops, the body halts pathfinding, digging, item use, and movement keys, clears the timers that exist at that moment, and removes the `on` handlers that exist at that moment. The program then gets a grace period to end. If it does not end, the body kills the bot host and restarts it: the restart reconnects as the same player, and the run answers with its `status` (`stopped` or `timeout`) and an `error` that says the program did not stop. Every way to abort a run has this kill deadline: a stop, a timeout, and a preemption by a trigger or reflex. The body kills the host 5.5 seconds after the abort (the 5 second grace plus a 0.5 second margin), also when the program blocks the host with synchronous code after it catches the abort. The restart can start late: it waits 1 second, and the wait doubles after each restart in quick succession, up to 60 seconds. See [How it works](#how-it-works). Long loops must check `signal.aborted` so the program ends in time.
 
 The body does not add notices to run results. Facts stay in the observation: it keeps the open-sky view and `programsWithoutChange`, and `minebot observe --brief` adds `no change for N programs` when 3 or more programs in a row changed neither position nor inventory.
 
@@ -301,7 +309,7 @@ In a program: `triggers.add({ name, on, run, ... })`, `triggers.list()`, `trigge
 | - | - |
 | `name` | 1-48 lowercase letters, digits, `.`, `_`, `-`. Saving a trigger with an existing name replaces it. |
 | `on` | Event types that fire the trigger: any event in the log, such as `hurt`, `chat`, `night`, `low_food`, `hostile_near`. A trigger cannot listen to `trigger_*` events. |
-| `run` | Program source, with the globals of a program plus `event` (`{ seq, type, data }`). It must compile when the trigger is saved. |
+| `run` | Program source, with the globals of a program plus `event` (`{ seq, type, time, data }`). It must compile when the trigger is saved. |
 | `when` | A JavaScript expression over `event` and `bot`. The trigger fires only when it is truthy. It is cut off after 100 ms. |
 | `from`, `match` | Filters for `chat` and `whisper` events, as for `wait`. |
 | `cooldownMs` | Least time between two firings. Default 1000. |
@@ -316,6 +324,174 @@ Each firing adds a `trigger_fired { name, event }` event and, when the run ends,
 Triggers persist in the state directory (`triggers.json`), so they survive a restart of the body. A body started with `--no-triggers` has none: the agent cannot register them, and the CLI, the MCP tools, the program reference, and the wiki do not mention them. The benchmark starts its bodies with `--no-triggers`, except in `survive-nights`, where reflexes are the task.
 
 The history (`--history`) records a trigger's code when it is saved (status `registered`), with the escape audit over its program and its `when`, and each firing as a program run with the `trigger` name and the `event` that fired it.
+
+## Routines
+
+A routine is a TypeScript module that the agent saves in a library on the body. The agent calls a routine by name, or binds it to events. A routine is a real ES module, not program text: it uses `import`, it imports other routines, and its source stays on the body between runs. A body offers routines unless it starts with `--no-routines`.
+
+```ts
+// helper.ts
+export const double = (n: number): number => n * 2;
+```
+
+```ts
+// count-logs.ts
+import { defineRoutine, z } from "minebot-sdk/routine";
+import { double } from "./helper.ts";
+
+export default defineRoutine(
+  {
+    description: "Counts the logs in the inventory, doubled.",
+    args: z.object({ prefix: z.string().default("oak") }),
+    returns: z.object({ count: z.number() }),
+  },
+  async (ctx, { prefix }) => {
+    const count = ctx.bot.inventory.items().filter((i) => i.name.startsWith(prefix)).reduce((sum, i) => sum + i.count, 0);
+    ctx.log("counted", count);
+    return { count: double(count) };
+  },
+);
+```
+
+```sh
+minebot routines save helper.ts count-logs.ts   # list the imported module first
+minebot bind action count count-logs            # name the routine for calls
+minebot call count --args '{"prefix":"birch"}'  # runs it and prints the status, the logs, and the result
+minebot routines                                # the saved routines, and the names bound to them
+```
+
+### Write a routine
+
+The default export of the module is a function `(ctx, args) => result`. `defineRoutine({ description?, args?, returns? }, fn)` declares it with types and checks. A plain default-exported function works too.
+
+- `args`: a zod schema. The body checks the arguments of every call against it and gives the routine the parsed value, with defaults applied. A call with bad arguments fails before the routine runs, and the error holds the schema. Without `args`, the routine gets its arguments unchecked.
+- `returns`: a zod schema. The body checks the result of every call against it. A result that does not match fails the call.
+- `description`: text for the readers of the source. The body does not show it.
+
+A call without arguments passes `{}`. A reflex passes `{ event }`.
+
+`ctx` has these members and no others:
+
+| Member | What it is |
+| - | - |
+| `bot` | The Mineflayer bot, with the pathfinder plugin loaded. |
+| `log(...)` | Appends to the output of the run. |
+| `sleep(ms)` | Waits, and rejects when the run is aborted. |
+| `signal` | An `AbortSignal` that fires on timeout or stop. |
+| `on(event, handler)` | Subscribes to a bot event. The body removes the handler when the run ends or is aborted. |
+| `notes` | The agent's persistent notes, as the `notes` global of a program. |
+| `status()` | Resolves to deaths and reconnects, and to progress toward the milestones when the body has them. |
+| `kit` | The active kits' actions. Only when the body offers kits. |
+| `wiki` | The wiki. Only when the wiki is not `off`. |
+
+`Vec3`, `goals`, and `Movements` are not in `ctx`. Import `Vec3` by name: `import { Vec3 } from "vec3"`. Use a default import for `mineflayer-pathfinder`, and take `goals` and `Movements` from it: `import pathfinder from "mineflayer-pathfinder"`, then `const { goals, Movements } = pathfinder`. A named import of `goals` passes the type check, but the call fails with `Named export 'goals' not found`. The program globals `kits` and `triggers` are not in `ctx` either.
+
+A routine does not share the lifetime rules of a program. Only `ctx.on`, `ctx.sleep`, and `ctx.signal` end with the call. The timers and the `bot.on` listeners that the routine creates itself are real: they outlive the call, and the body never clears them. A leftover timer that throws after the call has ended crashes the bot host. The supervisor then restarts the host, and the agent sees a `disconnected` event.
+
+### The library
+
+The library is a flat directory of `<name>.ts` files. `--routines <dir>` picks the directory; the default is `routines/` in the state directory. `--routines ""` turns routines off, as `--no-routines` does. Bodies that share the directory share the routines.
+
+- A name has 1-48 lowercase letters, digits, `_`, and `-`, and starts with a letter. Bindings use the same rule.
+- A source has at most 128 KiB. Saving a bad name or an oversize source fails and writes nothing.
+- A save takes effect at the next call or firing, without a restart. A module that other routines import reloads them too.
+- Saving over a routine keeps the old source as a numbered version, in `.history/<name>/<n>.ts` and `<n>.json` (`version`, `savedAt`, `savedBy` — the name of the body that saved it). Saving the source that is already current adds no version. `routines versions <name>` lists the versions.
+- `routines revert <name> <version>` saves an earlier version again as a new version, so the history only grows.
+- A file whose bytes are in no version, because someone edited it by hand, becomes a version saved by `unknown` before the next save or revert writes over it.
+- No command deletes a routine. `unbind` removes only a binding.
+
+A save returns `typeCheck`, as a kit save does: `passed`, `failed` with one `<name>.ts(line,col): error TS...` entry per error, or `skipped` with a reason. A failed check does not stop the save. The check uses strict options that match how Node loads the file: Node strips the types and changes nothing else, so an `enum`, a namespace that holds code, or a type imported as a value fails the check.
+
+### Imports
+
+A routine imports with `import`. `require` is not defined in a routine, so a call that uses `require` fails with a `ReferenceError`.
+
+- Node built-ins, such as `node:fs`.
+- The packages that the body ships: `mineflayer`, `mineflayer-pathfinder`, `vec3`, `minecraft-data`, the `prismarine-*` packages, and `zod`.
+- The subpaths of the SDK: `minebot-sdk/routine`, `minebot-sdk/kit`, `minebot-sdk/client`, and `minebot-sdk/testing`. A bare `import "minebot-sdk"` does not resolve, because the package has no root export.
+- Other routines in the same library, as a relative import that names the `.ts` file: `import { double } from "./helper.ts"`. An import that leaves the library fails.
+
+These limits apply:
+
+- When you save several routines, list the imported modules first (`routines save helper.ts count-logs.ts`). The type check of a routine runs when it is saved, and it reports TS2307 for a module that is not saved yet.
+- The type check does not catch a relative import that names `.js` for a `.ts` file. The save passes, and the call fails with `Cannot find module`.
+- The library must not live under `node_modules`. Node does not strip types there, and the call fails.
+- Node versions before 24.3 print a type-stripping warning when a routine loads.
+- The type check needs the `typescript` package. Without it, the check is `skipped` and says why.
+- The type check finds `@types/node` where a hoisted install puts it. In an `npm install --install-strategy=nested` install it is missing, and imports of Node built-ins fail the check with TS2591. The routine still runs.
+
+### Actions
+
+An action is a routine that the agent calls by name. `bind action <name> <routine>` names a saved routine; binding the same name again replaces the binding. The bind checks that the routine exists, and it does not load the module. Bindings persist in `bindings.json` in the state directory.
+
+`call <name>` runs the routine with the JSON arguments and answers like `run`: `status` (`ok`, `error`, `timeout`, or `stopped`), the `result` (what the routine returned), the `error`, and the `logs`. A call is a run:
+
+- The body runs one program, call, or reflex at a time. A call that arrives while another run is going gets HTTP 409.
+- The default timeout is 60 seconds and the maximum is 30 minutes (`--timeout <ms>`).
+- `minebot stop` and the timeout abort the call, and the kill deadline of [Programs](#programs) applies.
+- A call that names no bound action gets HTTP 404.
+- The history (`--history`) records the call with an empty `code` and `call: { name, routine, args }`.
+
+### Reflexes
+
+A reflex is a routine that the body calls when an event arrives. `bind reflex <name> <routine> --on <types>` binds it, with the fields, defaults, scheduling, and failure rules of a [trigger](#triggers): `when`, `from`, `match`, `cooldownMs`, `timeoutMs`, `preempt`, `priority`, and `enabled`. The body calls the routine as `(ctx, { event })`. The `event` is `{ seq, type, time, data }`, as in the event log.
+
+```ts
+// note-chat.ts
+import type { BodyEvent } from "minebot-sdk/client";
+import type { RoutineContext } from "minebot-sdk/routine";
+
+export default (ctx: RoutineContext, { event }: { event: BodyEvent }) => {
+  ctx.notes.set("last-chat", `${String(event.data.from)}: ${String(event.data.message)}`);
+};
+```
+
+```sh
+minebot routines save note-chat.ts
+minebot bind reflex noter note-chat --on chat --cooldown 5000
+```
+
+- A firing adds `trigger_fired` and `trigger_finished` events, and a reflex run ends with `trigger_finished`, as a trigger run does.
+- A reflex that fails 3 times in a row disables itself and adds `trigger_disabled`. No route enables a reflex again: bind it again. A new bind replaces the reflex, resets its counts, and enables it.
+- One name belongs to one action, reflex, or code trigger at a time. A bind that clashes with a name of another kind gets HTTP 409. Run `unbind` first.
+- Reflexes and triggers share the limit of 50. A body started with `--no-triggers` has no reflexes, and `bind reflex` is unavailable there.
+- `minebot routines` and `GET /bindings` list a reflex with what it did since the body started. `minebot triggers`, the `triggers` global, and the `/triggers` routes list code triggers only.
+- The history records a bind as a run with status `registered`, and each firing with `trigger`, `routine`, and `event`.
+
+### HTTP, CLI, and MCP
+
+| Operation | HTTP | CLI | MCP (full set unless noted) |
+| - | - | - | - |
+| List routines | `GET /routines` | `minebot routines` | `list_routines` |
+| Save | `POST /routines/save` `{ name, source }` | `minebot routines save <file...>` | `routine_save`, or `bind_routine` with `source` |
+| Read the source | `GET /routines/source?name=` | `minebot routines source <name>` | `routine_source` |
+| List versions | `GET /routines/versions?name=` | `minebot routines versions <name>` | `routine_versions` |
+| Revert | `POST /routines/revert` `{ name, version }` | `minebot routines revert <name> <version>` | `routine_revert` |
+| Bind | `POST /bind` `{ kind, name, routine, ... }` | `minebot bind action\|reflex ...` | `bind_routine` (core set) |
+| List bindings | `GET /bindings` | `minebot routines` | `list_routines` |
+| Unbind | `POST /unbind` `{ name }` | `minebot unbind <name>` | `unbind_routine` |
+| Call | `POST /call` `{ name, args?, timeoutMs? }` | `minebot call <name>` | `call_routine` (core set) |
+
+The MCP tools take `timeout_ms` and `cooldown_ms`, as the other MCP tools do; HTTP and the CLI use `timeoutMs` and `--timeout`.
+
+### Test a routine
+
+`minebot-sdk/testing` runs a routine against the fake bot. `h.run(routine, args?)` calls a `defineRoutine` value, a plain function, or a module namespace through the same code as the body: it validates the arguments and the result, and each call gets a `ctx` of its own. `h.logs` holds what the routine logged.
+
+```ts
+import assert from "node:assert/strict";
+import { test } from "node:test";
+import { createKitHarness } from "minebot-sdk/testing";
+import countLogs from "../routines/count-logs.ts";
+
+test("count-logs doubles the logs it finds", async () => {
+  const h = createKitHarness({ inventory: { oak_log: 3 } });
+  assert.deepEqual(await h.run(countLogs), { count: 6 });
+  assert.deepEqual(h.logs, ["counted 3"]);
+});
+```
+
+In `h.run`, `ctx.status` and `ctx.wiki` throw `UnsupportedApiError`, because the harness has no body to ask. See [Testing kits](#testing-kits) for the options and the fake bot.
 
 ## Long-running bodies
 
@@ -339,7 +515,7 @@ minebot status --bot ana
 minebot observe --brief --bot ana
 ```
 
-The body keeps notes, milestones, triggers, per-kit stores, and agent kits in its state directory: `--state <dir>`, default `.minebot/state/<bot>/`. Each file is JSON, and the body writes it atomically. Start a body with `--milestones <file>` to replace the stored set.
+The body keeps notes, milestones, triggers, bindings, per-kit stores, agent kits, and routines in its state directory: `--state <dir>`, default `.minebot/state/<bot>/`. The state files are JSON, and the body writes each one atomically; agent kits and routines are `.ts` files with their version history beside them. Start a body with `--milestones <file>` to replace the stored set.
 
 Status reads the server's statistics for the player. The body asks the server for them, so status works on any server, also on servers you do not run. The benchmark verifier grades the same statistics from the server's stats file.
 
@@ -392,7 +568,7 @@ See [wiki/README.md](wiki/README.md) for the page format and the rules for addin
 
 | Command | What it does |
 | - | - |
-| `body` | Starts a body and connects it to a server. Options: `--username`, `--auth <offline\|microsoft>`, `--host`, `--port`, `--api-host`, `--api-port`, `--history <file>`, `--kits <a,b>`, `--lock-kits`, `--no-agent-kits`, `--agent-kits <dir>`, `--wiki <off\|read\|write>`, `--wiki-dir <dir>`, `--lessons <dir>`, `--state <dir>`, `--milestones <file>`, `--no-milestones`, `--no-triggers`. |
+| `body` | Starts a body and connects it to a server. Options: `--username`, `--auth <offline\|microsoft>`, `--host`, `--port`, `--api-host`, `--api-port`, `--history <file>`, `--kits <a,b>`, `--lock-kits`, `--no-agent-kits`, `--agent-kits <dir>`, `--wiki <off\|read\|write>`, `--wiki-dir <dir>`, `--lessons <dir>`, `--state <dir>`, `--milestones <file>`, `--no-milestones`, `--no-triggers`, `--routines <dir>`, `--no-routines`. |
 | `list` | Lists the running bodies and their connection state. |
 | `init [dir]` | Scaffolds an authoring workspace; see [Authoring workspace](#authoring-workspace). Needs no body. |
 | `observe` | Prints the observation as JSON. `--brief` prints one line. |
@@ -406,6 +582,10 @@ See [wiki/README.md](wiki/README.md) for the page format and the rules for addin
 | `chat <message>` | Sends a chat message. |
 | `types` | Prints TypeScript declarations for the body's program globals and kits; `--out <file>` writes them. See [Authoring workspace](#authoring-workspace). |
 | `triggers` | Lists triggers. `triggers add <name> --on a,b [file]` saves one (the program comes from stdin when the file is omitted; options `--from`, `--match`, `--when`, `--cooldown`, `--timeout`, `--priority`, `--preempt`). `triggers rm <name>`, `triggers enable <name>`, and `triggers disable <name>`. Only on a body that has triggers. |
+| `routines` | Lists the saved routines and what is bound to them. `routines save <file...>` saves each `.ts` or `.js` file under its file name, in the order given (list the modules that a routine imports first). `routines source <name>`, `routines versions <name>`, and `routines revert <name> <version>`. Only on a body that offers routines. |
+| `bind` | `bind action <name> <routine>` names a routine for `call`. `bind reflex <name> <routine> --on a,b` runs a routine when an event arrives (options `--from`, `--match`, `--when`, `--cooldown`, `--timeout`, `--priority`, `--preempt`); it needs a body with triggers. Only on a body that offers routines. |
+| `unbind <name>` | Removes a binding. The routine stays saved. Only on a body that offers routines. |
+| `call <name>` | Calls the action bound to the name. `--args <json>` passes the arguments and `--timeout <ms>` limits the run. Exits with status 2 if the routine does not return normally. Only on a body that offers routines. |
 | `kits` | Lists the kits and how often their actions worked. `kits use <kit...>` replaces the active kits (not on a locked body). `kits docs [kit...]` prints the reference. `kits search <query>` finds kits and actions by what they do. `kits save [file]`, `kits rm <kit>`, `kits source <kit>`, `kits try [file] --action <name> [--args <json>]`, `kits versions <kit>`, and `kits revert <kit> <version>` manage agent kits. Only on a body that offers kits. |
 | `wiki` | `wiki search <query>`, `wiki read <page>`, `wiki list [section]`, and in `write` mode `wiki lesson --title <t> [--tags a,b]` with the body text on stdin. Only on a body with the wiki. |
 | `mcp` | Serves the body as MCP tools over stdio: the core tools by default, every tool with `--tools full`. See [Control a body from an agent](#control-a-body-from-an-agent). |
@@ -417,7 +597,7 @@ All commands take `--bot <name>`. The default is `$MINEBOT_BOT`, or `bot` if tha
 
 To reach a body in another container, set `MINEBOT_URL` and `MINEBOT_TOKEN`. Clients then ignore `--bot`. For `body`, `MINEBOT_TOKEN` sets the API token. A body refuses to serve on a non-loopback `--api-host` without a token.
 
-`--history <file>` appends one JSON line per program run: the code, status, logs, result, duration, and `escapeAttempts`. See [Security](#security).
+`--history <file>` appends one JSON line per program run: the code, status, logs, result, duration, and `escapeAttempts`. A routine call or reflex firing has an empty `code` and carries `call` or `trigger`, `routine`, and `event` instead. See [Security](#security).
 
 `--auth` defaults to `offline`, which joins servers in offline mode as `--username`. An online-mode server kicks such a player with `multiplayer.disconnect.unverified_username`; use `--auth microsoft` for it. On the first start, the body prints a Microsoft device code to its terminal (`[minebot] Microsoft sign-in: open <url> and enter code <code>`). Sign in with an account that owns Minecraft: Java Edition. The body caches the tokens in `<state>/auth`, so later starts and reconnects sign in without a code. The in-game name is the account's profile name; `--username` only keys the cache.
 
@@ -425,11 +605,11 @@ To reach a body in another container, set `MINEBOT_URL` and `MINEBOT_TOKEN`. Cli
 
 Each body serves its API on `127.0.0.1` with a random bearer token. On start, the body writes its URL and token to `.minebot/<name>.json` with mode 0600. The URL names the address the body listens on (IPv6 addresses in brackets), or loopback when the body listens on a wildcard address. Clients find a body by its name through this file. On SIGINT or SIGTERM, the body shuts down its bot host, which disconnects the player, and deletes the file.
 
-A body is two processes. The supervisor (`src/body/`) serves the API, keeps the event log, writes the program history when `--history` is set, and writes the endpoint file. It answers health, events, wait, and stop itself, and forwards every other request to the bot host (`src/host/`), a child process that it forks. The bot host holds the Minecraft connection, runs the programs and the triggers, and keeps the kits, the notes, and the wiki. The two processes talk over the channel that the fork opens; `src/protocol/host.ts` defines its messages.
+A body is two processes. The supervisor (`src/body/`) serves the API, keeps the event log, writes the program history when `--history` is set, and writes the endpoint file. It answers health, events, wait, and stop itself, and forwards every other request to the bot host (`src/host/`), a child process that it forks. The bot host holds the Minecraft connection, runs the programs, the triggers, and the routines, and keeps the kits, the notes, the routine library, and the wiki. The two processes talk over the channel that the fork opens; `src/protocol/host.ts` defines its messages.
 
 If the bot host crashes, or the supervisor kills it, the supervisor forks a replacement that reconnects as the same player. The first restart waits 1 second. Each restart in quick succession doubles the wait, up to 60 seconds, and a host that stays up for 60 seconds starts the schedule over. A request that arrives during a restart waits for the new host; if the new host fails to start, the supervisor retries on the same schedule and requests get HTTP 503 until a host is ready.
 
-A restart loses what the old host held in memory, such as `globalThis`, the program that ran, the trigger statistics (fired counts and last status), and the count of programs without change. The supervisor ends that program's run with an `error` that says the bot host was restarted, and adds a `disconnected` event. Notes, milestones, kit stores, agent kits, and triggers are on disk and stay. The replacement counts the restart as a reconnect and continues the death count, the active kits, and each trigger's count of failures.
+A restart loses what the old host held in memory, such as `globalThis`, the program that ran, the trigger statistics (fired counts and last status), and the count of programs without change. The supervisor ends that program's run with an `error` that says the bot host was restarted, and adds a `disconnected` event. Notes, milestones, kit stores, agent kits, triggers, bindings, and routines are on disk and stay. The replacement counts the restart as a reconnect and continues the death count, the active kits, and each trigger's count of failures.
 
 If the server disconnects or kicks the body, the body records the event and reconnects, with the waits described in [Long-running bodies](#long-running-bodies). Mineflayer respawns the player after a death.
 
@@ -440,6 +620,8 @@ The bot host waits 100 ms after each inventory click. Mineflayer 4.39 sends clic
 A program runs inside the bot host process in a `node:vm` context. The VM context is not a sandbox. The bearer token is the only barrier, and anyone who has the token can run code as your user. Keep the API on loopback, and keep `.minebot/` private.
 
 A program can leave the context with `bot.constructor.constructor("return process")()`, and then load any module. The body does not try to prevent that. It audits instead: `src/audit.ts` scans the source of every program for `constructor.constructor` (also as `["constructor"]`), `process`, `getBuiltinModule`, `require(`, `import(`, `globalThis.constructor`, and `Function(`. A program that matches has the pattern names in `escapeAttempts` on its history line. The body writes that line before it runs a flagged program, so a program that kills the body is still recorded, and the benchmark verifier fails the trial. The agent is not told mid-run; the audit record is what counts. The scan is an audit, not a security boundary: code that builds the names at run time passes it, and a comment that contains `process` is flagged. Anything that relies on `--lock-kits`, `--no-agent-kits`, or `--no-milestones` for more than fair play needs a real boundary, such as a separate container for the agent, as in the benchmark.
+
+A routine is a real module in the bot host process, with the whole Node API: `process`, `fs`, and network access. The escape audit does not scan routines, and the history line of a call has an empty `escapeAttempts`. Start a body with `--no-routines` when the audit must see everything that the agent runs.
 
 ## Development
 

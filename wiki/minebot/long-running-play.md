@@ -28,6 +28,10 @@ Keep these notes up to date:
 
 Read your notes first when you start or when you lose track.
 
+<!-- routines -->
+Saved routines and their bindings persist too. After a reset, `minebot routines` shows what you built.
+<!-- /routines -->
+
 ## Status
 
 `minebot status` (or `await status()` in a program) shows deaths and reconnects since the body started.

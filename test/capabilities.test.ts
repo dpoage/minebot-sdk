@@ -17,7 +17,7 @@ const FORBIDDEN_WORDS: Record<Capability, RegExp> = {
   wiki: /\bwiki\b|\blessons?\b/i,
   lessons: /\blearned\b|add a lesson|wiki lesson|wiki_add_lesson|addLesson/i,
   milestones: /\bmilestones?\b|minebot milestones|body's milestones/i,
-  triggers: /\btriggers?\b|trigger_|--no-triggers/i,
+  triggers: /\btriggers?\b|trigger_|--no-triggers|\breflexes?\b/i,
   routines: /\broutines?\b|call_routine|bind_routine|--no-routines|\/bind\b|\/call\b|defineRoutine/i,
 };
 

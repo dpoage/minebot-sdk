@@ -23,6 +23,10 @@ minebot triggers disable eat          # off, but kept; "enable" turns it on, "rm
 
 In programs: `await triggers.add({ name: "eat", on: ["low_food"], run: "...program source...", cooldownMs: 10000 })`, `triggers.list()`, `triggers.enable(name)`, `triggers.disable(name)`, `triggers.remove(name)`. An MCP server started with `--tools full` also serves them as the tools `trigger_add`, `trigger_list`, `trigger_remove`, and `trigger_set_enabled`.
 
+<!-- routines -->
+A reflex is a trigger whose code is a saved routine: `minebot bind reflex <name> <routine> --on <types>` binds it, and the body calls the routine as `(ctx, { event })`. It has the fields and the rules of a trigger. See `minebot/routines`.
+<!-- /routines -->
+
 <!-- kits -->
 The program may call kit actions, for example `await kit.survival.eat()` instead of the code above.
 <!-- /kits -->
@@ -33,7 +37,7 @@ The program may call kit actions, for example `await kit.survival.eat()` instead
 | - | - |
 | `name` | 1-48 lowercase letters, digits, `.`, `_`, `-`. Saving a trigger with an existing name replaces it. |
 | `on` | Event types that fire it, such as `hurt`, `chat`, `night`, `low_food`, `low_health`, `hostile_near`. Any of them matches. Triggers cannot listen to `trigger_*` events. |
-| `run` | The program. It has the globals of a program plus `event`, which is `{ seq, type, data }`. |
+| `run` | The program. It has the globals of a program plus `event`, which is `{ seq, type, time, data }`. |
 | `when` | A JavaScript expression over `event` and `bot` that must be truthy, such as `event.data.health < 8`. It must finish within 100 ms. |
 | `from`, `match` | Filters for `chat` and `whisper` events, as in `minebot wait`. |
 | `cooldownMs` | Least time between two firings. Default 1000. |

@@ -40,13 +40,13 @@ export function usageFor(features: BodyFeatures | null, hasBody = HAS_BODY, oper
     ...(caps.routines
       ? [
           `  routines             List the saved routines (TypeScript modules the body runs by name) and what is bound to them. "routines save <file...>"`,
-          `                       saves each .ts or .js file under its file name, in the order given (list the modules a routine imports first, so its type`,
-          `                       check finds them), "routines source|versions <name>", "routines revert <name> <n>".`,
+          `                       saves each .ts or .js file under its file name without the extension (a routine imports another as ./<name>.ts; list the`,
+          `                       modules a routine imports first, so its type check finds them), "routines source|versions <name>", "routines revert <name> <n>".`,
           `  bind action <name> <routine>   Bind a name to a saved routine; "call" runs it.`,
           ...(caps.triggers
             ? [
-                `  bind reflex <name> <routine> --on <a,b>   Run a saved routine on its own when an event arrives (options --from, --match, --when,`,
-                `                       --cooldown, --timeout, --priority, --preempt).`,
+                `  bind reflex <name> <routine> --on <a,b>   Run a saved routine on its own when an event arrives, as (ctx, { event }); binding it again`,
+                `                       enables it (options --from, --match, --when, --cooldown, --timeout, --priority, --preempt).`,
               ]
             : []),
           `  unbind <name>        Remove a binding.`,
