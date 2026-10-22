@@ -18,7 +18,7 @@ const AVOIDED_FOODS = [
   "enchanted_golden_apple",
 ];
 
-export interface FoodOption {
+interface FoodOption {
   name: string;
   foodPoints: number;
   saturation: number;

@@ -4,7 +4,7 @@ import { defineRoutine, nameMatcher, NamePattern, type RoutineContext, z } from 
 export const description = "Count and list what the inventory holds, equip an item, and toss items out.";
 export const uses = [] as const;
 
-export function countItems(ctx: RoutineContext, pattern: NamePattern): number {
+function countItems(ctx: RoutineContext, pattern: NamePattern): number {
   const matches = nameMatcher(pattern);
   return ctx.bot.inventory
     .items()
@@ -12,7 +12,7 @@ export function countItems(ctx: RoutineContext, pattern: NamePattern): number {
     .reduce((n, i) => n + i.count, 0);
 }
 
-export function inventoryTotals(ctx: RoutineContext): Record<string, number> {
+function inventoryTotals(ctx: RoutineContext): Record<string, number> {
   const totals: Record<string, number> = {};
   for (const item of ctx.bot.inventory.items()) totals[item.name] = (totals[item.name] ?? 0) + item.count;
   return totals;

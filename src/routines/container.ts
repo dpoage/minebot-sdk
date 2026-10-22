@@ -12,7 +12,7 @@ const SETTLE_MS = 150;
 /** The blocks Mineflayer's openContainer accepts. */
 const CONTAINER_BLOCK = /^(?:chest|trapped_chest|ender_chest|barrel|hopper|dispenser|dropper|(?:[a-z_]+_)?shulker_box)$/;
 
-export interface ContainerContents {
+interface ContainerContents {
   /** The container block, e.g. "chest". */
   block: string;
   /** Totals by item name. */
@@ -56,7 +56,7 @@ function sides(chest: Chest): { container: (Item | null)[]; player: (Item | null
   return { container: chest.slots.slice(0, chest.inventoryStart), player: chest.slots.slice(chest.inventoryStart, chest.inventoryEnd) };
 }
 
-export async function listContainer(ctx: RoutineContext, at: Position): Promise<ContainerContents> {
+async function listContainer(ctx: RoutineContext, at: Position): Promise<ContainerContents> {
   const { block, chest } = await open(ctx, at);
   try {
     const { container } = sides(chest);

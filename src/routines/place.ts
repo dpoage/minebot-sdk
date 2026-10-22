@@ -17,7 +17,7 @@ const NEIGHBORS = [
  * Places `item` at `pos`, clearing a different solid block there first. Returns false when it
  * was already there. Needs a solid neighbor to place against.
  */
-export async function placeAt(ctx: RoutineContext, pos: Vec3, item: string): Promise<boolean> {
+async function placeAt(ctx: RoutineContext, pos: Vec3, item: string): Promise<boolean> {
   const { bot } = ctx;
   const name = item.replace(/^minecraft:/, "");
   const current = bot.blockAt(pos);

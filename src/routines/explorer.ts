@@ -18,7 +18,7 @@ const WAYPOINTS_KEY = "waypoints";
 /** Blocks too common to be worth reporting in a scan. */
 const COMMON = /^(air|cave_air|void_air|stone|dirt|grass_block|short_grass|tall_grass|deepslate|tuff|granite|diorite|andesite|sand|sandstone|gravel|bedrock|netherrack|.*_leaves|leaf_litter|snow|clay)$/;
 
-export interface Waypoint {
+interface Waypoint {
   x: number;
   y: number;
   z: number;
@@ -80,7 +80,7 @@ function savedPlaces(ctx: RoutineContext): Record<string, Place> {
 
 const cellOf = (p: Vec3) => `${Math.floor(p.x / CELL)},${Math.floor(p.z / CELL)}`;
 
-export interface ScanResult {
+interface ScanResult {
   position: Vec3;
   biome: string;
   /** Uncommon blocks: count and the nearest position of each, most numerous first. */
@@ -96,7 +96,7 @@ const ScanResultSchema = z.object({
 });
 
 /** Summarizes uncommon blocks and entities within `radius` (vertical range is half the radius). */
-export function scanArea(ctx: RoutineContext, radius = 16): ScanResult {
+function scanArea(ctx: RoutineContext, radius = 16): ScanResult {
   const { bot } = ctx;
   const here = bot.entity.position.floored();
   const found = new Map<string, { count: number; nearest: Vec3; distance: number }>();
@@ -142,7 +142,7 @@ export function scanArea(ctx: RoutineContext, radius = 16): ScanResult {
   };
 }
 
-export interface ExploreResult {
+interface ExploreResult {
   from: Vec3;
   to: Vec3;
   reached: boolean;
@@ -153,7 +153,7 @@ export interface ExploreResult {
 const ExploreResultSchema = z.object({ from: Point, to: Point, reached: z.boolean(), cellsVisited: z.number() });
 
 /** Walks about `distance` blocks toward the direction whose destination cell is least explored. */
-export async function exploreToward(ctx: RoutineContext, distance = 48, timeoutMs = 90_000): Promise<ExploreResult> {
+async function exploreToward(ctx: RoutineContext, distance = 48, timeoutMs = 90_000): Promise<ExploreResult> {
   const { bot } = ctx;
   const from = bot.entity.position.floored();
   const cells = markVisited(ctx, from);
@@ -357,7 +357,7 @@ async function swimUp(ctx: RoutineContext, here: Vec3): Promise<void> {
 
 const inWater = (ctx: RoutineContext, p: Vec3) => ctx.bot.blockAt(p)?.name === "water";
 
-export interface SurfaceResult {
+interface SurfaceResult {
   surfaced: boolean;
   from: Vec3;
   to: Vec3;
@@ -375,7 +375,7 @@ const SurfaceResultSchema = z.object({ surfaced: z.boolean(), from: Point, to: P
  * it swims to the nearest dry land. Needs no blocks in the inventory. Without a pickaxe, each
  * stone block takes about 7 seconds.
  */
-export async function climbToSurface(ctx: RoutineContext, maxSteps = 120): Promise<SurfaceResult> {
+async function climbToSurface(ctx: RoutineContext, maxSteps = 120): Promise<SurfaceResult> {
   const { bot } = ctx;
   const from = bot.entity.position.floored();
   let side = 0;

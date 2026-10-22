@@ -74,7 +74,7 @@ function visiblePoint(ctx: RoutineContext, pos: Vec3): Vec3 | null {
 }
 
 /** Scoops the `fluid` source at `at`, or the nearest one within `radius`, with an empty bucket. Returns the bucket it filled and the source's position. */
-export async function fillBucket(ctx: RoutineContext, fluid: (typeof FLUIDS)[number], at: Vec3 | undefined, radius: number) {
+async function fillBucket(ctx: RoutineContext, fluid: (typeof FLUIDS)[number], at: Vec3 | undefined, radius: number) {
   const { bot } = ctx;
   const empty = bot.inventory.items().find((i) => i.name === "bucket");
   if (!empty) throw new Error("no empty bucket in inventory");
@@ -122,7 +122,7 @@ export async function fillBucket(ctx: RoutineContext, fluid: (typeof FLUIDS)[num
 }
 
 /** Pours a full bucket at `at`. Returns false when that fluid source is already there. */
-export async function emptyBucket(ctx: RoutineContext, at: Vec3, fluid: (typeof FLUIDS)[number] | undefined): Promise<boolean> {
+async function emptyBucket(ctx: RoutineContext, at: Vec3, fluid: (typeof FLUIDS)[number] | undefined): Promise<boolean> {
   const { bot } = ctx;
   const name = fluid ? `${fluid}_bucket` : ["water_bucket", "lava_bucket"].find((n) => countOf(ctx, n) > 0);
   if (!name || countOf(ctx, name) === 0) throw new Error(`no ${fluid ? `${fluid}_bucket` : "water_bucket or lava_bucket"} in inventory`);

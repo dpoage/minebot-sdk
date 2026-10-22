@@ -11,13 +11,13 @@ export const uses = ["move", "sense", "dig", "place", "inventory"] as const;
  * A structure to build. `layers` go bottom to top. In each layer, rows run along +z and
  * characters along +x. `.` and space leave a position untouched.
  */
-export const Blueprint = z.object({
+const Blueprint = z.object({
   palette: z.record(z.string().length(1), z.string().min(1)),
   layers: z.array(z.union([z.string(), z.array(z.string())])).min(1),
 });
-export type Blueprint = z.infer<typeof Blueprint>;
+type Blueprint = z.infer<typeof Blueprint>;
 
-export interface BlueprintBlock {
+interface BlueprintBlock {
   dx: number;
   dy: number;
   dz: number;
@@ -61,13 +61,13 @@ export function blueprintMaterials(blueprint: Blueprint): Record<string, number>
   return totals;
 }
 
-export interface BuildResult {
+interface BuildResult {
   placed: number;
   alreadyCorrect: number;
   failed: { position: Vec3; block: string; reason: string }[];
 }
 
-export async function buildBlueprint(ctx: RoutineContext, blueprint: Blueprint, origin: Vec3, partial = false): Promise<BuildResult> {
+async function buildBlueprint(ctx: RoutineContext, blueprint: Blueprint, origin: Vec3, partial = false): Promise<BuildResult> {
   const { bot } = ctx;
   const targets = blueprintBlocks(blueprint).map((b) => ({ position: origin.offset(b.dx, b.dy, b.dz), block: b.block }));
   const todo = targets.filter((t) => bot.blockAt(t.position)?.name !== t.block);
@@ -94,13 +94,13 @@ export async function buildBlueprint(ctx: RoutineContext, blueprint: Blueprint, 
   return result;
 }
 
-export interface BuildCheck {
+interface BuildCheck {
   correct: number;
   total: number;
   mismatches: { position: Vec3; expected: string; actual: string }[];
 }
 
-export function checkBuild(ctx: RoutineContext, blueprint: Blueprint, origin: Vec3): BuildCheck {
+function checkBuild(ctx: RoutineContext, blueprint: Blueprint, origin: Vec3): BuildCheck {
   const blocks = blueprintBlocks(blueprint);
   const mismatches: BuildCheck["mismatches"] = [];
   for (const b of blocks) {

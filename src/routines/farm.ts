@@ -144,7 +144,7 @@ function ageOf(block: Block): number {
 }
 
 /** True when water lies within 4 blocks horizontally of the soil at `pos`, on its level or one above: the range that keeps farmland wet. */
-export function isHydrated(ctx: RoutineContext, pos: Vec3): boolean {
+function isHydrated(ctx: RoutineContext, pos: Vec3): boolean {
   for (let dx = -4; dx <= 4; dx++) {
     for (let dz = -4; dz <= 4; dz++) {
       for (let dy = 0; dy <= 1; dy++) {
@@ -189,7 +189,7 @@ const CLEARABLE_PLANTS: Record<string, true> = {
 };
 
 /** Hoes dirt, grass, or a dirt path at `pos` into farmland. Returns false when it already is farmland. */
-export async function tillAt(ctx: RoutineContext, pos: Vec3) {
+async function tillAt(ctx: RoutineContext, pos: Vec3) {
   const { bot } = ctx;
   const soil = bot.blockAt(pos);
   if (!soil) throw new Error(`${pos} is not loaded`);
@@ -215,7 +215,7 @@ export async function tillAt(ctx: RoutineContext, pos: Vec3) {
 }
 
 /** Plants `seed` on the soil at `at`, or in the empty block `at` above soil. Returns false when that crop already grows there. */
-export async function plantAt(ctx: RoutineContext, at: Vec3, seed: string): Promise<boolean> {
+async function plantAt(ctx: RoutineContext, at: Vec3, seed: string): Promise<boolean> {
   const { bot } = ctx;
   const item = seedItem(seed);
   if (!item) throw new Error(`cannot plant "${seed}": use one of ${Object.keys(SEED_CROPS).join(", ")}`);
@@ -240,7 +240,7 @@ export async function plantAt(ctx: RoutineContext, at: Vec3, seed: string): Prom
 }
 
 /** Digs every ripe crop within `radius`, collects the drops, and replants where it can. */
-export async function harvestCrops(ctx: RoutineContext, radius: number, crops: NamePattern | undefined, replant: boolean, timeoutMs: number) {
+async function harvestCrops(ctx: RoutineContext, radius: number, crops: NamePattern | undefined, replant: boolean, timeoutMs: number) {
   const { bot } = ctx;
   const matches = crops === undefined ? () => true : nameMatcher(crops);
   const wanted = Object.entries(HARVESTABLE).filter(([block, info]) => matches(block) || matches(info.seed));
@@ -306,7 +306,7 @@ export async function harvestCrops(ctx: RoutineContext, radius: number, crops: N
 }
 
 /** Feeds two adult `animal`s and waits for the baby. */
-export async function breedAnimals(ctx: RoutineContext, animal: string, food: string | undefined, radius: number, timeoutMs: number) {
+async function breedAnimals(ctx: RoutineContext, animal: string, food: string | undefined, radius: number, timeoutMs: number) {
   const { bot } = ctx;
   const foods = food ? [food.replace(/^minecraft:/, "")] : breedingFoods(animal);
   if (foods.length === 0) throw new Error(`do not know what ${animal} eats to breed: pass \`food\``);

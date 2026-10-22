@@ -66,12 +66,31 @@ describe("built-in routine modules against the kits they replace", () => {
   }
 });
 
-/** The module specifiers a source file imports or re-exports at the top level of a line. */
+/** Each top-level `import`/`export ... from` statement, matched whole even when it spans lines: its clause and module specifier. */
+function fromStatements(source: string): { clause: string; specifier: string }[] {
+  return [...source.matchAll(/^(?:import|export)\s+([^;"'`]*?)\s*\bfrom\s*["']([^"']+)["']/gm)].map((m) => ({ clause: m[1]!, specifier: m[2]! }));
+}
+
+/** The module specifiers a source file imports or re-exports at the top level, multi-line statements included. */
 function specifiers(source: string): string[] {
-  return [...source.matchAll(/^(?:import|export)\b.* from ["']([^"']+)["'];$|^import ["']([^"']+)["'];$/gm)].map((m) => m[1] ?? m[2]!);
+  return [...fromStatements(source).map((s) => s.specifier), ...[...source.matchAll(/^import\s*["']([^"']+)["']/gm)].map((m) => m[1]!)];
+}
+
+/** The names an import clause takes from its module: `{ a, type B as C }` gives a and B, a default import gives "default", a namespace import none. */
+function importedNames(clause: string): string[] {
+  const body = clause.replace(/^type\s+/, "");
+  const named = (/\{([^}]*)\}/.exec(body)?.[1] ?? "").split(",").map((part) => part.trim().replace(/^type\s+/, "").split(/\s+as\s+/)[0]!);
+  const rest = body.replace(/\{[^}]*\}/, "").replace(/\*\s+as\s+\w+/, "").replace(/,/g, "").trim();
+  return [...(rest === "" ? [] : ["default"]), ...named.filter((name) => name !== "")];
 }
 
 describe("built-in routine modules compose by import", () => {
+  it("reads import statements that span lines, and the names they take", () => {
+    const source = 'import type { A } from "x";\nimport {\n  till,\n  type B as C,\n} from "minebot-sdk/routines/farm";\nimport "y";\nimport D, * as E from "z";\n';
+    assert.deepEqual(specifiers(source), ["x", "minebot-sdk/routines/farm", "z", "y"]);
+    assert.deepEqual(fromStatements(source).map((s) => importedNames(s.clause)), [["A"], ["till", "B"], ["default"]]);
+  });
+
   for (const kit of BUILTIN_KITS) {
     it(`${kit.name}: imports only minebot-sdk/routine and built-in modules it declares in uses`, () => {
       const source = readFileSync(path.join(ROUTINE_DIR, `${kit.name}.ts`), "utf8");
@@ -85,6 +104,36 @@ describe("built-in routine modules compose by import", () => {
       const kitCalls = calls(readFileSync(path.join(KIT_DIR, `${kit.name}.ts`), "utf8"), /ctx\.kits\.(\w+)\.(\w+)\(/g);
       const routineCalls = calls(readFileSync(path.join(ROUTINE_DIR, `${kit.name}.ts`), "utf8"), /\b(move|sense|dig|place|inventory|craft|items|furnace|container|survival|combat|farm|bucket|gatherer|crafter|builder|explorer|social)\.(\w+)\(ctx\b/g);
       assert.deepEqual(routineCalls, kitCalls);
+    });
+  }
+});
+
+describe("built-in routine modules export only their interface", () => {
+  // The helpers a module keeps exported: the names some test file imports from it by name, across lines.
+  const testImports = new Map<string, Set<string>>();
+  const TEST_DIR = path.join(PACKAGE_ROOT, "test");
+  for (const file of readdirSync(TEST_DIR, { recursive: true, encoding: "utf8" }).filter((f) => f.endsWith(".ts"))) {
+    for (const { clause, specifier } of fromStatements(readFileSync(path.join(TEST_DIR, file), "utf8"))) {
+      const name = /(?:^minebot-sdk\/routines\/|\/src\/routines\/)(\w+)(?:\.ts)?$/.exec(specifier)?.[1];
+      if (name === undefined || name === "index") continue;
+      if (!testImports.has(name)) testImports.set(name, new Set());
+      for (const imported of importedNames(clause)) testImports.get(name)!.add(imported);
+    }
+  }
+
+  for (const entry of BUILTIN_MODULES) {
+    it(`${entry.name}: exports description, uses, its routines, and the helpers tests import, as values and as types`, async () => {
+      const allowed = [...new Set(["description", "uses", ...Object.keys(entry.routines), ...(testImports.get(entry.name) ?? [])])].sort();
+      // Type exports leave no trace at run time, so the source's export statements are read too; a form this does not read fails.
+      const values = new Set<string>();
+      const types = new Set<string>();
+      for (const line of readFileSync(entry.file, "utf8").split("\n").filter((l) => /^\s*export\b/.test(l))) {
+        const m = /^export\s+(?:async\s+)?(const|let|var|function\*?|class|enum|type|interface)\s+(\w+)/.exec(line);
+        assert.ok(m, `${entry.name} exports in a form this check does not read: ${line}`);
+        (m[1] === "type" || m[1] === "interface" ? types : values).add(m[2]!);
+      }
+      assert.deepEqual([...new Set([...values, ...types])].sort(), allowed, `${entry.name}: exports in the source`);
+      assert.deepEqual(Object.keys(await load(entry.name)).sort(), allowed.filter((name) => values.has(name)), `${entry.name}: exports at run time`);
     });
   }
 });

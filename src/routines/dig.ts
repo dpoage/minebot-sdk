@@ -4,7 +4,7 @@ import { defineRoutine, Position, type RoutineContext, toVec3, Vec3, within, z }
 export const description = "Dig one block with the right tool; falling blocks that refill the hole are dug too.";
 export const uses = [] as const;
 
-export interface DigResult {
+interface DigResult {
   /** The last block that was dug, or null when the position was already clear. */
   block: string | null;
 }
@@ -14,7 +14,7 @@ export interface DigResult {
  * position. Equips the best harvest tool and fails with the tools the block needs when the
  * inventory has none of them.
  */
-export async function digAt(ctx: RoutineContext, pos: Vec3): Promise<DigResult> {
+async function digAt(ctx: RoutineContext, pos: Vec3): Promise<DigResult> {
   const { bot } = ctx;
   let dug: string | null = null;
   for (let attempt = 0; attempt < 8; attempt++) {

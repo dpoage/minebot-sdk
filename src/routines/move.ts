@@ -33,7 +33,7 @@ async function pathTo(ctx: RoutineContext, goal: InstanceType<typeof goals.Goal>
 }
 
 /** Walks within `range` blocks of `target` and returns where the player then stands. */
-export async function walkTo(ctx: RoutineContext, target: Vec3, range: number, timeoutMs: number): Promise<Vec3> {
+async function walkTo(ctx: RoutineContext, target: Vec3, range: number, timeoutMs: number): Promise<Vec3> {
   await pathTo(ctx, new goals.GoalNear(target.x, target.y, target.z, range), timeoutMs);
   return ctx.bot.entity.position.floored();
 }

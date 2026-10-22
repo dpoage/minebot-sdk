@@ -5,7 +5,7 @@ export const description = "Find blocks by name pattern and face a position, wit
 export const uses = [] as const;
 
 /** Block positions matching `pattern`, nearest first. */
-export function findBlocks(ctx: RoutineContext, pattern: NamePattern, radius = 32, count = 16) {
+function findBlocks(ctx: RoutineContext, pattern: NamePattern, radius = 32, count = 16) {
   const matches = nameMatcher(pattern);
   const ids = Object.values(ctx.bot.registry.blocksByName)
     .filter((b) => matches(b.name))

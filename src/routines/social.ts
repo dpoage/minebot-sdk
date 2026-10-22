@@ -13,13 +13,13 @@ function playerEntity(ctx: RoutineContext, username: string): Entity {
   return entity;
 }
 
-export interface ChatMessage {
+interface ChatMessage {
   from: string;
   message: string;
 }
 
 /** Resolves with the next chat message from another player that matches the filters. */
-export async function awaitChat(
+async function awaitChat(
   ctx: RoutineContext,
   options: { from?: string; match?: string; timeoutMs?: number } = {},
 ): Promise<ChatMessage> {

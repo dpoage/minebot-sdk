@@ -75,7 +75,7 @@ function nearby(ctx: RoutineContext, accept: (e: Entity) => boolean, radius: num
 }
 
 /** An entity by id, or the nearest one whose name (or player username) matches `target`. */
-export function findEntity(ctx: RoutineContext, target: number | string): Entity | undefined {
+function findEntity(ctx: RoutineContext, target: number | string): Entity | undefined {
   if (typeof target === "number") return ctx.bot.entities[target];
   const matches = nameMatcher(target);
   return nearby(ctx, (e) => matches(e.name ?? "") || matches(e.username ?? ""), Infinity)[0];
@@ -143,7 +143,7 @@ async function engage(ctx: RoutineContext, fight: Fight, target: Entity, deadlin
 }
 
 /** Fights hostiles (or the creatures matching `targets`) within `radius` of the player, nearest first, until none are left or `timeoutMs` passes. */
-export async function fightAll(ctx: RoutineContext, radius: number, targets: NamePattern | undefined, timeoutMs: number) {
+async function fightAll(ctx: RoutineContext, radius: number, targets: NamePattern | undefined, timeoutMs: number) {
   const matches = targets === undefined ? null : nameMatcher(targets);
   const wanted = (e: Entity) => (matches ? matches(e.name ?? "") : isHostile(e));
   const deadline = Date.now() + timeoutMs;
@@ -170,7 +170,7 @@ export async function fightAll(ctx: RoutineContext, radius: number, targets: Nam
 }
 
 /** Walks until the player is more than `distance` blocks from `from`. Returns where it stopped and how far that is from `from`. */
-export async function retreatFrom(ctx: RoutineContext, from: Vec3, distance: number, timeoutMs: number) {
+async function retreatFrom(ctx: RoutineContext, from: Vec3, distance: number, timeoutMs: number) {
   const { bot } = ctx;
   const goal = new goals.GoalInvert(new goals.GoalNear(from.x, from.y, from.z, distance));
   try {

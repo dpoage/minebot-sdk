@@ -130,7 +130,7 @@ async function smeltMissing(ctx: RoutineContext, name: string, missing: number, 
  * inventory holds when it is a furnace output, and crafting missing intermediate items
  * recursively from what the inventory holds. Does not gather raw materials.
  */
-export async function makeItem(ctx: RoutineContext, name: string, count = 1, depth = 0): Promise<number> {
+async function makeItem(ctx: RoutineContext, name: string, count = 1, depth = 0): Promise<number> {
   const { bot } = ctx;
   const have = await countOf(ctx, name);
   if (have >= count) return have;

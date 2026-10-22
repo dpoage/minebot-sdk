@@ -11,7 +11,7 @@ function itemId(ctx: RoutineContext, name: string): number {
 }
 
 /** One way to craft an item, as agents see it. */
-export interface RecipeSummary {
+interface RecipeSummary {
   makes: number;
   requiresTable: boolean;
   ingredients: Record<string, number>;
@@ -26,7 +26,7 @@ function summarize(ctx: RoutineContext, recipe: { delta: { id: number; count: nu
 }
 
 /** Positions of dropped items within `radius`, nearest first. */
-export function droppedItems(ctx: RoutineContext, radius: number) {
+function droppedItems(ctx: RoutineContext, radius: number) {
   return Object.values(ctx.bot.entities)
     .filter((e) => e.name === "item" && e.position.distanceTo(ctx.bot.entity.position) < radius)
     .sort((a, b) => a.position.distanceTo(ctx.bot.entity.position) - b.position.distanceTo(ctx.bot.entity.position))

@@ -139,7 +139,7 @@ async function takeOutput(furnace: FurnaceWindow): Promise<{ name: string; count
   return taken;
 }
 
-export interface SmeltResult {
+interface SmeltResult {
   /** The item smelted. */
   input: string;
   /** What it became. */
@@ -156,7 +156,7 @@ export interface SmeltResult {
  * hold one kind of item each, so a furnace busy with another input is refused, and input
  * beyond one stack goes in as the earlier batch finishes.
  */
-export async function smeltItems(ctx: RoutineContext, item: string, count: number, fuel: string | undefined, at: Position | undefined): Promise<SmeltResult> {
+async function smeltItems(ctx: RoutineContext, item: string, count: number, fuel: string | undefined, at: Position | undefined): Promise<SmeltResult> {
   const { bot } = ctx;
   const input = item.replace(/^minecraft:/, "");
   const def = bot.registry.itemsByName[input];
@@ -209,7 +209,7 @@ export async function smeltItems(ctx: RoutineContext, item: string, count: numbe
 }
 
 /** Takes the output of the furnace at `at` (or within reach) without adding anything. */
-export async function takeFurnaceOutput(ctx: RoutineContext, at: Position | undefined) {
+async function takeFurnaceOutput(ctx: RoutineContext, at: Position | undefined) {
   const block = await locate(ctx, at);
   const furnace = await open(ctx, block);
   try {

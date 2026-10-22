@@ -14,7 +14,7 @@ function itemId(ctx: RoutineContext, name: string): number {
 }
 
 /** A crafting table within reach, or null when none is nearby. */
-export function nearbyTable(ctx: RoutineContext): Block | null {
+function nearbyTable(ctx: RoutineContext): Block | null {
   const tableId = ctx.bot.registry.blocksByName.crafting_table!.id;
   return ctx.bot.findBlock({ matching: tableId, maxDistance: TABLE_SEARCH_RADIUS });
 }
@@ -23,7 +23,7 @@ export function nearbyTable(ctx: RoutineContext): Block | null {
  * Crafts at least `count` more of `name` from what the inventory holds, using a crafting table
  * within reach when the recipe needs one.
  */
-export async function craftItem(ctx: RoutineContext, name: string, count = 1): Promise<number> {
+async function craftItem(ctx: RoutineContext, name: string, count = 1): Promise<number> {
   const { bot } = ctx;
   const id = itemId(ctx, name);
   let recipe = bot.recipesFor(id, null, count, null)[0];

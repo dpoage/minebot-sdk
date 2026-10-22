@@ -10,7 +10,7 @@ import * as items from "minebot-sdk/routines/items";
 export const description = "Collect resources: walk to matching blocks, dig them with the right tool, pick up the drops.";
 export const uses = ["move", "sense", "dig", "inventory", "items"] as const;
 
-export interface GatherResult {
+interface GatherResult {
   dug: number;
   /** Inventory change while gathering, e.g. { oak_log: 4 }. */
   gained: Record<string, number>;
@@ -20,7 +20,7 @@ export interface GatherResult {
 const MAX_FAILURES = 12;
 
 /** Walks over item drops within `radius`. Returns how many drops it tried to reach. */
-export async function pickUpDrops(ctx: RoutineContext, radius = 8): Promise<number> {
+async function pickUpDrops(ctx: RoutineContext, radius = 8): Promise<number> {
   await ctx.sleep(400);
   const drops = await items.drops(ctx, { radius });
   for (const p of drops) {
@@ -38,7 +38,7 @@ export async function pickUpDrops(ctx: RoutineContext, radius = 8): Promise<numb
  * Digs `count` blocks matching `pattern`, nearest first, preferring blocks near the bot's height,
  * and picks up the drops. Unreachable blocks are skipped; it gives up after `MAX_FAILURES` skips.
  */
-export async function gatherBlocks(ctx: RoutineContext, pattern: NamePattern, count: number, radius = 48): Promise<GatherResult> {
+async function gatherBlocks(ctx: RoutineContext, pattern: NamePattern, count: number, radius = 48): Promise<GatherResult> {
   const { bot } = ctx;
   const before = await inventory.list(ctx, {});
   const skipped = new Set<string>();
