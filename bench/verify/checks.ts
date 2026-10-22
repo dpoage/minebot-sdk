@@ -29,7 +29,7 @@ const WorldSnapshot = z.object({
 });
 
 /**
- * What the snapshot read from the server: `/var/log/grading/world.json`. In a task with several steps the body keeps the grading
+ * What the snapshot read from the server: `/var/log/grading/world.json`. In a task with several steps the grader keeps the grading
  * directory between steps, so each snapshot carries the one before it (`previous`) and a check can compare a step with the step before.
  */
 export const WorldFacts = WorldSnapshot.extend({ previous: WorldSnapshot.nullable().default(null) });

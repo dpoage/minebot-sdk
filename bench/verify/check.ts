@@ -1,7 +1,7 @@
 // Verifier entrypoint for benchmark tasks: `node /opt/verifier/bench/verify/check.ts /tests/milestones.json`.
-// Runs in a container of its own, built from the verifier image plus the task's tests/ directory, after
-// the agent's container is stopped. It reads two artifacts that Harbor copies in from the sidecars:
-//   /var/log/grading/stats.json       the player's statistics, taken by the body after an RCON save (bench/verify/snapshot.ts)
+// Runs in a container of its own, built from the verifier image plus the task's tests/ directory, apart from the agent's container.
+// It reads three files that Harbor copies in from the sidecars:
+//   /var/log/grading/stats.json       the player's statistics, taken by the grader after an RCON save (bench/verify/snapshot.ts)
 //   /var/log/grading/world.json       what the server's files and RCON show of the world: containers, the clock, the player's position
 //   /var/log/minebot/programs.jsonl   every program the agent ran
 // It grades the statistics and the world facts, fails the trial when a program tried to escape the program VM, and writes Harbor's reward files.

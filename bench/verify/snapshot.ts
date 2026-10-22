@@ -1,6 +1,6 @@
 // Takes the grading snapshot of a trial: `node /opt/minebot/bench/verify/snapshot.ts <player>`.
-// Harbor runs it in the grader sidecar's container (bench/gen-tasks.ts) after the agent's container has stopped (and, in a task with
-// several steps, after each step). It makes the server save its world over RCON, then writes two files to /var/log/grading, where
+// Harbor runs it in the grader sidecar's container (bench/gen-tasks.ts) after each agent session ends (a task with several steps
+// has one session per step). It makes the server save its world over RCON, then writes two files to /var/log/grading, where
 // Harbor collects them for the verifier:
 //   stats.json  the player's statistics file
 //   world.json  the overworld clock, the player's position, and the containers in the saved chunks (see checks.ts),
