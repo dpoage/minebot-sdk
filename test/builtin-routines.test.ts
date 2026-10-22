@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { describe, it } from "node:test";
+import { after, describe, it } from "node:test";
 import type { RoutineContext } from "minebot-sdk/routine";
 import { createHarness } from "minebot-sdk/testing";
 import { BodyState } from "../src/host/state.ts";
@@ -25,7 +25,15 @@ interface Frozen {
 }
 const KIT = JSON.parse(readFileSync(path.join(import.meta.dirname, "fixtures", "explorer", "kit-5218f99.json"), "utf8")) as Frozen;
 
-const scratch = () => mkdtempSync(path.join(tmpdir(), "minebot-explorer-"));
+const scratchDirs: string[] = [];
+const scratch = () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "minebot-explorer-"));
+  scratchDirs.push(dir);
+  return dir;
+};
+after(() => {
+  for (const dir of scratchDirs) rmSync(dir, { recursive: true, force: true });
+});
 const storeFile = (dir: string) => path.join(dir, "stores", "explorer.json");
 const parsed = (dir: string): Record<string, unknown> => JSON.parse(readFileSync(storeFile(dir), "utf8"));
 const json = (value: unknown): unknown => JSON.parse(JSON.stringify(value));
