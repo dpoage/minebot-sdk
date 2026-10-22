@@ -104,7 +104,8 @@ describe("reference text", () => {
     const docs = new Builtins({ stats: memoryStats() }).docs();
     for (const [module, name, routine] of ROUTINES) {
       const { keys, returns } = declared(routine);
-      const shape = `${module}.${name}(ctx, { ${keys.map((key) => `${key.name}${key.optional ? "?" : ""}`).join(", ")} })`;
+      // A routine that takes no arguments is called with the context alone.
+      const shape = keys.length === 0 ? `${module}.${name}(ctx)` : `${module}.${name}(ctx, { ${keys.map((key) => `${key.name}${key.optional ? "?" : ""}`).join(", ")} })`;
       const text = section(docs, shape);
       const lines = text.split("\n");
       assert.equal(lines[1], metaOf(routine)!.description, `${shape} description`);
