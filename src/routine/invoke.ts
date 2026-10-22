@@ -12,9 +12,10 @@ function describeExports(module: unknown): string {
 
 /**
  * Calls routine `name`, the default export of `module`, with `ctx` and `args`, and resolves with its
- * awaited result. A routine declared with `defineRoutine` has its `args` parsed first (a mismatch
+ * awaited result. Absent arguments (`undefined`) are `{}`, so a call without arguments gets the
+ * schema's defaults. A routine declared with `defineRoutine` has its `args` parsed first (a mismatch
  * rejects with the schema, before the routine runs) and its result checked against `returns`
- * (the parsed value is the result); a plain function is called with `args` as given.
+ * (the parsed value is the result); a plain function is called with the arguments unparsed.
  * Rejects when the module's default export is not a function.
  */
 export async function invokeRoutine(module: unknown, name: string, ctx: RoutineContext, args: unknown): Promise<unknown> {
@@ -23,9 +24,9 @@ export async function invokeRoutine(module: unknown, name: string, ctx: RoutineC
     throw new Error(`routine "${name}" must default-export a function (ctx, args) => result; ${describeExports(module)}`);
   }
   const meta = metaOf(routine);
-  let input = args;
+  let input: unknown = args === undefined ? {} : args;
   if (meta?.args) {
-    const parsed = meta.args.safeParse(args);
+    const parsed = meta.args.safeParse(input);
     if (!parsed.success) {
       throw new Error(`routine "${name}" arguments: ${z.prettifyError(parsed.error)}\nargs schema: ${JSON.stringify(z.toJSONSchema(meta.args, { io: "input", unrepresentable: "any" }))}`);
     }

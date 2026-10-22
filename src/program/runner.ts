@@ -235,9 +235,7 @@ class LogBuffer {
 
   append(args: unknown[]): void {
     if (this.#truncated) return;
-    const line = args
-      .map((a) => (typeof a === "string" ? a : inspect(a, { depth: 3, breakLength: 120 })))
-      .join(" ");
+    const line = formatLogLine(args);
     const size = Buffer.byteLength(line) + 1;
     if (this.#bytes + size > this.#max) {
       this.#truncated = true;
@@ -251,6 +249,11 @@ class LogBuffer {
   toString(): string {
     return this.#lines.join("\n");
   }
+}
+
+/** One log line from the arguments of one `log` call: strings as they are, other values as `util.inspect` shows them. */
+export function formatLogLine(args: readonly unknown[]): string {
+  return args.map((a) => (typeof a === "string" ? a : inspect(a, { depth: 3, breakLength: 120 }))).join(" ");
 }
 
 function toWire(value: unknown): unknown {

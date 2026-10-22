@@ -10,13 +10,14 @@ import type { z } from "zod";
 import { BUILTIN_KITS } from "../kit/index.ts";
 import { type Kit, type KitAction, KitHost } from "../kit/kit.ts";
 import type { KitRegistry } from "../kit/registry.ts";
+import { Notes } from "../notes.ts";
+import { formatLogLine } from "../program/runner.ts";
 import type { ProgramScope } from "../program/scope.ts";
 import { JsonStore } from "../store.ts";
 import type { RoutineContext } from "../routine/context.ts";
 import { invokeRoutine } from "../routine/invoke.ts";
 import type { Routine } from "../routine/public.ts";
 import { createFakeBot, type EntitySpec, type EquipmentSlot } from "./bot.ts";
-import { memoryNotes } from "./notes.ts";
 import { UnsupportedApiError } from "./strict.ts";
 import { type At, type BlockSpec, type Ground, vec } from "./world.ts";
 
@@ -82,16 +83,23 @@ export interface KitHarness {
   call<R = unknown>(path: string, args?: unknown): Promise<R>;
   /**
    * Runs a routine through the same `invokeRoutine` the body calls, with this harness's bot, logs,
-   * clock, abort, kits, and notes. `routine` is a `defineRoutine` value, a plain function
+   * clock, kits, and notes. `routine` is a `defineRoutine` value, a plain function
    * `(ctx, args) => result`, or a module namespace whose default export is one (`await import("./mine.ts")`).
    * Arguments and result are validated as in the body, with the same messages; the routine is
    * named "under test" in them. `ctx.status` and `ctx.wiki` throw `UnsupportedApiError`.
+   *
+   * Each call is one run, as in the body: its own `ctx`, whose `signal` `abort` stops and which is
+   * aborted with `finished` once the call settles (a later `ctx.sleep` rejects), and whose `ctx.on`
+   * handlers hear events only until then. Kit actions the routine calls run with that scope.
    */
   run<F extends RoutineFunction>(routine: F, args?: NoInfer<RunArgs<F>>): Promise<RunResult<F>>;
   run<M extends { readonly default: RoutineFunction }>(routine: M, args?: NoInfer<RunArgs<M["default"]>>): Promise<RunResult<M["default"]>>;
   /** Every action call so far, in order. */
   readonly calls: readonly RecordedCall[];
-  /** What kits passed to `ctx.log`. */
+  /**
+   * What kits and routines passed to `ctx.log`. A routine run's lines (its kit calls' included) read
+   * as the body's run log writes them, non-strings through `util.inspect`; lines from `call` and `kit` join `String`s.
+   */
   readonly logs: readonly string[];
   /** What the bot said with `bot.chat`. */
   readonly chat: readonly string[];
@@ -115,7 +123,7 @@ export interface KitHarness {
   readonly entities: readonly Entity[];
   /** Passes game ticks (20 per second): the clock moves and furnaces cook. `ctx.sleep(ms)` passes `ms / 50`. */
   advance(ticks: number): void;
-  /** Aborts the running program's signal, as stop and timeout do. */
+  /** Aborts the runs in progress, as stop and timeout do; with none in progress, the signal `call` and `kit` run actions with. */
   abort(reason?: unknown): void;
   /** The furnace at a position: what it holds and how far it has cooked. */
   furnaceAt(at: At): { input: { name: string; count: number } | null; fuel: { name: string; count: number } | null; output: { name: string; count: number } | null } | undefined;
@@ -189,30 +197,38 @@ export function createKitHarness(options: KitHarnessOptions = {}): KitHarness {
     },
     ...(options.active && { active: options.active }),
   });
-  // What a kit and a routine share: one log, one clock, one abort, one subscription path.
+  // The clock's sleep for a scope that `signal` aborts. It passes the clock, then yields a macrotask: polling
+  // loops (`while (!ready) await ctx.sleep(ms)`) must let timers fire, or `within`, node:test timeouts, and a timed `abort()` could never run.
+  const sleepUntil =
+    (signal: AbortSignal) =>
+    async (ms: number): Promise<void> => {
+      signal.throwIfAborted();
+      handle.advance(Math.ceil(ms / 50));
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      signal.throwIfAborted();
+    };
+  // What `call` and `kit` run actions with: the harness's log, clock, abort, and the bot's events.
   const scope: ProgramScope = {
     log: (...args) => {
       logs.push(args.map(String).join(" "));
     },
-    // Passes the clock, then yields a macrotask: polling loops (`while (!ready) await ctx.sleep(ms)`)
-    // must let timers fire, or `within`, node:test timeouts, and a timed `abort()` could never run.
-    sleep: async (ms) => {
-      controller.signal.throwIfAborted();
-      handle.advance(Math.ceil(ms / 50));
-      await new Promise<void>((resolve) => setImmediate(resolve));
-      controller.signal.throwIfAborted();
-    },
+    sleep: sleepUntil(controller.signal),
     signal: controller.signal,
     on: (event, handler) => {
       bot.on(event as never, handler as never);
     },
   };
   const kit = host.api(scope, bot);
-  const routineContext: RoutineContext = {
-    ...scope,
+  // The body's notepad over a store that never touches the disk; it belongs to the harness, not to one run.
+  const notes = new Notes(JsonStore.memory());
+  const facilities = {
     bot,
-    notes: memoryNotes(),
-    kit: kit as unknown as Readonly<KitRegistry>,
+    notes: {
+      list: () => notes.list(),
+      get: (key) => notes.get(key)?.text,
+      set: (key, text) => notes.set(key, text),
+      delete: (key) => notes.delete(key),
+    },
     status: () => {
       throw new UnsupportedApiError("ctx.status");
     },
@@ -227,7 +243,44 @@ export function createKitHarness(options: KitHarnessOptions = {}): KitHarness {
         throw new UnsupportedApiError("ctx.wiki.list");
       },
     },
-  };
+  } satisfies Omit<RoutineContext, keyof ProgramScope | "kit">;
+  /** The runs in progress, by their abort: what `abort` stops. */
+  const running = new Set<AbortController>();
+
+  /** One `h.run`: a run scope of its own, as `ProgramRunner.call` gives a routine in the body. */
+  async function run(routine: unknown, args: unknown): Promise<unknown> {
+    const runAbort = new AbortController();
+    const { signal } = runAbort;
+    const subscriptions: [string, (...args: unknown[]) => void][] = [];
+    // Stop and the end of the run both abort the signal; either way the run's handlers hear nothing more.
+    signal.addEventListener(
+      "abort",
+      () => {
+        for (const [event, handler] of subscriptions.splice(0)) bot.off(event as never, handler as never);
+      },
+      { once: true },
+    );
+    const runScope: ProgramScope = {
+      log: (...values) => {
+        logs.push(formatLogLine(values));
+      },
+      sleep: sleepUntil(signal),
+      signal,
+      on: (event, handler) => {
+        if (signal.aborted) return;
+        bot.on(event as never, handler as never);
+        subscriptions.push([event, handler]);
+      },
+    };
+    const ctx: RoutineContext = { ...runScope, ...facilities, kit: host.api(runScope, bot) as unknown as Readonly<KitRegistry> };
+    running.add(runAbort);
+    try {
+      return await invokeRoutine(typeof routine === "function" ? { default: routine } : routine, "under test", ctx, args);
+    } finally {
+      running.delete(runAbort);
+      if (!signal.aborted) runAbort.abort(new Error("finished"));
+    }
+  }
 
   return {
     bot,
@@ -242,7 +295,7 @@ export function createKitHarness(options: KitHarnessOptions = {}): KitHarness {
       if (!run) throw new Error(`kit "${kitName}" has no action "${actionName}"; it has: ${Object.keys(namespace).join(", ") || "none"}`);
       return (await run(args)) as never;
     },
-    run: ((routine: unknown, args?: unknown) => invokeRoutine(typeof routine === "function" ? { default: routine } : routine, "under test", routineContext, args)) as KitHarness["run"],
+    run: run as KitHarness["run"],
     calls,
     logs,
     chat: handle.chat,
@@ -267,7 +320,11 @@ export function createKitHarness(options: KitHarnessOptions = {}): KitHarness {
       return handle.others();
     },
     advance: handle.advance,
-    abort: (reason) => controller.abort(reason ?? new Error("aborted")),
+    abort(reason) {
+      const why = reason ?? new Error("aborted");
+      if (running.size === 0) controller.abort(why);
+      for (const runAbort of running) runAbort.abort(why);
+    },
     furnaceAt: handle.furnaceAt,
   };
 }

@@ -1,9 +1,12 @@
 import assert from "node:assert/strict";
-import { describe, it } from "node:test";
+import { describe, it, mock } from "node:test";
 import { action, defineKit, goals, Vec3, z } from "minebot-sdk/kit";
 import { defineRoutine, z as routineZ } from "minebot-sdk/routine";
 import { createKitHarness, UnsupportedApiError } from "minebot-sdk/testing";
+import { Notes } from "../src/notes.ts";
+import { ProgramRunner } from "../src/program/runner.ts";
 import { invokeRoutine } from "../src/routine/invoke.ts";
+import { JsonStore } from "../src/store.ts";
 
 /** A kit whose actions reach for Mineflayer APIs the harness does not implement. */
 const brawler = defineKit(
@@ -360,12 +363,15 @@ describe("minebot-sdk/testing routines", () => {
   const strict = defineRoutine({ returns: routineZ.object({ ok: routineZ.boolean() }) }, (() => ({ ok: "yes" })) as never);
   const parsed = defineRoutine({ returns: routineZ.object({ n: routineZ.string().transform(Number) }) }, () => ({ n: "42" }));
   const echo = (_ctx: unknown, args: unknown) => args;
+  const defaulted = defineRoutine({ args: routineZ.object({ n: routineZ.number().default(3) }) }, (_ctx, args) => args.n);
 
   // The reference the harness has to match: the body's own `invokeRoutine`, over the same module and arguments.
   const cases: [string, unknown, unknown, RegExp | unknown][] = [
     ["defaults applied", labelled, { label: "x" }, "x:3"],
     ["an argument that does not match", labelled, { label: "x", n: "one" }, /^routine "under test" arguments: .*\nargs schema: .*"type":"number"/s],
     ["no arguments for an object schema", labelled, undefined, /^routine "under test" arguments: /],
+    ["no arguments for a schema with defaults", defaulted, undefined, 3],
+    ["no arguments for a plain function", echo, undefined, {}],
     ["a result that does not match", strict, undefined, /^routine "under test" returned a value that does not match its returns schema: .*"type":"boolean"/s],
     ["a parsed result", parsed, undefined, { n: 42 }],
     ["a plain function", echo, { a: [1] }, { a: [1] }],
@@ -392,26 +398,42 @@ describe("minebot-sdk/testing routines", () => {
     });
   }
 
-  it("gives a routine exactly the context members, and the kit API of the harness", async () => {
-    const h = createKitHarness({ inventory: { oak_log: 1 } });
-    const seen = await h.run(async (ctx) => ({ keys: Object.keys(ctx).sort(), bot: ctx.bot === h.bot, kit: ctx.kit === h.kit, signal: ctx.signal.aborted }));
-    assert.deepEqual(seen, { keys: ["bot", "kit", "log", "notes", "on", "signal", "sleep", "status", "wiki"], bot: true, kit: true, signal: false });
+  it("gives a routine exactly the context members, and kits that run with the run's scope", async () => {
+    const signals: AbortSignal[] = [];
+    const probe = defineKit({ name: "probe", description: "Sees its scope." }, { look: action({ doc: "Records the signal.", args: z.object({}), run: (ctx) => void signals.push(ctx.signal) }) });
+    const h = createKitHarness({ inventory: { oak_log: 1 }, kits: [probe] });
+    const seen = await h.run(async (ctx) => {
+      await (ctx.kit as unknown as Record<string, Record<string, (args: unknown) => Promise<void>>>).probe!.look!({});
+      return { keys: Object.keys(ctx).sort(), bot: ctx.bot === h.bot, kitSignal: signals[0] === ctx.signal, signal: ctx.signal.aborted };
+    });
+    assert.deepEqual(seen, { keys: ["bot", "kit", "log", "notes", "on", "signal", "sleep", "status", "wiki"], bot: true, kitSignal: true, signal: false });
+    // The kit ran with that run's signal, which ended with the run.
+    assert.deepEqual([signals[0]!.aborted, String(signals[0]!.reason)], [true, "Error: finished"]);
     assert.equal(await h.run((ctx) => ctx.kit!.crafter.make({ item: "oak_planks" })), 4);
-    assert.deepEqual(h.calls[0], { kit: "crafter", action: "make", args: { item: "oak_planks" } });
+    assert.deepEqual(h.calls[1], { kit: "crafter", action: "make", args: { item: "oak_planks" } });
     assert.equal(h.count("oak_planks"), 4);
   });
 
-  it("lands a routine's log lines in h.logs, with the kits' own", async () => {
-    const announcer = defineKit({ name: "announcer", description: "Logs." }, { shout: action({ doc: "Logs a line.", args: z.object({}), run: (ctx) => ctx.log("kit says") }) });
+  it("lands a routine's log lines in h.logs as the body's run log writes them, with its kits' own", async () => {
+    const announcer = defineKit({ name: "announcer", description: "Logs." }, { shout: action({ doc: "Logs a line.", args: z.object({}), run: (ctx) => ctx.log("kit says", { from: "kit" }) }) });
     const h = createKitHarness({ kits: [announcer] });
-    await h.run(async (ctx) => {
+    const talk = (ctx: { log(...args: unknown[]): void }) => {
       ctx.log("routine says", 1, { a: 2 });
+      ctx.log({ deep: { er: { than: { three: { levels: [1, 2] } } } }, list: ["x"] });
+      ctx.log("plain", null, undefined, 3n);
+    };
+    // The body's reference: the same routine run by ProgramRunner.call.
+    const body = await new ProgramRunner({ globals: () => ({}) }).call(async (scope) => talk(scope), { sourceDir: "/" });
+    assert.equal(body.status, "ok");
+    await h.run(async (ctx) => {
+      talk(ctx);
       await (ctx.kit as unknown as Record<string, Record<string, (args: unknown) => Promise<void>>>).announcer!.shout!({});
     });
-    assert.deepEqual(h.logs, ["routine says 1 [object Object]", "kit says"]);
+    assert.deepEqual(h.logs.slice(0, 3), body.logs.split("\n"));
+    assert.deepEqual(h.logs, ["routine says 1 { a: 2 }", "{ deep: { er: { than: { three: [Object] } } }, list: [ 'x' ] }", "plain null undefined 3n", "kit says { from: 'kit' }"]);
   });
 
-  it("passes the clock when a routine sleeps, and rejects its sleep once the harness aborts", async () => {
+  it("passes the clock when a routine sleeps, rejects its sleep once the harness aborts, and starts the next run unaborted", async () => {
     const h = createKitHarness({ time: 1000 });
     await h.run((ctx) => ctx.sleep(1000));
     assert.equal(h.bot.time.timeOfDay, 1020);
@@ -428,7 +450,20 @@ describe("minebot-sdk/testing routines", () => {
       /stop now/,
     );
     assert.equal(sleeps, 3);
-    assert.equal(await h.run((ctx) => ctx.signal.reason), stopping);
+    // The abort stopped that run only: the next one has a signal and a clock of its own, and kits still run.
+    assert.deepEqual(await h.run(async (ctx) => [ctx.signal.aborted, await ctx.sleep(50), ctx.signal.aborted]), [false, undefined, false]);
+    await h.call("move.to", { position: [3, 64, 0], range: 2 });
+  });
+
+  it("ends a run's signal and sleep when the call settles, as the body's runner does", async () => {
+    const h = createKitHarness();
+    const ended = await h.run((ctx) => ctx);
+    const scopes: { sleep: (ms: number) => Promise<void>; signal: AbortSignal }[] = [];
+    await new ProgramRunner({ globals: () => ({}) }).call(async (scope) => void scopes.push(scope), { sourceDir: "/" });
+    const body = scopes[0]!;
+    assert.deepEqual([ended.signal.aborted, String(ended.signal.reason)], [body.signal.aborted, String(body.signal.reason)]);
+    assert.deepEqual(await outcome(ended.sleep(10)), await outcome(body.sleep(10)));
+    assert.deepEqual(await outcome(ended.sleep(10)), { error: "finished" });
   });
 
   it("keeps notes in memory, newest change first, per harness, under the body's key and text rules", async () => {
@@ -456,12 +491,77 @@ describe("minebot-sdk/testing routines", () => {
     );
   });
 
-  it("subscribes through ctx.on to the harness bot's events", async () => {
+  it("delivers the bot's events to a run's ctx.on handlers during the run only", async () => {
     const h = createKitHarness();
-    const heard: unknown[][] = [];
-    await h.run((ctx) => ctx.on("chat", (...args) => heard.push(args)));
-    h.bot.emit("chat" as never, "someone" as never, "hello" as never);
-    assert.deepEqual(heard, [["someone", "hello"]]);
+    const heard: string[] = [];
+    const listening = h.bot.listenerCount("chat");
+    await h.run(async (ctx) => {
+      ctx.on("chat", (_user, text) => heard.push(String(text)));
+      h.bot.emit("chat" as never, "someone" as never, "during" as never);
+      await ctx.sleep(50);
+    });
+    await h.run(async (ctx) => ctx.on("chat", (_user, text) => heard.push(`second ${String(text)}`)));
+    h.bot.emit("chat" as never, "someone" as never, "after both runs" as never);
+    assert.deepEqual(heard, ["during"]);
+    assert.equal(h.bot.listenerCount("chat"), listening);
+    // An abort ends the subscriptions at once, before the routine itself settles.
+    await assert.rejects(
+      h.run(async (ctx) => {
+        ctx.on("chat", (_user, text) => heard.push(String(text)));
+        h.bot.emit("chat" as never, "someone" as never, "before the abort" as never);
+        h.abort(new Error("stop"));
+        h.bot.emit("chat" as never, "someone" as never, "after the abort" as never);
+        await ctx.sleep(50);
+      }),
+      /stop/,
+    );
+    // A context kept past its run subscribes nothing.
+    const ended = await h.run((ctx) => ctx);
+    ended.on("chat", (_user, text) => heard.push(String(text)));
+    h.bot.emit("chat" as never, "someone" as never, "to a finished run" as never);
+    assert.deepEqual(heard, ["during", "before the abort"]);
+    assert.equal(h.bot.listenerCount("chat"), listening);
+  });
+
+  it("keeps one set of notes rules: the harness's notes answer as the body's Notes do, limit included", async () => {
+    // One frozen instant: every note has the same `updated`, so the order is the rules' own, not the clock's.
+    mock.timers.enable({ apis: ["Date"], now: 0 });
+    try {
+      const script = (notes: { list(): unknown; get(key: string): unknown; set(key: string, text: string): unknown; delete(key: string): unknown }) => {
+        const results: unknown[] = [];
+        const step = (run: () => unknown) => {
+          try {
+            results.push({ value: run() });
+          } catch (error) {
+            results.push({ error: error instanceof Error ? `${error.constructor.name}: ${error.message}` : String(error) });
+          }
+        };
+        step(() => notes.set("a", "first"));
+        step(() => notes.set("b", "second"));
+        step(() => notes.list());
+        step(() => notes.set("a", "first again"));
+        step(() => notes.list());
+        step(() => notes.get("a"));
+        step(() => notes.get("missing"));
+        step(() => notes.delete("b"));
+        step(() => notes.delete("b"));
+        step(() => notes.set("Bad Key", "x"));
+        step(() => notes.set("empty", ""));
+        step(() => notes.set("long", "x".repeat(8001)));
+        for (let i = 0; i < 199; i++) notes.set(`n${i}`, "x");
+        step(() => notes.set("one-too-many", "x"));
+        step(() => notes.set("a", "replacing at the limit"));
+        step(() => notes.list());
+        return results;
+      };
+      const host = new Notes(JsonStore.memory());
+      const body = script({ list: () => host.list(), get: (key) => host.get(key)?.text, set: (key, text) => host.set(key, text), delete: (key) => host.delete(key) });
+      const harness = await createKitHarness().run((ctx) => script(ctx.notes));
+      assert.deepEqual(harness, body);
+      assert.deepEqual(body[12], { error: "NoteLimitError: a body keeps at most 200 notes; delete or merge some first" });
+    } finally {
+      mock.timers.reset();
+    }
   });
 
   it("makes status and wiki unsupported, naming the member", async () => {

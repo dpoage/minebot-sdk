@@ -51,6 +51,14 @@ describe("invokeRoutine", () => {
     assert.equal(await invokeRoutine(module, "label", ctx, { label: "x", n: 5 }), "x:5");
   });
 
+  it("treats absent arguments as {}: a defaulted schema gets its defaults, a plain function gets {}", async () => {
+    const defaulted = { default: defineRoutine({ args: z.object({ n: z.number().default(3) }) }, (_ctx, args) => args.n) };
+    assert.equal(await invokeRoutine(defaulted, "defaulted", ctx, undefined), 3);
+    assert.deepEqual(await invokeRoutine({ default: (_ctx: RoutineContext, args: unknown) => args }, "plain", ctx, undefined), {});
+    // Only absence is defaulted: null is an argument, and the schema refuses it.
+    await assert.rejects(invokeRoutine(defaulted, "defaulted", ctx, null), /routine "defaulted" arguments: /);
+  });
+
   it("rejects arguments that do not match, naming the routine and the schema, without calling it", async () => {
     let calls = 0;
     const module = { default: defineRoutine({ args: z.object({ n: z.number() }) }, () => void calls++) };
