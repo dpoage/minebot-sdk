@@ -1,8 +1,8 @@
 // Serves one body's API as MCP tools over stdio. The body endpoint is re-read per call, so body restarts are fine.
 //
-// The default `core` tool set is what an agent needs to drive a body through programs: observe,
+// The default `core` tool set is what an agent needs to drive a body through runs: observe,
 // run, stop, wait, events, and the references. Everything else (notes, status, chat, wiki
-// management) is a program global, so `core` leaves those tools out; `full` serves them
+// management) is a ctx member, so `core` leaves those tools out; `full` serves them
 // as tools too. Tools for optional features exist only while the body offers the feature, so an
 // agent does not learn about features its body lacks. `toolPlan` derives the gated tool set from
 // the capability table; the same function is what the capability test turns against every feature.
@@ -27,6 +27,7 @@ import {
   RevertRoutineInput,
   RoutineName,
   RoutineSource,
+  RunInput,
   UnbindInput,
   WaitInput,
 } from "../protocol/index.ts";
@@ -37,7 +38,7 @@ type ToolResult = { content: { type: "text"; text: string }[]; isError?: boolean
 
 const json = (value: unknown) => JSON.stringify(value, null, 2);
 
-const API_DOC_FALLBACK = "Call the api_reference tool for the globals available to programs.";
+const API_DOC_FALLBACK = "Call the api_reference tool for how a run works and what ctx holds.";
 
 /** Which tools `minebot mcp` serves: the core set, or every tool. */
 export const TOOL_SETS = ["core", "full"] as const;
@@ -82,7 +83,7 @@ export function toolPlan(features: BodyFeatures, toolSet: ToolSet): Record<strin
         caps.routines
           ? `Call an action: a saved routine that bind_routine bound to a name, with JSON args${caps.builtins ? ", or a built-in routine by its <module>.<routine> name (e.g. move.to), which needs no bind" : ""}`
           : "Call a built-in routine by its <module>.<routine> name (e.g. move.to), with JSON args"
-      }. Blocks until the call returns, fails, or times out, and answers like run_program: status, logs, error or result. One run at a time, programs included.`,
+      }. Blocks until the call returns, fails, or times out, and answers like run_program: status, logs, error or result. One run at a time, runs included.`,
     },
     list_builtins: {
       enabled: caps.builtins,
@@ -214,28 +215,29 @@ export async function serveMcp(bodyName: string, toolSet: ToolSet): Promise<void
   );
 
   const runDescription = (apiDoc: string) =>
-    `Run a JavaScript program that controls the Minecraft player "${bodyName}". Blocks until the program returns, fails, or times out. Only one program runs at a time.\n\n${apiDoc}`;
+    `Run a TypeScript or JavaScript module that controls the Minecraft player "${bodyName}": its default export is the result (a function is called with ctx and args). Blocks until the run returns, fails, or times out. Only one run at a time.\n\n${apiDoc}`;
   const runProgram = server.registerTool(
     "run_program",
     {
       description: runDescription(API_DOC_FALLBACK),
       inputSchema: {
-        code: z.string().describe("Body of an async function. Use `return` to send a value back."),
+        code: z.string().describe("A module. Write the result as `export default <value>` or `export default async (ctx, args) => <value>`; a `return` statement outside a function is a syntax error."),
+        args: RunInput.shape.args.describe("A JSON object passed to the default function as args. Default {}."),
         timeout_ms: z
           .number()
           .int()
           .positive()
           .max(MAX_TIMEOUT_MS)
           .optional()
-          .describe(`Abort the program after this many milliseconds. Default ${DEFAULT_TIMEOUT_MS}.`),
+          .describe(`Abort the run after this many milliseconds. Default ${DEFAULT_TIMEOUT_MS}.`),
       },
     },
-    ({ code, timeout_ms }) => call(async (c) => formatRun(await c.run(code, timeout_ms))),
+    ({ code, args, timeout_ms }) => call(async (c) => formatRun(await c.run(code, args, timeout_ms))),
   );
 
   server.registerTool(
     "api_reference",
-    { description: "The globals available to programs on this body.", inputSchema: {} },
+    { description: "How a run works and what its context (ctx) holds on this body.", inputSchema: {} },
     () => call(async (c) => (await c.apiDoc()).doc),
   );
 

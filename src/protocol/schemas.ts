@@ -24,9 +24,9 @@ export const PageMeta = z.object({
   tags: z.array(z.string()).default([]),
   /** Minecraft version the page was last verified on. Absent: never verified in game. */
   mc_version: z.string().optional(),
-  /** How the page was verified: a check program, a test, or a recorded observation. */
+  /** How the page was verified: a check module, a test, or a recorded observation. */
   verified_by: z.string().min(1),
-  /** Program in the wiki's checks/ directory that succeeds while the page is true. */
+  /** Module in the wiki's checks/ directory (run as `minebot run` runs one) that succeeds while the page is true. */
   check: z.string().optional(),
   /** Features a body needs for the page to make sense; bodies without one do not see the page. */
   requires: z.array(WikiFeature).default([]),
@@ -80,9 +80,13 @@ export const EndpointSchema: z.ZodType<Endpoint> = z.object({
 export const DEFAULT_TIMEOUT_MS = 60_000;
 export const MAX_TIMEOUT_MS = 30 * 60_000;
 
-/** Body of `POST /run`. */
+/** The arguments of a run or a call: a JSON object, which the routine receives as its `args`. */
+const RunArgs = z.record(z.string(), z.unknown());
+
+/** Body of `POST /run`: `code` is a module (see `Body.run`); its default export, when a function, is called with `args` (absent: `{}`). */
 export const RunInput = z.object({
   code: z.string(),
+  args: RunArgs.optional(),
   timeoutMs: z.number().int().nonnegative().max(MAX_TIMEOUT_MS).optional(),
 });
 
@@ -205,6 +209,6 @@ export const UnbindInput = z.object({ name: StoredName });
  */
 export const CallInput = z.object({
   name: z.union([BindingName, BuiltinCallName], { error: "use an action's name (1-48 lowercase letters, digits, _ and -; start with a letter) or a built-in routine's <module>.<routine>" }),
-  args: z.record(z.string(), z.unknown()).optional(),
+  args: RunArgs.optional(),
   timeoutMs: RunInput.shape.timeoutMs,
 });

@@ -2,7 +2,6 @@
 // The `minebot` command: a thin client. Everything heavy loads on demand — the body for
 // `minebot body`, the MCP server for `minebot mcp` — so a client-only install works without them.
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
-import { stripTypeScriptTypes } from "node:module";
 import path from "node:path";
 import { text } from "node:stream/consumers";
 import { parseArgs } from "node:util";
@@ -47,6 +46,15 @@ const print = (value: unknown) => console.log(JSON.stringify(value, null, 2));
 function printRun(run: RunResult): number {
   console.log(formatRun(run));
   return run.status === "ok" ? 0 : 2;
+}
+
+/** The `--args` option as a JSON object for a run or a call, or undefined when it is not given. */
+function jsonArgs(): Record<string, unknown> | undefined {
+  try {
+    return opts.args === undefined ? undefined : JSON.parse(opts.args);
+  } catch (err) {
+    throw new Error(`--args is not JSON: ${err instanceof Error ? err.message : String(err)}`);
+  }
 }
 
 /** The reflex options of the command line, as the body takes them. `command` names who needs them, for the error. */
@@ -166,12 +174,10 @@ async function main(): Promise<number> {
     }
     case "run": {
       const file = rest[0];
-      const source = !file || file === "-" ? await text(process.stdin) : await readFile(file, "utf8");
-      // A .ts program is checked by tsc in a workspace; the body runs JavaScript, so its types come off here.
-      const code = file?.endsWith(".ts") ? stripTypeScriptTypes(source) : source;
+      // The text goes to the body as it is: the body strips types and evaluates it as a module.
+      const code = !file || file === "-" ? await text(process.stdin) : await readFile(file, "utf8");
       const client = await BodyClient.connect(opts.bot);
-      const run = await client.run(code, opts.timeout === undefined ? undefined : Number(opts.timeout));
-      return printRun(run);
+      return printRun(await client.run(code, jsonArgs(), opts.timeout === undefined ? undefined : Number(opts.timeout)));
     }
     case "routines": {
       const client = await BodyClient.connect(opts.bot);
@@ -228,14 +234,8 @@ async function main(): Promise<number> {
     }
     case "call": {
       if (!rest[0]) throw new Error("call needs the name of an action or a built-in routine");
-      let args: Record<string, unknown> | undefined;
-      try {
-        args = opts.args === undefined ? undefined : JSON.parse(opts.args);
-      } catch (err) {
-        throw new Error(`--args is not JSON: ${err instanceof Error ? err.message : String(err)}`);
-      }
       const client = await BodyClient.connect(opts.bot);
-      return printRun(await client.call(rest[0], args, opts.timeout === undefined ? undefined : Number(opts.timeout)));
+      return printRun(await client.call(rest[0], jsonArgs(), opts.timeout === undefined ? undefined : Number(opts.timeout)));
     }
     case "builtins": {
       const client = await BodyClient.connect(opts.bot);

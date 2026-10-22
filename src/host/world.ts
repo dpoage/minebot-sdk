@@ -17,6 +17,8 @@ import { typeCheckRoutine } from "./typecheck.ts";
 
 export interface World {
   readonly body: Body;
+  /** The routine library's directory; undefined for a body without routines. */
+  readonly routinesDir: string | undefined;
   /** Answers one API request. */
   serve(request: ApiRequest): Promise<{ status: number; body: unknown }>;
   /** Joins the server. */
@@ -33,9 +35,9 @@ export function buildWorld(options: HostInit, io: { events: EventSink; recorder:
   const builtins = new Builtins({ offer: options.builtins, stats });
   setOfferGate(builtins.allows);
 
-  // A body without routines has no library, no loader, and no bindings file.
+  // A body without routines has no library and no bindings file; its runs still need a loader, over the state directory, with no library to import from.
   const routinesDir = options.routines === false ? undefined : (options.routinesDir ?? state.routinesDir);
-  if (routinesDir) mkdirSync(routinesDir, { recursive: true });
+  mkdirSync(routinesDir ?? state.dir, { recursive: true });
   const routineLibrary = routinesDir ? new RoutineLibrary({ dir: routinesDir, savedBy: options.name }) : undefined;
 
   const wiki = options.wikiMode === "off" ? null : Wiki.load(options.wikiDir, options.lessonsDir);
@@ -51,7 +53,7 @@ export function buildWorld(options: HostInit, io: { events: EventSink; recorder:
     wikiMode: options.wikiMode,
     milestonesEnabled: options.milestonesEnabled,
     triggersEnabled: options.triggers ?? true,
-    routines: routinesDir ? new RoutineLoader(routinesDir) : undefined,
+    loader: routinesDir ? new RoutineLoader(routinesDir) : new RoutineLoader(state.dir, { library: false }),
     events: io.events,
     recorder: io.recorder,
     startedAt: options.startedAt,
@@ -74,6 +76,7 @@ export function buildWorld(options: HostInit, io: { events: EventSink; recorder:
   const routes = bodyRoutes({ body, builtins, recorder: io.recorder, routines });
   return {
     body,
+    routinesDir,
     serve: (request) => serve(routes, body, request),
     start: () => body.start(),
     close: () => {

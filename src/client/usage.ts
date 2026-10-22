@@ -29,7 +29,8 @@ export function usageFor(features: BodyFeatures | null, hasBody = HAS_BODY, oper
     ...(caps.milestones ? [`  milestones           Print the body's milestones. "milestones set <file>" replaces them; "milestones clear" removes them.`] : []),
     `  notes                List the body's notes. "notes get <key>", "notes set <key> [text]" (text from stdin`,
     `                       when omitted), "notes rm <key>". Notes persist across body restarts.`,
-    `  run [file]           Run a program from a file, or from stdin when file is omitted or "-". A .ts file has its types stripped first.`,
+    `  run [file]           Run a module (TypeScript or JavaScript) from a file, or from stdin when file is omitted or "-"; the body strips its types.`,
+    `                       The result is its default export; a function is called with ctx and --args (a JSON object).`,
     ...(caps.routines
       ? [
           `  routines             List the saved routines (TypeScript modules the body runs by name) and what is bound to them. "routines save <file...>"`,
@@ -75,12 +76,12 @@ export function usageFor(features: BodyFeatures | null, hasBody = HAS_BODY, oper
         ]
       : []),
     "  mcp                  Serve the body as MCP tools over stdio: the core tools, or every tool with --tools full.",
-    "  api                  Print the program environment reference.",
+    "  api                  Print how a run works and what its context (ctx) holds on this body.",
   ];
   const options = [
     `  --bot <name>         Body name (default: $MINEBOT_BOT or "bot"). Ignored when $MINEBOT_URL is set.`,
     ...(operator ? operatorFlags : []),
-    "  run:    --timeout <ms>",
+    "  run:    --args <json>, --timeout <ms>",
     "  wait:   --types <a,b>, --from <name>, --match <regex>, --since <seq>, --timeout <ms>; prints \"timed out\" on timeout",
     ...(caps.call ? ["  call:   --args <json>, --timeout <ms>"] : []),
     "  events: --since <seq>",

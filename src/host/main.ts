@@ -2,13 +2,10 @@
 // only argument. It builds the world the supervisor's init describes, answers the API requests the
 // supervisor forwards, and exits on `shutdown`, when the channel closes, when its supervisor is gone,
 // or on an uncaught error, which it reports to the supervisor first.
-import { realpathSync } from "node:fs";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { inspect } from "node:util";
-import { supervisorPidOf, type FromHost, type HostCrash, type HostInit, type ToHost } from "../protocol/host.ts";
+import { insideDir, locateFrame } from "../program/frames.ts";
+import { supervisorPidOf, type FromHost, type HostCrash, type ToHost } from "../protocol/host.ts";
 import type { HostEvents, RunReporter } from "./channel.ts";
-import { BodyState } from "./state.ts";
 import { watchSupervisor } from "./supervisor-watch.ts";
 import type { World } from "./world.ts";
 
@@ -31,8 +28,8 @@ watchSupervisor(supervisorPid);
 /** How long a crashing host waits for its report to be written before it exits without. */
 const CRASH_REPORT_MS = 1_000;
 let crashing = false;
-/** The routine library's directory, once the init message says where it is; a crash's frame is the one inside it. */
-let libraryDir: string | undefined;
+/** The world, once the init message has built it; a crash's frame is the one inside its routine library. */
+let world: World | undefined;
 
 // Not exiting on an uncaught error would resume a host whose state an error left half done: the host
 // reports the error and exits, and the supervisor replaces it.
@@ -71,7 +68,7 @@ function crash(err: unknown): void {
   } catch {}
   // The channel may be gone or stuck: the report is bounded, and the host exits with 1 however it ends.
   setTimeout(() => process.exit(1), CRASH_REPORT_MS);
-  send({ kind: "crashed", ...describeCrash(err, libraryDir) }, () => process.exit(1));
+  send({ kind: "crashed", ...describeCrash(err, world?.routinesDir) }, () => process.exit(1));
 }
 
 /** An uncaught error's message, and its top frame: the first inside `library`, else the first. Never throws, whatever was thrown. */
@@ -93,32 +90,14 @@ function describeCrash(err: unknown, library: string | undefined): HostCrash {
 
 /** A stack's first frame inside `library` as `path:line:column`, else its first frame; undefined when it has none. */
 function topFrame(stack: string, library: string | undefined): string | undefined {
-  let inside: string | undefined;
-  if (library !== undefined) {
-    let real = library;
-    try {
-      real = realpathSync(library);
-    } catch {}
-    inside = path.join(real, path.sep);
-  }
+  const inside = library === undefined ? undefined : insideDir(library);
   let first: string | undefined;
   for (const line of stack.split("\n")) {
     if (!line.startsWith("    at ")) continue;
-    // A frame ends with `<url or path>:<line>:<column>`: in parentheses after the function's name, else all that follows `at ` (or `at async `), spaces and parentheses included; a module's `file:` URL names it with a query that is no part of its path.
-    const location = /\((.+):(\d+:\d+)\)$/.exec(line) ?? /^ {4}at (?:async )?(.+):(\d+:\d+)$/.exec(line);
-    let located: string | undefined;
-    let file: string | undefined;
-    if (location) {
-      file = location[1]!;
-      if (file.startsWith("file:")) {
-        try {
-          file = fileURLToPath(file);
-        } catch {}
-      }
-      located = `${file}:${location[2]!}`;
-    }
+    const frame = locateFrame(line);
+    const located = frame && `${frame.file}:${frame.position}`;
     first ??= located ?? line.trim().slice("at ".length);
-    if (located !== undefined && inside !== undefined && file!.startsWith(inside)) return located;
+    if (frame !== undefined && inside !== undefined && frame.file.startsWith(inside)) return located;
   }
   return first;
 }
@@ -130,7 +109,6 @@ process.on("message", (message: ToHost) => {
   });
 });
 
-let world: World | undefined;
 let events: HostEvents;
 let reporter: RunReporter;
 let lastState = "";
@@ -153,7 +131,6 @@ async function handle(message: ToHost): Promise<void> {
   const [{ HostEvents, RunReporter }, { buildWorld }] = await modules;
   switch (message.kind) {
     case "init":
-      libraryDir = routinesDirOf(message.init);
       events = new HostEvents((m) => {
         send(m);
         reportState();
@@ -195,11 +172,6 @@ async function handle(message: ToHost): Promise<void> {
       // Off the message chain: the runs it ends settle only on the supervisor's `run_ack`, which arrives behind it.
       void shutdown();
   }
-}
-
-/** Where the world keeps the routine library (src/host/world.ts); undefined for a body without routines. */
-function routinesDirOf(init: HostInit): string | undefined {
-  return init.routines === false ? undefined : (init.routinesDir ?? new BodyState(init.stateDir).routinesDir);
 }
 
 async function shutdown(): Promise<void> {

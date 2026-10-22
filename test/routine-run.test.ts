@@ -32,7 +32,7 @@ const contextOf = (scope: ProgramScope): RoutineContext => ({
 
 /** Runs routine `name` of `loader`'s library as the body does: one call of the runner. */
 function runRoutine(loader: RoutineLoader, name: string, args: unknown = {}) {
-  const runner = new ProgramRunner({ globals: () => ({}) });
+  const runner = new ProgramRunner();
   return runner.call(async (scope) => invokeRoutine(await loader.load(name), name, contextOf(scope), args), { sourceDir: loader.dir });
 }
 
@@ -91,7 +91,7 @@ describe("a routine's error", () => {
         `    at elsewhere (${pathToFileURL(`${real}-sibling/d.ts`).href}?v=1:5:5)`,
         "    at node:internal/modules/esm/module_job:1:1",
       ].join("\n");
-      const runner = new ProgramRunner({ globals: () => ({}) });
+      const runner = new ProgramRunner();
       const run = await runner.call(
         async () => {
           throw error;
@@ -104,7 +104,7 @@ describe("a routine's error", () => {
 
   /** Calls a routine that logs, then throws `thrown`, with the library in `dir`. */
   const throwing = (dir: string, thrown: () => unknown) =>
-    new ProgramRunner({ globals: () => ({}) }).call(
+    new ProgramRunner().call(
       async (scope) => {
         scope.log("before");
         throw thrown();

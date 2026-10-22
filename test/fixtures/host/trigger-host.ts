@@ -11,7 +11,7 @@
 // as the supervisor's answer to a run's end reaches it, before it can act on it. With
 // `dieBeforeReadyOnSpawn: n`, the n-th host SIGKILLs itself once its Triggers are built (their
 // counts sent) and before it is ready.
-// A preempting firing stops the running run through `reporter.preempt()`, as the body's Triggers do; `burstOnEvent` queues a burst in the channel ahead of it.
+// A preempting firing stops the running run through `reporter.preempt()`, as the body's Triggers do; `burstOnEvent` queues a burst in the channel ahead of it; `holdPreempt` holds its message until POST /release.
 // Requests: GET /ping answers with this pid; GET /triggers with the reflex list; POST /triggers
 // binds the reflex in the body; POST /call runs `{source, timeoutMs}` as a routine the way the body's
 // /call does.
@@ -38,13 +38,23 @@ interface Script {
   dieBeforeReadyOnSpawn?: number;
   /** On hearing an event of `type`, before the reflexes do, the host sends `count` events of about `bytes` each: a burst in the channel ahead of whatever the reflexes send next. */
   burstOnEvent?: { type: string; count: number; bytes: number };
+  /** A preemption's message is held in the host, so the run it asks to stop keeps executing, until `POST /release`: the test decides what happens between the ask and the write. */
+  holdPreempt?: boolean;
 }
 
 let killAfterFinished = false;
 let killOnEndAck = false;
+/** With `holdPreempt`: the preemptions asked and not yet written to the channel, and whether `POST /release` has let them (and every later one) go. */
+const heldPreempts: (() => void)[] = [];
+let preemptReleased = false;
+let holdPreempt = false;
 /** Runs whose start was acked: the next ack for one answers its end. */
 const startAcked = new Set<number>();
 function send(message: FromHost, written?: () => void): void {
+  if (message.kind === "preempt" && holdPreempt && !preemptReleased) {
+    heldPreempts.push(() => send(message, written));
+    return;
+  }
   if (written) process.send!(message, () => written());
   else process.send!(message);
   const finished =
@@ -83,6 +93,11 @@ function save(input: { name: string; run: string }): Promise<unknown> {
 async function serve(id: number, method: string, pathname: string, body: string | null): Promise<unknown> {
   if (pathname === "/triggers" && method === "POST") return save(JSON.parse(body ?? "{}"));
   if (pathname === "/triggers") return { triggers: triggers.reflexes() };
+  if (pathname === "/release") {
+    preemptReleased = true;
+    for (const write of heldPreempts.splice(0)) write();
+    return { released: true };
+  }
   if (pathname !== "/call") return { pid: process.pid };
   const { source, timeoutMs } = JSON.parse(body ?? "{}") as { source: string; timeoutMs: number };
   return reporter.record({ code: source, timeoutMs, requestId: id }, async () => {
@@ -97,7 +112,7 @@ process.on("message", async (message: ToHost) => {
   switch (message.kind) {
     case "init": {
       const init = message.init as HostInit & { script: Script };
-      runner = new ProgramRunner({ globals: () => ({}), graceMs: init.script.graceMs });
+      runner = new ProgramRunner({ graceMs: init.script.graceMs });
       sourceDir = init.stateDir;
       reporter = new RunReporter({ send, stop: () => runner.stop(), running: () => runner.running !== null });
       const reportState = () => send({ kind: "state", connected: true, deaths: init.deaths, reconnects: init.reconnects });
@@ -112,6 +127,7 @@ process.on("message", async (message: ToHost) => {
       if (first) store.set(fields.name, { ...ReflexInput.parse({ ...fields, routine: ROUTINE }), updated: new Date().toISOString() });
       killAfterFinished = first && init.script.killAfterFinished === true;
       killOnEndAck = first && init.script.killOnEndAck === true;
+      holdPreempt = init.script.holdPreempt === true;
       const { burstOnEvent } = init.script;
       if (burstOnEvent) {
         events.subscribe((event) => {

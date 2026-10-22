@@ -119,19 +119,19 @@ describe("POST /call of a built-in routine", () => {
     });
   });
 
-  it("is refused with 409 while a call or a program runs, in both directions, and the refusal is not a run", async () => {
+  it("is refused with 409 while a call or a module run executes, in both directions, and the refusal is not a run", async () => {
     await using({}, async (body) => {
       const first = body.request("POST", "/call", { name: "social.waitForChat", args: { timeoutMs: 30_000 } });
       await running(body);
-      for (const refused of [await body.request("POST", "/call", { name: "move.stop" }), await body.request("POST", "/call", { name: "social.waitForChat" }), await body.request("POST", "/run", { code: "return 1" })]) {
+      for (const refused of [await body.request("POST", "/call", { name: "move.stop" }), await body.request("POST", "/call", { name: "social.waitForChat" }), await body.request("POST", "/run", { code: "export default 1;" })]) {
         assert.equal(refused.status, 409, JSON.stringify(refused.body));
       }
       assert.deepEqual(await body.host.stop(), { stopped: true });
       assert.equal(runOf(await first).status, "stopped");
       assert.equal(body.history().length, 1);
 
-      // The other direction: a program is running.
-      const program = body.request("POST", "/run", { code: "await sleep(30000)" });
+      // The other direction: a module run is running.
+      const program = body.request("POST", "/run", { code: "export default async (ctx: { sleep(ms: number): Promise<void> }) => { await ctx.sleep(30000); };" });
       await running(body);
       assert.equal((await body.request("POST", "/call", { name: "move.stop" })).status, 409);
       await body.host.stop();

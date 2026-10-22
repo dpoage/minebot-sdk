@@ -215,7 +215,7 @@ describe("the routine commands of the CLI, against the HTTP contract", () => {
   }
 
   it("exits for a call exactly as `minebot run` exits for the same result: 0 for ok, 2 for any other status", async () => {
-    const program = file("program.js", "return 1;");
+    const program = file("program.js", "export default 1;");
     const exits: Record<string, [number, number]> = {};
     for (const status of ["ok", "error", "timeout", "stopped"] as const) {
       const run: RunResult = status === "ok" ? OK_RUN : { status, durationMs: 3, logs: "", error: `it ${status}` };
@@ -675,5 +675,94 @@ describe("saving, binding, and calling a routine, on the real bot host over HTTP
     assert.equal(readFileSync(path.join(body.routinesDir, "kept.ts"), "utf8"), "export default () => 'kept';\n");
     assert.match((await minebot(api.url, "routines", "source", "kept")).out, /'kept'/);
     assert.match((await minebot(api.url, "routines")).out, /^routines:\n[^]*kept {2}v1/);
+  });
+});
+
+describe("module runs through the CLI and the MCP server, against a recording body", () => {
+  const RUNNER = "interface Args { n: number }\nexport default async (ctx: { log(...a: unknown[]): void }, args: Args): Promise<number> => {\n  ctx.log('n', args.n);\n  return args.n * 2;\n};\n";
+
+  it("sends the file's text as it is, with --args and --timeout, whatever the file's extension", async () => {
+    for (const name of ["runs/x.ts", "runs/x.js", "runs/x.mts"]) {
+      mkdirSync(path.join(SCRATCH, "runs"), { recursive: true });
+      const source = file(name, RUNNER);
+      const stub = await stubBody(FEATURES, { "POST /run": { status: 200, body: OK_RUN } });
+      try {
+        const ran = await minebot(stub.url, "run", source, "--args", '{"n":2,"deep":{"x":[1,null]}}', "--timeout", "5000");
+        assert.equal(ran.code, 0, ran.err);
+        assert.equal(ran.out, `${formatRun(OK_RUN)}\n`);
+        assert.deepEqual(stub.seen, [{ method: "POST", url: "/run", body: { code: RUNNER, args: { n: 2, deep: { x: [1, null] } }, timeoutMs: 5000 } }], name);
+      } finally {
+        stub.server.close();
+      }
+    }
+  });
+
+  it("sends the text of stdin as it is when the file is omitted or `-`, and no args when none are given", async () => {
+    for (const argv of [["run"], ["run", "-"]]) {
+      const stub = await stubBody(FEATURES, { "POST /run": { status: 200, body: OK_RUN } });
+      try {
+        const child = exec(process.execPath, [...CLI, ...argv], { env: { ...process.env, MINEBOT_URL: stub.url, MINEBOT_TOKEN: "" } });
+        child.child.stdin!.end(RUNNER);
+        const { stdout } = await child;
+        assert.equal(stdout, `${formatRun(OK_RUN)}\n`);
+        assert.deepEqual(stub.seen, [{ method: "POST", url: "/run", body: { code: RUNNER } }], argv.join(" "));
+      } finally {
+        stub.server.close();
+      }
+    }
+  });
+
+  it("exits 2 for any run that did not end ok, and 0 for one that did", async () => {
+    const source = file("runs/exits.ts", "export default 1;\n");
+    const exits: Record<string, number> = {};
+    for (const status of ["ok", "error", "timeout", "stopped"] as const) {
+      const run: RunResult = status === "ok" ? OK_RUN : { status, durationMs: 3, logs: "", error: `it ${status}` };
+      const stub = await stubBody(FEATURES, { "POST /run": { status: 200, body: run } });
+      try {
+        exits[status] = (await minebot(stub.url, "run", source, "--args", "{}")).code;
+      } finally {
+        stub.server.close();
+      }
+    }
+    assert.deepEqual(exits, { ok: 0, error: 2, timeout: 2, stopped: 2 });
+  });
+
+  it("refuses --args that is not JSON before any request to the body", async () => {
+    const stub = await stubBody(FEATURES, { "POST /run": { status: 200, body: OK_RUN } });
+    try {
+      const ran = await minebot(stub.url, "run", file("runs/bad.ts", "export default 1;\n"), "--args", "{n:");
+      assert.equal(ran.code, 1);
+      assert.match(ran.err, /^\[minebot\] --args is not JSON: /);
+      assert.deepEqual(stub.seen, []);
+    } finally {
+      stub.server.close();
+    }
+  });
+
+  it("passes the code, args and timeout_ms of run_program on as a run, and answers as `minebot run` prints", async () => {
+    for (const toolSet of ["core", "full"]) {
+      const stub = await stubBody(FEATURES, { "POST /run": { status: 200, body: OK_RUN } });
+      try {
+        const answer = await withMcp(stub.url, ["--tools", toolSet], (client) => tool(client, "run_program", { code: RUNNER, args: { n: 4 }, timeout_ms: 7000 }));
+        assert.equal(answer.isError, undefined);
+        assert.equal(answer.content[0]!.text, formatRun(OK_RUN));
+        assert.deepEqual(stub.seen, [{ method: "POST", url: "/run", body: { code: RUNNER, args: { n: 4 }, timeoutMs: 7000 } }], toolSet);
+      } finally {
+        stub.server.close();
+      }
+    }
+  });
+
+  it("describes run_program as a module run, and its code as a module", async () => {
+    const stub = await stubBody(FEATURES, {});
+    try {
+      const listed = await withMcp(stub.url, [], async (client) => (await client.listTools()).tools.find((t) => t.name === "run_program")!);
+      assert.match(listed.description ?? "", /module/);
+      const properties = (listed.inputSchema as { properties: Record<string, { description?: string }> }).properties;
+      assert.deepEqual(Object.keys(properties).sort(), ["args", "code", "timeout_ms"]);
+      assert.match(properties.code!.description ?? "", /export default/);
+    } finally {
+      stub.server.close();
+    }
   });
 });

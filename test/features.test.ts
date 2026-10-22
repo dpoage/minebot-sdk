@@ -35,7 +35,9 @@ describe("tier visibility in the usage text", () => {
       assert.doesNotMatch(text, WIKI_WORDS);
       assert.doesNotMatch(text, MILESTONE_WORDS);
       assert.doesNotMatch(text, /trigger/i);
-      assert.doesNotMatch(text, /routine|\bbind\b|unbind|call <name>|--args/i);
+      assert.doesNotMatch(text, /routine|\bbind\b|unbind|call <name>|call: {3}--args/i);
+      // Every body's run takes args, a module's default function being called with them.
+      assert.match(text, /^ {2}run: {4}--args <json>, --timeout <ms>$/m);
       assert.doesNotMatch(text, /--wiki|--lessons|--milestones|body:/);
     }
   });

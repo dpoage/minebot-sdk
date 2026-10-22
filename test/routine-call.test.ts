@@ -81,20 +81,20 @@ describe("POST /call", () => {
     });
   });
 
-  it("is refused with 409 while a call, a program, or its own twin runs, and the refusal is not a run", async () => {
+  it("is refused with 409 while a call, a module run, or its own twin runs, and the refusal is not a run", async () => {
     const body = await bodyWith({ sleeper: SLEEPER, echo: ECHO });
     await using(body, async () => {
       const first = body.request("POST", "/call", { name: "sleeper" });
       await running(body);
-      for (const refused of [await body.request("POST", "/call", { name: "echo" }), await body.request("POST", "/call", { name: "sleeper" }), await body.request("POST", "/run", { code: "return 1" })]) {
+      for (const refused of [await body.request("POST", "/call", { name: "echo" }), await body.request("POST", "/call", { name: "sleeper" }), await body.request("POST", "/run", { code: "export default 1;" })]) {
         assert.equal(refused.status, 409, JSON.stringify(refused.body));
       }
       assert.deepEqual(await body.host.stop(), { stopped: true });
       assert.equal(runOf(await first).status, "stopped");
       assert.equal(body.history().length, 1);
 
-      // The other direction: a program is running.
-      const program = body.request("POST", "/run", { code: "await sleep(30000)" });
+      // The other direction: a module run is running.
+      const program = body.request("POST", "/run", { code: "export default async (ctx: { sleep(ms: number): Promise<void> }) => { await ctx.sleep(30000); };" });
       await running(body);
       assert.equal((await body.request("POST", "/call", { name: "echo" })).status, 409);
       await body.host.stop();
@@ -182,11 +182,11 @@ describe("a routine's ctx", () => {
     });
   }
 
-  it("shares the body's notes and status with programs", async () => {
+  it("shares the body's notes and status with module runs", async () => {
     const probe = "export default async (ctx: { notes: { get(key: string): string | undefined }; status(): Promise<{ connected: boolean }> }) => ({ note: ctx.notes.get('shared'), connected: (await ctx.status()).connected });\n";
     const body = await bodyWith({ probe });
     await using(body, async () => {
-      assert.equal(runOf(await body.request("POST", "/run", { code: "notes.set('shared', 'from a program')" })).status, "ok");
+      assert.equal(runOf(await body.request("POST", "/run", { code: "export default (ctx: { notes: { set(key: string, text: string): void } }) => ctx.notes.set('shared', 'from a program');" })).status, "ok");
       assert.deepEqual(runOf(await body.request("POST", "/call", { name: "probe" })).result, { note: "from a program", connected: true });
     });
   });

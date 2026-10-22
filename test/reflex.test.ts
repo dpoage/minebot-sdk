@@ -19,9 +19,6 @@ const THROWS = "export default (): never => {\n  throw new Error('boom');\n};\n"
 const BLOCKER = "export default (): never => {\n  for (;;) {}\n};\n";
 const PID = "export default () => process.pid;\n";
 const SAY = "export default async (ctx, args) => {\n  ctx.bot.emit('chat', args.from, args.message);\n};\n";
-const SEEN = "export default (ctx) => ctx.notes.get('seen');\n";
-
-const chat = (from: string, message: string): string => `bot.emit('chat', ${JSON.stringify(from)}, ${JSON.stringify(message)});`;
 
 /** A routine that makes the body hear a chat message, then runs `rest`. */
 const saysThen = (from: string, message: string, rest: string): string =>
@@ -29,8 +26,8 @@ const saysThen = (from: string, message: string, rest: string): string =>
 
 async function bodyWith(routines: Record<string, string>, options: FakeBodyOptions = {}): Promise<FakeBody> {
   const body = await startFakeBody(options);
-  body.writeRoutines({ ...routines, say: SAY, seen: SEEN });
-  for (const name of ["say", "seen"]) await body.ok("POST", "/bind", { kind: "action", name, routine: name });
+  body.writeRoutines({ ...routines, say: SAY });
+  await body.ok("POST", "/bind", { kind: "action", name: "say", routine: "say" });
   return body;
 }
 
@@ -98,14 +95,14 @@ describe("a reflex's firing", () => {
       const [done] = body.eventsOf("reflex_finished");
       assert.deepEqual([done!.data.name, done!.data.status], ["greet", "ok"]);
       // The routine saw the BodyEvent itself, in the args object.
-      const note = runOf(await body.request("POST", "/run", { code: "return notes.get('seen')" })).result as string;
+      const note = runOf(await body.request("POST", "/run", { code: "export default (ctx) => ctx.notes.get('seen');" })).result as string;
       assert.deepEqual(JSON.parse(note), { event: { seq: heard.seq, type: "chat", time: heard.time, data: { from: "alice", message: "hello" } } });
 
       // The firing is a history line of its own: no code, the trigger, the routine, and the event.
       const firing = body.history().find((line) => line.status === "ok" && line.trigger === "greet")!;
       assert.deepEqual([firing.code, firing.routine, firing.event], ["", "echo", { seq: heard.seq, type: "chat" }]);
       assert.equal("call" in firing, false);
-      // A firing ends in reflex_finished, not program_finished: only the two /run programs did.
+      // A firing ends in reflex_finished, not program_finished: only the two says and the read of the note did.
       assert.equal(body.eventsOf("program_finished").length, 3);
 
       const after = await reflexOf(body, "greet");
@@ -177,11 +174,11 @@ describe("a reflex's firing", () => {
 });
 
 describe("a reflex that preempts", () => {
-  it("stops a program of the agent and runs next, with reflex_fired preempted", { timeout: 30_000 }, async () => {
+  it("stops a module run of the agent and runs next, with reflex_fired preempted", { timeout: 30_000 }, async () => {
     const body = await bodyWith({ echo: ECHO });
     await using(body, async () => {
       await body.ok("POST", "/bind", { kind: "reflex", name: "urgent", routine: "echo", on: ["chat"], preempt: true, cooldownMs: 0 });
-      const program = runOf(await body.request("POST", "/run", { code: `${chat("ana", "now")} await sleep(30000);` }));
+      const program = runOf(await body.request("POST", "/run", { code: saysThen("ana", "now", "  await ctx.sleep(30000);") }));
       assert.equal(program.status, "stopped");
       await finished(body, 1);
       assert.equal(body.eventsOf("reflex_fired")[0]!.data.preempted, true);
@@ -297,10 +294,10 @@ describe("a reflex and a host's death", () => {
 });
 
 describe("a body offers no code triggers", () => {
-  it("has no triggers global in a program, and answers the code-trigger routes as unknown", async () => {
+  it("has no triggers in a run's ctx or globals, and answers the code-trigger routes as unknown", async () => {
     const body = await startFakeBody();
     await using(body, async () => {
-      assert.equal(runOf(await body.request("POST", "/run", { code: "return typeof triggers" })).result, "undefined");
+      assert.deepEqual(runOf(await body.request("POST", "/run", { code: "export default (ctx) => [typeof triggers, 'triggers' in ctx];" })).result, ["undefined", false]);
       for (const [method, url] of [["GET", "/triggers"], ["POST", "/triggers"], ["POST", "/triggers/remove"], ["POST", "/triggers/enabled"]] as const) {
         assert.deepEqual(await body.request(method, url, method === "POST" ? { name: "eat", on: ["hurt"], run: "return 1" } : undefined), { status: 404, body: { error: `no route for ${method} ${url}` } }, `${method} ${url}`);
       }

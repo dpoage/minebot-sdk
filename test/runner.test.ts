@@ -1,195 +1,33 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { EventEmitter } from "node:events";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { afterEach, beforeEach, describe, it, mock } from "node:test";
 import { hungCause, restartedError } from "../src/protocol/host.ts";
 import { BusyError, ProgramRunner } from "../src/program/runner.ts";
 
-function makeRunner(globals: Record<string, unknown> = {}) {
+const RUNNER_URL = pathToFileURL(path.join(import.meta.dirname, "..", "src", "program", "runner.ts")).href;
+
+function makeRunner() {
   const emitter = new EventEmitter();
   let aborts = 0;
   const runner = new ProgramRunner({
-    globals: () => globals,
     events: () => emitter,
     onAbort: () => aborts++,
   });
   return { runner, emitter, aborts: () => aborts };
 }
 
-// Program code runs synchronously up to its first await, so its timers exist as soon as run() returns a promise.
 describe("ProgramRunner", () => {
-  beforeEach(() => mock.timers.enable({ apis: ["setTimeout", "setInterval"] }));
-  afterEach(() => mock.timers.reset());
-
-  it("returns the program value and its logs", async () => {
-    const { runner } = makeRunner({ answer: 41 });
-    const run = await runner.run(`log("hi", { a: 1 }); console.log("there"); return answer + 1;`);
-    assert.equal(run.status, "ok");
-    assert.equal(run.result, 42);
-    assert.equal(run.logs, "hi { a: 1 }\nthere");
-  });
-
-  it("reports a thrown error with the program's own line number", async () => {
-    const { runner } = makeRunner();
-    const run = await runner.run(`const a = 1;\nthrow new Error("boom");`);
-    assert.equal(run.status, "error");
-    assert.match(run.error ?? "", /^Error: boom/);
-    assert.match(run.error ?? "", /program\.js:2/);
-  });
-
-  it("reports a syntax error instead of throwing", async () => {
-    const { runner } = makeRunner();
-    const run = await runner.run(`return (;`);
-    assert.equal(run.status, "error");
-    assert.match(run.error ?? "", /SyntaxError/);
-  });
-
-  it("times out a hung program, rejects its sleep, halts the body, and frees the runner", async () => {
-    const { runner, aborts } = makeRunner();
-    const pending = runner.run(`globalThis.reached = false; await sleep(10_000); globalThis.reached = true;`, 50);
-    mock.timers.tick(50);
-    assert.equal((await pending).status, "timeout");
-    assert.equal(aborts(), 1);
-    assert.equal(runner.running, null);
-    mock.timers.tick(10_000);
-    assert.equal((await runner.run(`return globalThis.reached;`)).result, false);
-  });
-
-  it("stop() aborts the running program with status stopped", async () => {
-    const { runner } = makeRunner();
-    const pending = runner.run(`while (!signal.aborted) await sleep(5);`);
-    assert.equal(runner.stop(), true);
-    assert.equal((await pending).status, "stopped");
-    assert.equal(runner.stop(), false);
-  });
-
-  it("rejects a second program while one runs", async () => {
-    const { runner } = makeRunner();
-    const pending = runner.run(`await sleep(30);`);
-    await assert.rejects(runner.run(`return 1;`), BusyError);
-    mock.timers.tick(30);
-    assert.equal((await pending).status, "ok");
-  });
-
-  it("does not stay busy when globals cannot be resolved", async () => {
-    let connected = false;
-    const runner = new ProgramRunner({
-      globals: () => {
-        if (!connected) throw new Error("not connected");
-        return {};
-      },
-    });
-    await assert.rejects(runner.run(`return 1;`), /not connected/);
-    connected = true;
-    assert.equal((await runner.run(`return 1;`)).result, 1);
-  });
-
-  it("keeps globalThis state between programs", async () => {
-    const { runner } = makeRunner();
-    await runner.run(`globalThis.count = 1; globalThis.inc = () => ++globalThis.count;`);
-    assert.equal((await runner.run(`return inc();`)).result, 2);
-  });
-
-  it("clears program timers and event subscriptions when the program ends", async () => {
-    const { runner, emitter } = makeRunner();
-    const pending = runner.run(`
-      globalThis.ticks = 0; globalThis.heard = 0;
-      setInterval(() => globalThis.ticks++, 5);
-      on("ping", () => globalThis.heard++);
-      await sleep(30);
-    `);
-    mock.timers.tick(30);
-    assert.equal((await pending).status, "ok");
-    assert.equal(emitter.listenerCount("ping"), 0);
-    emitter.emit("ping");
-    const before = (await runner.run(`return globalThis.ticks;`)).result;
-    assert.ok(typeof before === "number" && before > 0);
-    mock.timers.tick(30);
-    assert.deepEqual((await runner.run(`return [globalThis.ticks, globalThis.heard];`)).result, [before, 0]);
-  });
-
-  it("returns an inspected string for values that are not JSON-safe", async () => {
-    const { runner } = makeRunner();
-    const run = await runner.run(`const a = { name: "loop" }; a.self = a; return a;`);
-    assert.equal(typeof run.result, "string");
-    assert.match(String(run.result), /\[Circular \*1\]/);
-  });
-
   it("truncates logs beyond the byte cap", async () => {
-    const runner = new ProgramRunner({ globals: () => ({}), maxLogBytes: 20 });
+    const runner = new ProgramRunner({ maxLogBytes: 20 });
     const run = await runner.call(async ({ log }) => { for (let i = 0; i < 10; i++) log("0123456789"); }, { sourceDir: "/nonexistent/routines" });
     assert.equal(run.logs, "0123456789\n[logs truncated at 20 bytes]");
   });
 });
 
-// An aborted program gets a grace to settle; one that does not ends the run as hung, and the host is restarted.
-describe("restart: ProgramRunner after an abort", () => {
-  const GRACE_MS = 80;
-  const HUNG_ERROR = restartedError(hungCause(GRACE_MS));
-  const hungRunner = () => new ProgramRunner({ globals: () => ({}), graceMs: GRACE_MS });
-
-  it("returns a program that settles within the grace exactly as before, without the hung flag", async () => {
-    const runner = hungRunner();
-    const pending = runner.run(`try { await sleep(60_000); } catch { await sleep(0).catch(() => {}); }`);
-    runner.stop();
-    const run = await pending;
-    assert.deepEqual({ ...run, durationMs: 0 }, { status: "stopped", result: undefined, error: undefined, logs: "", durationMs: 0 });
-    assert.ok(!("hung" in run));
-    assert.equal(runner.running, null);
-  });
-
-  it("returns what a program that settles in its grace had logged when it was aborted, as before", async () => {
-    const runner = hungRunner();
-    const pending = runner.run(`log("working"); try { await sleep(60_000); } catch (err) { log("cleaning up"); }`);
-    runner.stop();
-    const run = await pending;
-    assert.equal(run.status, "stopped");
-    assert.equal(run.logs, "working");
-    assert.ok(!("hung" in run));
-  });
-
-  it("reports a program that never settles as hung after the grace, with the logs it wrote and the abort's status", async () => {
-    const runner = hungRunner();
-    const pending = runner.run(`log("before"); await new Promise(() => {});`);
-    const t0 = performance.now();
-    runner.stop();
-    const run = await pending;
-    const took = performance.now() - t0;
-    assert.ok(took >= GRACE_MS - 10 && took < GRACE_MS + 1000, `the run ended after ${took} ms`);
-    assert.deepEqual({ ...run, durationMs: 0 }, { status: "stopped", result: undefined, error: HUNG_ERROR, logs: "before", durationMs: 0, hung: true });
-    assert.equal(runner.running, null, "the runner is free once the run has ended");
-  });
-
-  it("reports a timed-out program that never settles as hung with status timeout", async () => {
-    const runner = hungRunner();
-    const run = await runner.run(`for (;;) await new Promise((resolve) => setTimeout(resolve, 5));`, 30);
-    assert.equal(run.status, "timeout");
-    assert.equal(run.hung, true);
-    assert.equal(run.error, HUNG_ERROR);
-  });
-
-  it("treats a program waiting on a raw timer as hung: the timer is cleared at the abort", async () => {
-    const runner = hungRunner();
-    const pending = runner.run(`await new Promise((resolve) => setTimeout(resolve, 60_000));`);
-    runner.stop();
-    assert.equal((await pending).hung, true);
-  });
-
-  it("stays busy until the grace has passed, then accepts the next run right after a stop (no 409)", async () => {
-    const runner = hungRunner();
-    const pending = runner.run(`await new Promise(() => {});`);
-    runner.stop();
-    await assert.rejects(runner.run(`return 1;`), BusyError);
-    await pending;
-    assert.equal((await runner.run(`return 1;`)).result, 1);
-
-    const settling = runner.run(`while (!signal.aborted) await sleep(5);`);
-    runner.stop();
-    await settling;
-    assert.equal((await runner.run(`return 2;`)).result, 2);
-  });
-});
-
-// A routine call is a run: it shares the lifecycle of `run(code)` (one entry at a time, abort, timeout, grace, hung).
+// A run is one entry at a time with abort, timeout, grace, and hung: a routine call, a module run, and a reflex firing all go through `call`.
 describe("ProgramRunner.call", () => {
   const sourceDir = "/nonexistent/routines";
   beforeEach(() => mock.timers.enable({ apis: ["setTimeout", "setInterval"] }));
@@ -234,19 +72,19 @@ describe("ProgramRunner.call", () => {
     assert.equal(runner.running, null);
   });
 
-  it("rejects a call while a program runs and a program while a call runs", async () => {
+  it("rejects a call while another call runs", async () => {
     const { runner } = makeRunner();
-    const program = runner.run(`await sleep(30);`);
+    const first = runner.call(async ({ sleep }) => sleep(30), { sourceDir });
     await assert.rejects(runner.call(async () => 1, { sourceDir }), BusyError);
     mock.timers.tick(30);
-    assert.equal((await program).status, "ok");
+    assert.equal((await first).status, "ok");
 
-    const call = runner.call(async ({ sleep }) => sleep(30), { sourceDir });
-    await assert.rejects(runner.run(`return 1;`), BusyError);
+    const second = runner.call(async ({ sleep }) => sleep(30), { sourceDir });
+    await assert.rejects(runner.call(async () => 1, { sourceDir }), BusyError);
     await assert.rejects(runner.call(async () => 1, { sourceDir }), BusyError);
     mock.timers.tick(30);
-    assert.equal((await call).status, "ok");
-    assert.equal((await runner.run(`return 1;`)).result, 1);
+    assert.equal((await second).status, "ok");
+    assert.equal((await runner.call(async () => 1, { sourceDir })).result, 1);
   });
 
   it("times out a call, rejects its sleep, halts the body, and frees the runner", async () => {
@@ -284,11 +122,12 @@ describe("ProgramRunner.call", () => {
   });
 });
 
+// An aborted program gets a grace to settle; one that does not ends the run as hung, and the host is restarted.
 describe("restart: ProgramRunner.call after an abort", () => {
   const GRACE_MS = 80;
   const HUNG_ERROR = restartedError(hungCause(GRACE_MS));
   const sourceDir = "/nonexistent/routines";
-  const hungRunner = () => new ProgramRunner({ globals: () => ({}), graceMs: GRACE_MS });
+  const hungRunner = () => new ProgramRunner({ graceMs: GRACE_MS });
 
   it("returns a call that settles within the grace as stopped, without the hung flag", async () => {
     const runner = hungRunner();
@@ -336,5 +175,140 @@ describe("restart: ProgramRunner.call after an abort", () => {
     assert.equal(run.status, "timeout");
     assert.equal(run.hung, true);
     assert.equal(run.error, HUNG_ERROR);
+  });
+
+  it("stays busy until the grace has passed, then accepts the next run right after a stop (no 409)", async () => {
+    const runner = hungRunner();
+    const pending = runner.call(() => new Promise(() => {}), { sourceDir });
+    runner.stop();
+    await assert.rejects(runner.call(async () => 1, { sourceDir }), BusyError);
+    await pending;
+    assert.equal((await runner.call(async () => 1, { sourceDir })).result, 1);
+
+    const settling = runner.call(async ({ signal, sleep }) => {
+      while (!signal.aborted) await sleep(5);
+    }, { sourceDir });
+    runner.stop();
+    await settling;
+    assert.equal((await runner.call(async () => 2, { sourceDir })).result, 2);
+  });
+});
+
+// During a run, console output is the run's log as well as what it was: the previous methods keep writing, and are put back when the runner is free.
+describe("ProgramRunner.call and the console", () => {
+  const sourceDir = "/nonexistent/routines";
+  const METHODS = ["log", "info", "warn", "error", "debug"] as const;
+  /** Replaces each console method with a recorder for the test, and puts the real ones back. */
+  function recording() {
+    const real = METHODS.map((method) => [method, console[method]] as const);
+    const written: string[] = [];
+    for (const method of METHODS) console[method] = (...args: unknown[]) => void written.push(`${method}:${args.join(" ")}`);
+    const recorders = METHODS.map((method) => console[method]);
+    return {
+      written,
+      recorders,
+      restore() {
+        for (const [method, write] of real) console[method] = write;
+      },
+    };
+  }
+
+  it("appends what console.log, info, warn, error, and debug write to the run's log, and still writes it where it went", async () => {
+    const seen = recording();
+    try {
+      const run = await new ProgramRunner().call(async () => {
+        console.log("a", 1);
+        console.info("b");
+        console.warn("c");
+        console.error("d");
+        console.debug("e");
+      }, { sourceDir });
+      assert.equal(run.logs, "a 1\nb\nc\nd\ne");
+      assert.deepEqual(seen.written, ["log:a 1", "info:b", "warn:c", "error:d", "debug:e"]);
+    } finally {
+      seen.restore();
+    }
+  });
+
+  it("keeps the order of ctx.log and console output in one log", async () => {
+    const seen = recording();
+    try {
+      const run = await new ProgramRunner().call(async ({ log }) => {
+        log("one");
+        console.log("two");
+        log("three");
+      }, { sourceDir });
+      assert.equal(run.logs, "one\ntwo\nthree");
+    } finally {
+      seen.restore();
+    }
+  });
+
+  it("writes between runs where it wrote before, and puts the previous methods back when the run ends, whatever its status", async () => {
+    const seen = recording();
+    try {
+      const runner = new ProgramRunner({ graceMs: 40 });
+      console.log("before");
+      assert.deepEqual(METHODS.map((method) => console[method]), seen.recorders, "a method was replaced while no run executes");
+      await runner.call(async () => {
+        console.log("during");
+        assert.notEqual(console.log, seen.recorders[0], "no run's tee is installed while it executes");
+      }, { sourceDir });
+      assert.deepEqual(METHODS.map((method) => console[method]), seen.recorders, "ok: the previous methods are not back");
+      await runner.call(async () => {
+        throw new Error("boom");
+      }, { sourceDir });
+      assert.deepEqual(METHODS.map((method) => console[method]), seen.recorders, "error: the previous methods are not back");
+      const stopped = runner.call(async ({ sleep }) => sleep(60_000), { sourceDir });
+      runner.stop();
+      await stopped;
+      assert.deepEqual(METHODS.map((method) => console[method]), seen.recorders, "stopped: the previous methods are not back");
+      const hung = runner.call(() => new Promise(() => {}), { sourceDir });
+      runner.stop();
+      assert.equal((await hung).hung, true);
+      assert.deepEqual(METHODS.map((method) => console[method]), seen.recorders, "hung: the previous methods are not back");
+      console.log("after");
+      assert.deepEqual(seen.written, ["log:before", "log:during", "log:after"]);
+      // What a later run logs is its own.
+      const next = await runner.call(async () => void console.log("next"), { sourceDir });
+      assert.equal(next.logs, "next");
+    } finally {
+      seen.restore();
+    }
+  });
+
+  it("appends the output of a program that logs in its grace after the abort, and not after the run has ended", async () => {
+    const seen = recording();
+    try {
+      const runner = new ProgramRunner({ graceMs: 60 });
+      const pending = runner.call(async ({ signal }) => {
+        await new Promise((resolve) => signal.addEventListener("abort", resolve));
+        console.log("in the grace");
+        await new Promise(() => {});
+      }, { sourceDir });
+      await Promise.resolve();
+      runner.stop();
+      const run = await pending;
+      assert.equal(run.hung, true);
+      assert.equal(run.logs, "in the grace");
+      console.log("after the run");
+      assert.deepEqual(seen.written, ["log:in the grace", "log:after the run"]);
+    } finally {
+      seen.restore();
+    }
+  });
+
+  it("reaches the process's stderr from a run, and the run's log, and only stderr when no run executes", () => {
+    const script = `
+      import { ProgramRunner } from ${JSON.stringify(RUNNER_URL)};
+      console.error("idle before");
+      const run = await new ProgramRunner().call(async () => { console.error("during"); console.warn("warned"); }, { sourceDir: "/" });
+      console.error("idle after");
+      process.stdout.write(JSON.stringify(run.logs));
+    `;
+    const child = spawnSync(process.execPath, ["--conditions=minebot-sdk:source", "--input-type=module", "-e", script], { encoding: "utf8" });
+    assert.equal(child.status, 0, child.stderr);
+    assert.equal(child.stdout, JSON.stringify("during\nwarned"));
+    assert.equal(child.stderr, "idle before\nduring\nwarned\nidle after\n");
   });
 });

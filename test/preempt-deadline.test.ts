@@ -45,6 +45,7 @@ after(async () => {
 interface Script {
   reflex: { name: string; on: string[]; run: string; timeoutMs: number; cooldownMs: number; preempt?: boolean; priority?: number };
   burstOnEvent?: { type: string; count: number; bytes: number };
+  holdPreempt?: boolean;
 }
 
 interface Scripted {
@@ -53,12 +54,19 @@ interface Scripted {
 }
 
 let scripts = 0;
-async function scripted(script: Script): Promise<Scripted> {
+/** `ackDelayMs`: how late the supervisor's history writes the start of the run that /call answers `return 2;` for, as a loaded disk makes it late. */
+async function scripted(script: Script, options: { ackDelayMs?: number } = {}): Promise<Scripted> {
   const dir = path.join(ROOT, `scripted-${++scripts}`);
   mkdirSync(dir);
   const events = new EventLog();
   const init = { stateDir: dir, startedAt: "t0", deaths: 0, reconnects: 0, applyMilestones: true, script: { graceMs: GRACE_MS, ...script } } as unknown as HostInit;
-  const host = new HostProcess({ init, events, history: new ProgramHistory({ file: path.join(dir, "history.jsonl") }), entry: TRIGGER_FIXTURE, graceMs: GRACE_MS });
+  const history = new ProgramHistory({ file: path.join(dir, "history.jsonl") });
+  const begin = history.begin.bind(history);
+  history.begin = async (code, extra) => {
+    if (options.ackDelayMs && code === "return 2;") await sleep(options.ackDelayMs);
+    return begin(code, extra);
+  };
+  const host = new HostProcess({ init, events, history, entry: TRIGGER_FIXTURE, graceMs: GRACE_MS });
   hosts.push(host);
   await host.start();
   host.join();
@@ -194,22 +202,28 @@ describe("a preemption after a run refused as busy still stops the run that exec
     assert.notEqual(await pidOf(t), before, "the host was not replaced");
   });
 
-  it("stops the executing program, leaving the host alone, when the refused run's start is acked while the preemption waits behind a burst", { timeout: 30_000 }, async () => {
-    const t = await scripted({ reflex: reflex("return 1;"), burstOnEvent: { type: "fire", count: 150, bytes: 4_000 } });
-    const before = await pidOf(t);
-    const { answer } = await startRun(t, SETTLES);
-    // The refused run's start reaches the supervisor ahead of the burst, so its ack, and the refusal, can come before the preemption is written.
-    const refusal = busy(t);
-    t.events.push("fire");
-    const result = (await answer).body as RunResult;
-    assert.deepEqual({ status: result.status, error: result.error }, { status: "stopped", error: undefined });
-    await refused(refusal);
-    assert.equal((await waitFor(t, "reflex_finished")).data.status, "ok");
-    assert.deepEqual(eventsOf(t, "reflex_fired").map((e) => e.data.preempted), [true]);
-    await sleep(GRACE_MS + KILL_MARGIN_MS + 500);
-    assert.equal(await pidOf(t), before, "the host of a program that settled in its grace was replaced");
-    assert.equal(eventsOf(t, "disconnected").length, 0);
-  });
+  // The refused run's start can be acked after the preemption is asked and before its message is written: the supervisor's history is slow to
+  // write the start, or the message waits behind a burst. Nothing orders those two paths, so under load the ack lost the race and the "refused"
+  // run started on a runner the preemption had freed, answering 200. The host holds the message until the test says, so the order is the test's.
+  for (const ackDelayMs of [0, 400]) {
+    it(`stops the executing program, leaving the host alone, when the refused run's start is acked (${ackDelayMs} ms late) between the ask and the write of a preemption that waits behind a burst`, { timeout: 30_000 }, async () => {
+      const t = await scripted({ reflex: reflex("return 1;"), burstOnEvent: { type: "fire", count: 150, bytes: 4_000 }, holdPreempt: true }, { ackDelayMs });
+      const before = await pidOf(t);
+      const { answer } = await startRun(t, SETTLES);
+      const refusal = busy(t);
+      t.events.push("fire");
+      // The executing program is still running, so the refusal is certain whenever its start is acked.
+      await refused(refusal);
+      await post(t, "/release", {});
+      const result = (await answer).body as RunResult;
+      assert.deepEqual({ status: result.status, error: result.error }, { status: "stopped", error: undefined });
+      assert.equal((await waitFor(t, "reflex_finished")).data.status, "ok");
+      assert.deepEqual(eventsOf(t, "reflex_fired").map((e) => e.data.preempted), [true]);
+      await sleep(GRACE_MS + KILL_MARGIN_MS + 500);
+      assert.equal(await pidOf(t), before, "the host of a program that settled in its grace was replaced");
+      assert.equal(eventsOf(t, "disconnected").length, 0);
+    });
+  }
 });
 
 describe("a preemption aborts only the run that executes at the ask", () => {
@@ -229,7 +243,7 @@ describe("a preemption aborts only the run that executes at the ask", () => {
     const sent: FromHost[] = [];
     const writes: (() => void)[] = [];
     const stops: number[] = [];
-    const runner = new ProgramRunner({ globals: () => ({}), graceMs: GRACE_MS });
+    const runner = new ProgramRunner({ graceMs: GRACE_MS });
     const reporter: InstanceType<typeof RunReporter> = new RunReporter({
       send: (message, written) => {
         sent.push(message);

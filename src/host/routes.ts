@@ -171,11 +171,12 @@ export function bodyRoutes({ body, builtins, recorder, routines }: RouteDeps): R
       handler: async ({ url }) => ({ deleted: body.notes.delete(decodeURIComponent(url.pathname.slice("/notes/".length))) }),
     },
     {
+      // A run is a call of module code: recorded like one, with the source as its code and the args it was given on the history line.
       method: "POST",
       path: "/run",
       handler: async ({ read, requestId }) => {
-        const { code, timeoutMs } = parse(RunInput, await read());
-        return recorder.record({ code, timeoutMs, requestId }, () => body.run(code, timeoutMs));
+        const { code, args, timeoutMs } = parse(RunInput, await read());
+        return recorder.record({ code, timeoutMs, requestId, ...(args !== undefined && { extra: { args } }) }, () => body.run(code, args, timeoutMs));
       },
     },
     {
