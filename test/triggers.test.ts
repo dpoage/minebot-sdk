@@ -88,13 +88,13 @@ const types = (events: EventLog) => events.since(0).events.map((e) => e.type);
 describe("Triggers: saving", () => {
   it("stores a trigger with its defaults, replaces one of the same name, and removes it", async () => {
     const { triggers } = await harness();
-    const first = await triggers.add({ name: "eat", on: ["hurt"], run: "return 1" });
+    const first = await triggers.addReflex({ name: "eat", on: ["hurt"], routine: "ok" });
     assert.equal(first.replaced, false);
-    assert.deepEqual([first.trigger.cooldownMs, first.trigger.timeoutMs, first.trigger.enabled, first.trigger.preempt, first.trigger.priority], [1000, 30000, true, false, 0]);
-    assert.equal((await triggers.add({ name: "eat", on: ["chat"], run: "return 2" })).replaced, true);
-    assert.deepEqual(triggers.list().map((t) => [t.name, t.on]), [["eat", ["chat"]]]);
-    assert.equal(triggers.remove("eat"), true);
-    assert.equal(triggers.remove("eat"), false);
+    assert.deepEqual([first.reflex.cooldownMs, first.reflex.timeoutMs, first.reflex.enabled, first.reflex.preempt, first.reflex.priority], [1000, 30000, true, false, 0]);
+    assert.equal((await triggers.addReflex({ name: "eat", on: ["chat"], routine: "again" })).replaced, true);
+    assert.deepEqual(triggers.reflexes().map((t) => [t.name, t.on]), [["eat", ["chat"]]]);
+    assert.equal(triggers.removeReflex("eat"), true);
+    assert.equal(triggers.removeReflex("eat"), false);
   });
 
   it("rejects bad names, trigger events, code that does not compile, and a bad `when`", async () => {
@@ -116,14 +116,14 @@ describe("Triggers: saving", () => {
 
   it("survives a reload, and reports an entry it cannot load without losing the others", async () => {
     const first = await harness();
-    await first.triggers.add({ name: "keep", on: ["hurt"], run: "return 1", when: "event.data.health < 10", cooldownMs: 0 });
-    await first.triggers.add({ name: "off", on: ["chat"], run: "return 2", enabled: false });
+    await first.triggers.addReflex({ name: "keep", on: ["hurt"], routine: "ok", when: "event.data.health < 10", cooldownMs: 0 });
+    await first.triggers.addReflex({ name: "off", on: ["chat"], routine: "again", enabled: false });
     first.triggers.close();
     const store = new JsonStore(first.file);
-    store.set("broken", { on: "hurt", run: 5 });
-    store.set("nocompile", { ...(store.get("keep") as object), run: "const = ;" });
+    store.set("broken", { on: "hurt", routine: 5 });
+    store.set("nocompile", { ...(store.get("keep") as object), when: "const = ;" });
     const second = await harness({ file: first.file });
-    assert.deepEqual(second.triggers.list().map((t) => [t.name, t.enabled]), [["keep", true], ["off", false]]);
+    assert.deepEqual(second.triggers.reflexes().map((t) => [t.name, t.enabled]), [["keep", true], ["off", false]]);
     assert.deepEqual(second.events.since(0).events.filter((e) => e.type === "trigger_error").map((e) => e.data.name), ["broken", "nocompile"]);
     second.events.push("hurt", { health: 5 });
     await settle();
@@ -164,16 +164,16 @@ describe("Triggers: firing", () => {
 
   it("never lets a `when` change the event the log holds, and cuts off one that never ends", async () => {
     const { triggers, events, ran } = await harness();
-    await triggers.add({ name: "mutate", on: ["hurt"], run: "1", when: "(event.data.health = 0, true)", cooldownMs: 0 });
+    await triggers.addReflex({ name: "mutate", on: ["hurt"], routine: "ok", when: "(event.data.health = 0, true)", cooldownMs: 0 });
     events.push("hurt", { health: 7 });
     await settle();
     assert.equal(events.since(0).events[0]!.data.health, 7);
     assert.equal(ran.length, 1);
-    await triggers.add({ name: "spin", on: ["night"], run: "1", when: "(() => { while (true); })()", cooldownMs: 0 });
+    await triggers.addReflex({ name: "spin", on: ["night"], routine: "ok", when: "(() => { while (true); })()", cooldownMs: 0 });
     events.push("night", {});
     await settle();
     assert.deepEqual(ran.map((r) => r.name), ["mutate"]);
-    assert.match(String(triggers.list().find((t) => t.name === "spin")!.lastError), /^when: Script execution timed out/);
+    assert.match(String(triggers.reflexes().find((t) => t.name === "spin")!.lastError), /^when: Script execution timed out/);
   });
 
   it("waits out the cooldown, and a disabled trigger does not fire", async () => {
@@ -295,29 +295,29 @@ describe("Triggers: queue and preemption", () => {
 describe("Triggers: failures", () => {
   it("disables a trigger that fails three times in a row, and a later success resets the count", async () => {
     const { triggers, events } = await harness();
-    await triggers.add({ name: "flaky", on: ["hurt"], run: "throw 1", cooldownMs: 0 });
+    await triggers.addReflex({ name: "flaky", on: ["hurt"], routine: "throws", cooldownMs: 0 });
     for (let i = 0; i < 2; i++) {
       events.push("hurt", {});
       await settle();
     }
-    await triggers.add({ name: "flaky", on: ["hurt"], run: "return 1", cooldownMs: 0 });
+    await triggers.addReflex({ name: "flaky", on: ["hurt"], routine: "ok", cooldownMs: 0 });
     events.push("hurt", {});
     await settle();
-    assert.equal(triggers.list()[0]!.failures, 0);
+    assert.equal(triggers.reflexes()[0]!.failures, 0);
 
-    await triggers.add({ name: "bad", on: ["night"], run: "throw 1", cooldownMs: 0 });
+    await triggers.addReflex({ name: "bad", on: ["night"], routine: "throws", cooldownMs: 0 });
     for (let i = 0; i < 4; i++) {
       events.push("night", {});
       await settle();
     }
-    const bad = triggers.list().find((t) => t.name === "bad")!;
+    const bad = triggers.reflexes().find((t) => t.name === "bad")!;
     assert.equal(bad.enabled, false);
     assert.equal(bad.fired, 3, "the fourth night did not run it");
     assert.match(bad.disabledReason!, /failed 3 times in a row; last: boom/);
     const disabled = events.since(0).events.filter((e) => e.type === "trigger_disabled");
     assert.deepEqual(disabled.map((e) => [e.data.name, e.data.failures]), [["bad", 3]]);
 
-    const enabled = triggers.setEnabled("bad", true);
+    const { reflex: enabled } = await triggers.addReflex({ name: "bad", on: ["night"], routine: "throws", cooldownMs: 0 });
     assert.deepEqual([enabled.enabled, enabled.failures, enabled.disabledReason], [true, 0, undefined]);
   });
 
@@ -349,9 +349,9 @@ describe("Triggers: failures", () => {
 describe("Triggers: races between a run's end and its result", () => {
   it("keeps the priority of a firing that started while the previous one was still being recorded", async () => {
     const { triggers, events, ran, held, runner } = await harness({ hold: true, gapMs: 30 });
-    await triggers.add({ name: "chore", on: ["night"], run: "1", cooldownMs: 0 });
-    await triggers.add({ name: "flee", on: ["hurt"], run: "1", cooldownMs: 0, priority: 5 });
-    await triggers.add({ name: "eat", on: ["low_food"], run: "1", cooldownMs: 0, preempt: true });
+    await triggers.addReflex({ name: "chore", on: ["night"], routine: "ok", cooldownMs: 0 });
+    await triggers.addReflex({ name: "flee", on: ["hurt"], routine: "ok", cooldownMs: 0, priority: 5 });
+    await triggers.addReflex({ name: "eat", on: ["low_food"], routine: "ok", cooldownMs: 0, preempt: true });
     events.push("night", {});
     await settle();
     held[0]!.release();
@@ -371,8 +371,8 @@ describe("Triggers: races between a run's end and its result", () => {
 
   it("stops a program that started after the one it stopped, instead of waiting it out", async () => {
     const { triggers, events, ran, held, runner } = await harness({ hold: true, gapMs: 20 });
-    await triggers.add({ name: "calm", on: ["night"], run: "1", cooldownMs: 0 });
-    await triggers.add({ name: "flee", on: ["hurt"], run: "1", cooldownMs: 0, preempt: true, priority: 5 });
+    await triggers.addReflex({ name: "calm", on: ["night"], routine: "ok", cooldownMs: 0 });
+    await triggers.addReflex({ name: "flee", on: ["hurt"], routine: "ok", cooldownMs: 0, preempt: true, priority: 5 });
     events.push("night", {});
     await settle();
     events.push("hurt", {});

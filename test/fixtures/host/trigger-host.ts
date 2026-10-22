@@ -14,17 +14,21 @@
 // A preempting firing stops the running program through `reporter.preempt()`, as the body's Triggers do; `burstOnEvent` queues a burst in the channel ahead of it.
 // Requests: GET /ping answers with this pid; GET /triggers with the trigger list; POST /triggers
 // saves the trigger in the body; POST /triggers/enabled `{name, enabled}` sets it enabled; POST
-// /run runs `{code, timeoutMs}` the way the body's /run does.
-// With `init.script.asReflex` the definition is a reflex (a `routine` body in place of `run`): the
-// fixture has no routine library, so its firings run `script.reflex.run` (or what POST /triggers
-// last saved under the name) as the stand-in program, and the scheduler, channel, and supervisor
-// see what they see for a body's reflex. POST /triggers then saves a reflex from the same fields
-// and GET /triggers lists the reflexes; there is no enabling a reflex.
+// /run runs `{code, timeoutMs}` the way the body's /run does; POST /call runs `{source, timeoutMs}`
+// as a routine the way the body's /call does.
+// A stand-in routine is the body of a function over `ctx` (the run's scope: `log`, `sleep`, `signal`,
+// `on`) that `runner.call` runs; the fixture has no routine library, so its source is what a routine
+// would be. With `init.script.asReflex` the definition is a reflex (a `routine` body in place of `run`):
+// its firings run `script.reflex.run` (or what POST /triggers last saved under the name) as the stand-in
+// routine, and the scheduler, channel, and supervisor see what they see for a body's reflex. POST
+// /triggers then saves a reflex from the same fields and GET /triggers lists the reflexes; there is no
+// enabling a reflex. Without it the definition is a code trigger, whose firings run `run` as a program.
 import { appendFileSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { HostEvents, preemptingRunner, RunReporter } from "../../../src/host/channel.ts";
 import { isReflex, Triggers } from "../../../src/host/triggers.ts";
 import { BusyError, ProgramRunner } from "../../../src/program/runner.ts";
+import type { ProgramScope } from "../../../src/program/scope.ts";
 import { programFinished, type FromHost, type HostInit, type ToHost } from "../../../src/protocol/host.ts";
 import { ReflexInput, TriggerInput } from "../../../src/protocol/index.ts";
 import { JsonStore } from "../../../src/store.ts";
@@ -58,17 +62,23 @@ let reporter: RunReporter;
 let triggers: Triggers;
 let runner: ProgramRunner;
 
-/** Starts a program once its start is acked, telling the test when. */
-function start(code: string, timeoutMs: number) {
+/** Where the stand-in routines' errors are located: the state directory of this host. */
+let sourceDir = "";
+
+const AsyncFunction = Object.getPrototypeOf(async () => {}).constructor as new (...parameters: string[]) => (ctx: ProgramScope) => Promise<unknown>;
+
+/** Starts a program (`routine` false: `source` is its code) or a stand-in routine (`source` is the body of its function over `ctx`) once its start is acked, telling the test when. */
+function start(source: string, timeoutMs: number, routine: boolean) {
   events.push("acked", { at: Date.now() });
-  return runner.run(code, timeoutMs);
+  if (!routine) return runner.run(source, timeoutMs);
+  return runner.call(async (scope) => new AsyncFunction("ctx", source)(scope), { timeoutMs, sourceDir });
 }
 
 /** The routine a reflex of this fixture names; the fixture has no library, so nothing loads it. */
 const ROUTINE = "stand-in";
 /** Whether this host's definitions are reflexes. */
 let asReflex = false;
-/** The program each reflex stands in for, by name. */
+/** The source each reflex stands in for, by name. */
 const programs = new Map<string, string>();
 
 function save(input: { name: string; run: string }): Promise<unknown> {
@@ -85,10 +95,12 @@ async function serve(id: number, method: string, pathname: string, body: string 
     return triggers.setEnabled(name, enabled);
   }
   if (pathname === "/triggers") return { triggers: asReflex ? triggers.reflexes() : triggers.list() };
-  if (pathname !== "/run") return { pid: process.pid };
-  const { code, timeoutMs } = JSON.parse(body ?? "{}") as { code: string; timeoutMs: number };
-  return reporter.record({ code, timeoutMs, requestId: id }, async () => {
-    const result = await start(code, timeoutMs);
+  if (pathname !== "/run" && pathname !== "/call") return { pid: process.pid };
+  const { code, source, timeoutMs } = JSON.parse(body ?? "{}") as { code: string; source: string; timeoutMs: number };
+  const routine = pathname === "/call";
+  const program = routine ? source : code;
+  return reporter.record({ code: program, timeoutMs, requestId: id }, async () => {
+    const result = await start(program, timeoutMs, routine);
     if (!result.hung) events.push("program_finished", programFinished(result));
     triggers.idle();
     return result;
@@ -100,6 +112,7 @@ process.on("message", async (message: ToHost) => {
     case "init": {
       const init = message.init as HostInit & { script: Script };
       runner = new ProgramRunner({ globals: () => ({}), graceMs: init.script.graceMs });
+      sourceDir = init.stateDir;
       reporter = new RunReporter({ send, kits: () => [], stop: () => runner.stop(), running: () => runner.running !== null });
       const reportState = () => send({ kind: "state", connected: true, deaths: init.deaths, reconnects: init.reconnects, active: [] });
       events = new HostEvents((m) => {
@@ -135,7 +148,7 @@ process.on("message", async (message: ToHost) => {
             () => {
               if (runner.running) throw new BusyError();
               started();
-              return start(code, trigger.timeoutMs);
+              return start(code, trigger.timeoutMs, isReflex(trigger));
             },
           );
         },
