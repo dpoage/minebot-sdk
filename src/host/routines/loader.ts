@@ -5,9 +5,10 @@
 //
 // The hooks touch only library modules: a `<dir>/<name>.ts` of a library directory, under a URL
 // stamped with one of that library's generations (only this loader writes such URLs), and the
-// imports such a module makes (a CommonJS package it imports is fronted by a facade, below). Every
-// other module — the body package, node_modules, any file in or under a library directory that was
-// not loaded as a routine — resolves and loads as Node would.
+// imports such a module makes (a CommonJS package it imports is fronted by a facade, below); and
+// the probes this module compiles itself, under URLs only it makes (see `withRequire`). Every other
+// module — the body package, node_modules, any file in or under a library directory that was not
+// loaded as a routine — resolves and loads as Node would.
 //
 // A library module's bare specifiers resolve as the body package's own would (the library
 // usually sits outside the package, where `vec3` or `minebot-sdk/routine` cannot be found).
@@ -20,8 +21,9 @@
 // Node code written against the body packages' documentation works in a library module: a
 // package that is CommonJS imports by name (`import { goals } from "mineflayer-pathfinder"`, which
 // Node accepts only for the names it can read off the source), and `require` is bound to a
-// `createRequire` anchored where the module's bare specifiers resolve.
-import { createHash } from "node:crypto";
+// `createRequire` anchored where the module's bare specifiers resolve, unless the module has a
+// binding of that name of its own.
+import { createHash, randomUUID } from "node:crypto";
 import { readdirSync, readFileSync, realpathSync } from "node:fs";
 import { createRequire, findPackageJSON, registerHooks, type ResolveFnOutput } from "node:module";
 import path from "node:path";
@@ -32,12 +34,12 @@ import { moduleName, readModule } from "./library.ts";
 
 export class RoutineNotFoundError extends Error {}
 
-/** One library directory: the module sources of every generation loaded so far. */
+/** One library directory: the module texts of every generation loaded so far. */
 interface Library {
-  /** Generation → module name → source. Generations share the text of a module whose bytes they share. */
+  /** Generation → module name → the text the load hook serves. Generations share the text of a module whose bytes they share. */
   readonly generations: Map<string, Map<string, string>>;
-  /** Every module text loaded so far, by the hash of its bytes. */
-  readonly texts: Map<string, string>;
+  /** The text the load hook serves for every module loaded so far (see `withRequire`), by the hash of its bytes. */
+  readonly texts: Map<string, Promise<string>>;
 }
 
 /** Library directories by the `file:` URL of their real path, ending in `/`. */
@@ -72,7 +74,7 @@ function isFileSpecifier(specifier: string): boolean {
   return specifier.startsWith(".") || specifier.startsWith("/") || specifier.startsWith("file:");
 }
 
-/** The specifier a library module's appended `require` import names; the resolve hook answers it for library modules only. */
+/** The specifier of the import `withRequire` appends; the resolve hook answers it, for library modules only, with this module. */
 const REQUIRE_SPECIFIER = "minebot:require";
 
 /**
@@ -91,22 +93,32 @@ export const routineRequire: NodeJS.Require = (() => {
   return Object.assign((id: string) => base(named(id)), base, { resolve });
 })();
 
-/** What makes a library module's own source declare a binding named `require`, which an appended import of the same name would collide with. */
-const DECLARES_REQUIRE = [
-  /\b(?:const|let|var|function\*?|class|enum|namespace)\s+require\b/,
-  /\b(?:const|let|var)\s*[{[][^;=]*\brequire\b/,
-  /\bas\s+require\b/,
-  /\bimport\s+(?:type\s+)?require\b/,
-  /\bimport\s*(?:[\w$]+\s*,\s*)?\{[^}]*\brequire\b/,
-];
+/** The line `withRequire` appends: it binds `require`, and moves no line or column of the module before it. An import is hoisted, so the binding is live from the module's first statement. */
+const REQUIRE_IMPORT = `\nimport { routineRequire as require } from "${REQUIRE_SPECIFIER}";\n`;
+
+/** The text of each probe `withRequire` is compiling, by its URL. */
+const probes = new Map<string, string>();
+
+/** What the resolve hook throws for every import a probe makes: the probe parsed, and it is never linked or evaluated. */
+const PROBE_PARSED = new Error("the probe parsed");
 
 /**
- * `source` with the `require` binding after its last character, so no line or column of the module
- * moves (an import is hoisted, so the binding is live from the module's first statement). A module
- * that declares its own `require`, as `const require = createRequire(import.meta.url)` does, is left as it is.
+ * The text the load hook serves for a library module of source `source`: `source` with `REQUIRE_IMPORT`
+ * after it when the module has no binding named `require` at module scope, else `source` alone. The
+ * engine decides, on the text it will run: the probe is that text, typed as a routine is, and it
+ * parses exactly when nothing at module scope collides with the import's binding (any declaration
+ * form, after types are stripped). A probe that fails for any other reason fails as the module itself
+ * would, which then gets its own text, so the import never changes whether a module loads.
  */
-function withRequire(source: string): string {
-  return DECLARES_REQUIRE.some((declares) => declares.test(source)) ? source : `${source}\nimport { require } from "${REQUIRE_SPECIFIER}";\n`;
+async function withRequire(source: string): Promise<string> {
+  const text = `${source}${REQUIRE_IMPORT}`;
+  const url = `minebot:require-probe/${randomUUID()}`;
+  probes.set(url, text);
+  try {
+    return (await import(url).catch((error: unknown) => error)) === PROBE_PARSED ? text : source;
+  } finally {
+    probes.delete(url);
+  }
 }
 
 /** The URL suffix of a facade (see `facadeSource`), which names no module of a library. */
@@ -168,9 +180,11 @@ function facadeSource(real: string): string {
 
 registerHooks({
   resolve(specifier, context, nextResolve) {
+    if (context.parentURL === import.meta.url && probes.has(specifier)) return { url: specifier, format: "module-typescript", shortCircuit: true };
+    if (context.parentURL !== undefined && probes.has(context.parentURL)) throw PROBE_PARSED;
     const parent = moduleOf(context.parentURL);
     if (!parent) return nextResolve(specifier, context);
-    if (specifier === REQUIRE_SPECIFIER) return { url: REQUIRE_SPECIFIER, format: "module", shortCircuit: true };
+    if (specifier === REQUIRE_SPECIFIER) return nextResolve(import.meta.url, context);
     if (!isFileSpecifier(specifier)) {
       // `node:os` and other URLs resolve alone; a package name (or a built-in without `node:`) resolves from the body package.
       if (/^[a-z][a-z0-9+.-]*:/i.test(specifier)) return nextResolve(specifier, context);
@@ -189,13 +203,14 @@ registerHooks({
     return { ...resolved, url };
   },
   load(url, context, nextLoad) {
-    if (url === REQUIRE_SPECIFIER) return { format: "module", source: `export { routineRequire as require } from ${JSON.stringify(import.meta.url)};`, shortCircuit: true };
+    const probe = probes.get(url);
+    if (probe !== undefined) return { format: "module-typescript", source: probe, shortCircuit: true };
     const real = facades.get(url);
     if (real !== undefined) return { format: "module", source: facadeSource(real), shortCircuit: true };
     const module = moduleOf(url);
     if (!module) return nextLoad(url, context);
     // The package.json above the library may say commonjs; a routine is always an ES module.
-    return { format: "module-typescript", source: withRequire(module.source), shortCircuit: true };
+    return { format: "module-typescript", source: module.source, shortCircuit: true };
   },
 });
 
@@ -225,7 +240,7 @@ export class RoutineLoader {
    * Throws `RoutineNotFoundError` when no such module exists.
    */
   async load(name: string): Promise<unknown> {
-    const sources = new Map<string, string>();
+    const texts = new Map<string, Promise<string>>();
     const hash = createHash("sha256");
     for (const file of readdirSync(this.dir).sort()) {
       const module = moduleName(file);
@@ -235,11 +250,12 @@ export class RoutineLoader {
       hash.update(`${file}\0${digest}\0`);
       // A generation holds the text every earlier generation with these bytes holds, so a save costs the changed modules only.
       let text = this.#library.texts.get(digest);
-      if (text === undefined) this.#library.texts.set(digest, (text = source));
-      sources.set(module, text);
+      if (text === undefined) this.#library.texts.set(digest, (text = withRequire(source)));
+      texts.set(module, text);
     }
-    if (!sources.has(name)) throw new RoutineNotFoundError(`no routine named "${name}"`);
+    if (!texts.has(name)) throw new RoutineNotFoundError(`no routine named "${name}"`);
     const generation = hash.digest("hex").slice(0, 16);
+    const sources = new Map(await Promise.all(Array.from(texts, async ([module, text]) => [module, await text] as const)));
     if (!this.#library.generations.has(generation)) this.#library.generations.set(generation, sources);
     return import(stamped(pathToFileURL(path.join(this.dir, `${name}.ts`)), generation));
   }

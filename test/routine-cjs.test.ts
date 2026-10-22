@@ -138,6 +138,14 @@ export default () => ({ atTop, inFunction: ${ids}.map((id) => require(id)), defa
     await assert.rejects(async () => (await load(dir, "missing")).default(), /no-such-package/);
   });
 
+  it("is no module of its own: an importer that is not a library module gets Node's answer for the specifier", async () => {
+    const dir = library({ uses: `export default () => typeof require;` });
+    assert.equal(await (await load(dir, "uses")).default(), "function");
+    // A variable, so the compiler does not try to resolve the specifier.
+    const specifier = "minebot:require";
+    await assert.rejects(import(specifier), { code: "ERR_UNSUPPORTED_ESM_URL_SCHEME" });
+  });
+
   for (const [what, declaration] of [
     ["const", `import { createRequire } from "node:module";\nconst require = createRequire(import.meta.url);`],
     ["function", `function require(id: string): string { return "own " + id; }`],
@@ -238,7 +246,7 @@ describe("typeCheckRoutine agrees with the runtime", () => {
     "named-import-missing-name": { source: `import { nope } from "mineflayer-pathfinder";\nexport default () => nope;`, runs: false, check: "failed", why: "a named import of a name the package lacks" },
   };
 
-  /** The runner a child process executes: loads and calls each row's routine through the loader at `argv[2]`, then checks it, and prints what happened. */
+  /** The runner a child process executes: loads and calls each routine through the loader at `argv[2]`, then checks it, and prints what happened. */
   const RUNNER = `
 import { pathToFileURL } from "node:url";
 const [, , root, dir, ...names] = process.argv;
@@ -247,8 +255,8 @@ const { invokeRoutine } = await import(pathToFileURL(root + "/src/routine/invoke
 const { typeCheckRoutine } = await import(pathToFileURL(root + "/src/host/typecheck.ts").href);
 const out = {};
 for (const name of names) {
-  const runs = await new RoutineLoader(dir).load(name).then((module) => invokeRoutine(module, name, {}, undefined)).then(() => true, () => false);
-  out[name] = { runs, check: await typeCheckRoutine(dir, name) };
+  const run = await new RoutineLoader(dir).load(name).then((module) => invokeRoutine(module, name, {}, undefined)).then((value) => ({ runs: true, value }), (error) => ({ runs: false, error: String(error) }));
+  out[name] = { ...run, check: await typeCheckRoutine(dir, name) };
 }
 console.log(JSON.stringify(out));
 `;
@@ -256,6 +264,7 @@ console.log(JSON.stringify(out));
   /** A copy of the package without `@types/node`, as an installed package finds it (`@types/node` is a development dependency). */
   function packageWithoutNodeTypes(): string {
     const root = path.join(SCRATCH, "package-without-node-types");
+    if (fs.existsSync(root)) return root;
     mkdirSync(path.join(root, "node_modules"), { recursive: true });
     cpSync(path.join(PACKAGE_ROOT, "src"), path.join(root, "src"), { recursive: true });
     cpSync(path.join(PACKAGE_ROOT, "package.json"), path.join(root, "package.json"));
@@ -269,25 +278,125 @@ console.log(JSON.stringify(out));
   }
 
   const environments = [
-    ["with @types/node (the repository)", () => PACKAGE_ROOT],
-    ["without @types/node (an installed package)", packageWithoutNodeTypes],
+    ["with @types/node (the repository)", () => PACKAGE_ROOT, true],
+    ["without @types/node (an installed package)", packageWithoutNodeTypes, false],
   ] as const;
 
-  for (const [environment, rootOf] of environments) {
+  type Outcome = { runs: boolean; value?: unknown; error?: string; check: { status: string; errors?: string[] } };
+  /** Runs and checks the routines `sources` (name → source) in a child process, as the package at `root` does. */
+  function runAndCheck(root: string, sources: Record<string, string>): Record<string, Outcome> {
+    const dir = library(sources);
+    const runner = path.join(SCRATCH, `runner${counter++}.ts`);
+    writeFileSync(runner, RUNNER);
+    const env = { ...process.env };
+    delete env.NODE_OPTIONS;
+    delete env.NODE_TEST_CONTEXT;
+    const child = spawnSync(process.execPath, ["--conditions=minebot-sdk:source", runner, root, dir, ...Object.keys(sources)], { encoding: "utf8", env, cwd: root });
+    assert.equal(child.status, 0, child.stderr);
+    return JSON.parse(child.stdout) as Record<string, Outcome>;
+  }
+
+  const VEC3 = typeof bodyRequire("vec3");
+  /** An expression that tells the module's own `require` (a `createRequire` at the library, which finds no body package) from the routine's. */
+  const WHOSE = `(() => { try { require.resolve("vec3"); return "routine require"; } catch { return "own require"; } })()`;
+  /**
+   * Modules with and without a binding named `require` at module scope. `value` is what the routine
+   * returns: the routine's `require` where it has none, its own binding where it has one, which it
+   * then loads with as it would without the routine's. A row with `nodeTypes` uses a Node built-in or
+   * `import.meta.url`, which only a project with `@types/node` types; without it the check fails on
+   * those, and on nothing about `require`.
+   */
+  const REQUIRE_ROWS: Record<string, { source: string; value: unknown; nodeTypes?: true; why: string }> = {
+    "plain-in-function": { source: `export default () => typeof require("vec3");`, value: VEC3, why: "no binding: require in a function" },
+    "plain-at-top": { source: `const eol = require("node:os").EOL;\nexport default () => eol.length;`, value: os.EOL.length, why: "no binding: require at the top level" },
+    "comment-mentions-require-call": { source: `// Node packages such as require("vec3") style CommonJS ones work here.\nexport default () => typeof require("vec3");`, value: VEC3, why: "seat A B1: a comment that calls require" },
+    "jsdoc-mentions-require": { source: `/** Calls the function require provides. */\nexport default () => typeof require("vec3");`, value: VEC3, why: "seat A B1: a JSDoc that names require" },
+    "comment-let-require": { source: "// never write `let require`\nexport default () => typeof require(\"vec3\");", value: VEC3, why: "seat A B1: a comment that declares require" },
+    "comment-const-require": { source: `// const require = createRequire(import.meta.url) is not needed here\nexport default () => typeof require("vec3");`, value: VEC3, why: "seat B row 42: a comment that declares require" },
+    "string-var-require": { source: `export default () => ["var require is not used", typeof require("vec3")];`, value: ["var require is not used", VEC3], why: "seat A B1: a string that declares require" },
+    "template-const-require": { source: "const note = `const require = ${1}`;\nexport default () => [note, typeof require(\"vec3\")];", value: ["const require = 1", VEC3], why: "a template literal that declares require" },
+    "for-of-destructuring-in-function": {
+      source: `export default () => {\n  const m = new Map([["a", 1]]);\n  const out: number[] = [];\n  for (const [k] of m) out.push(k.length + require("node:os").EOL.length);\n  return out;\n};`,
+      value: [1 + os.EOL.length],
+      why: "seat A B1: a for-of head with a destructuring const, then require",
+    },
+    "for-of-require-at-top": { source: `const seen: number[] = [];\nfor (const require of [1, 2]) seen.push(require);\nexport default () => [seen, typeof require("vec3")];`, value: [[1, 2], VEC3], why: "a for-of head that binds require in the loop alone" },
+    "for-in-require-in-function": { source: `export default () => {\n  const keys: string[] = [];\n  for (const require in { a: 1 }) keys.push(require);\n  return [keys, typeof require("vec3")];\n};`, value: [["a"], VEC3], why: "a for-in head that binds require in the loop alone" },
+    "nested-function-const-require": {
+      source: `function other() {\n  const require = (id: string) => "inner " + id;\n  return require("x");\n}\nexport default () => [other(), typeof require("vec3")];`,
+      value: ["inner x", VEC3],
+      why: "seat A N4: const require in another function",
+    },
+    "parameter-require": { source: `const call = (require: (id: string) => string) => require("p");\nexport default () => [call((id) => id), typeof require("vec3")];`, value: ["p", VEC3], why: "seat A row 33: a parameter named require" },
+    "export-as-require": { source: `const x = 1;\nexport { x as require };\nexport default () => typeof require("vec3");`, value: VEC3, why: "seat A N4: an export named require binds nothing" },
+    "declare-const-require": {
+      source: `declare const require: (id: string) => { Vec3: unknown };\nexport default () => typeof require("vec3").Vec3;`,
+      value: "function",
+      why: "seat A N4: declare const is a type, which stripping erases: no binding at run time, the declared type in the check",
+    },
+    "let-list-require": {
+      source: `import { createRequire } from "node:module";\nlet a = 1, require = createRequire(import.meta.url);\nexport default () => [a, ${WHOSE}];`,
+      value: [1, "own require"],
+      nodeTypes: true,
+      why: "seat B B1: let list",
+    },
+    "const-destructuring-list-require": {
+      source: `import * as mod from "node:module";\nconst { createRequire } = mod, require = createRequire(import.meta.url);\nexport default () => ${WHOSE};`,
+      value: "own require",
+      nodeTypes: true,
+      why: "seat B B1: destructuring, then require, in one const",
+    },
+    "const-list-across-lines": {
+      source: `import { createRequire } from "node:module";\nimport { fileURLToPath } from "node:url";\nconst __filename = fileURLToPath(import.meta.url),\n  require = createRequire(import.meta.url);\nexport default () => [typeof __filename, ${WHOSE}];`,
+      value: ["string", "own require"],
+      nodeTypes: true,
+      why: "seat B B1: const list across lines",
+    },
+    "destructuring-default-require": {
+      source: `const lib: { a?: number; require: (id: string) => string } = { require: (id) => "own " + id };\nconst { a = 1, require } = lib;\nexport default () => [a, require("vec3")];`,
+      value: [1, "own vec3"],
+      why: "seat B B1: destructuring with a default, then require",
+    },
+    "const-require": {
+      source: `import { createRequire } from "node:module";\nconst require = createRequire(import.meta.url);\nexport default () => ${WHOSE};`,
+      value: "own require",
+      nodeTypes: true,
+      why: "seat A row 34: const require = createRequire(import.meta.url)",
+    },
+    "var-list-require": { source: `var b = 2, require = (id: string) => "own " + id;\nexport default () => [b, require("vec3")];`, value: [2, "own vec3"], why: "var list" },
+    "array-destructuring-require": { source: `const [require = (id: string) => "own " + id]: Array<(id: string) => string> = [];\nexport default () => require("vec3");`, value: "own vec3", why: "array destructuring with a default" },
+    "function-require": { source: `export function require(id: string): string {\n  return "own " + id;\n}\nexport default () => require("vec3");`, value: "own vec3", why: "seat B row 37: an exported function declaration" },
+    "default-function-require": { source: `export default function require() {\n  return require.name;\n}`, value: "require", why: "a default-exported function declaration named require" },
+    "class-require": { source: `class require {\n  static own = "own class";\n}\nexport default () => require.own;`, value: "own class", why: "a class declaration" },
+    "import-as-require": {
+      source: `import { createRequire as require } from "node:module";\nexport default () => require.name;`,
+      value: "createRequire",
+      nodeTypes: true,
+      why: "an import binding: import { x as require }",
+    },
+  };
+
+  for (const [environment, rootOf, nodeTypes] of environments) {
     it(`runs and checks each row alike ${environment}`, () => {
-      const root = rootOf();
-      const dir = library(Object.fromEntries(Object.entries(ROWS).map(([name, row]) => [name, row.source])));
-      const runner = path.join(SCRATCH, `runner${counter++}.ts`);
-      writeFileSync(runner, RUNNER);
-      const env = { ...process.env };
-      delete env.NODE_OPTIONS;
-      delete env.NODE_TEST_CONTEXT;
-      const child = spawnSync(process.execPath, ["--conditions=minebot-sdk:source", runner, root, dir, ...Object.keys(ROWS)], { encoding: "utf8", env, cwd: root });
-      assert.equal(child.status, 0, child.stderr);
-      const got = JSON.parse(child.stdout) as Record<string, { runs: boolean; check: { status: string; errors?: string[] } }>;
+      const got = runAndCheck(rootOf(), Object.fromEntries(Object.entries(ROWS).map(([name, row]) => [name, row.source])));
       for (const [name, row] of Object.entries(ROWS)) {
         assert.equal(got[name]!.runs, row.runs, `${name} (${row.why}) runs`);
         assert.equal(got[name]!.check.status, row.check, `${name} (${row.why}) is checked: ${JSON.stringify(got[name]!.check)}`);
+      }
+    });
+
+    it(`gives require to a module exactly when it has no binding of that name at module scope, and checks it alike, ${environment}`, () => {
+      const got = runAndCheck(rootOf(), Object.fromEntries(Object.entries(REQUIRE_ROWS).map(([name, row]) => [name, row.source])));
+      for (const [name, row] of Object.entries(REQUIRE_ROWS)) {
+        const outcome = got[name]!;
+        assert.ok(outcome.runs, `${name} (${row.why}) runs: ${outcome.error}`);
+        assert.deepEqual(outcome.value, row.value, `${name} (${row.why}) returns`);
+        if (row.nodeTypes && !nodeTypes) {
+          assert.equal(outcome.check.status, "failed", `${name} (${row.why}) is checked: ${JSON.stringify(outcome.check)}`);
+          assert.ok(outcome.check.errors!.every((error) => !error.includes("'require'")), `${name}: ${JSON.stringify(outcome.check)}`);
+        } else {
+          assert.equal(outcome.check.status, "passed", `${name} (${row.why}) is checked: ${JSON.stringify(outcome.check)}`);
+        }
       }
     });
   }
