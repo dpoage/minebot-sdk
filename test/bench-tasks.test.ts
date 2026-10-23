@@ -414,7 +414,7 @@ describe("the body of every generated task", () => {
   });
 
   it("runs the body behind the removal step that must succeed before the body starts", async () => {
-    const script = 'node /opt/minebot/bench/tier/remove.ts "$@" && exec minebot "$@"';
+    const script = 'node --conditions=minebot-sdk:source /opt/minebot/bench/tier/remove.ts "$@" && exec minebot "$@"';
     for (const row of await taskRows()) {
       assert.deepEqual(row.command.slice(0, 5), ["sh", "-c", script, "tier", "body"], row.dir);
       // The compose file writes each "$@" as "$$@", so that compose does not interpolate it.

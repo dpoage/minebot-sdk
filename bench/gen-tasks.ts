@@ -580,7 +580,7 @@ const HEALTHCHECK = [
  * The shell script of the body's command: remove what the tier withholds, then start the body, with the body's arguments as "$@".
  * Compose reads `$` in a value as interpolation and takes `$$` for a literal `$`, so each "$@" is written "$$@" in the file.
  */
-const TIER_WRAPPER = 'node /opt/minebot/bench/tier/remove.ts "$$@" && exec minebot "$$@"';
+const TIER_WRAPPER = 'node --conditions=minebot-sdk:source /opt/minebot/bench/tier/remove.ts "$$@" && exec minebot "$$@"';
 
 /**
  * The compose file of a trial. Harbor reserves `main` for the agent and merges this file over its own.

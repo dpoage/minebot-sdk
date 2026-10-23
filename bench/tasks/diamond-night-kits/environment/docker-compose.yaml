@@ -38,7 +38,7 @@ services:
     command:
       - sh
       - -c
-      - "node /opt/minebot/bench/tier/remove.ts \"$$@\" && exec minebot \"$$@\""
+      - "node --conditions=minebot-sdk:source /opt/minebot/bench/tier/remove.ts \"$$@\" && exec minebot \"$$@\""
       - tier
       - body
       - --bot=agent
