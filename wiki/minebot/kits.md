@@ -8,14 +8,16 @@ mc_version: "26.1"
 
 A built-in routine is a ready-made action for one kind of work, such as walking to a position or digging a block. Built-in routines come in modules. You call a routine as `<module>.<routine>` with one object argument. Every call checks its arguments and fails with the schema when an argument is wrong.
 
-```sh
 <!-- builtins:move -->
+```sh
 minebot call move.to --args '{"position":[10,64,10],"range":2,"timeoutMs":30000}'
+```
 <!-- /builtins:move -->
 <!-- builtins:gatherer -->
+```sh
 minebot call gatherer.gather --args '{"blocks":"*_log","count":4}'
-<!-- /builtins:gatherer -->
 ```
+<!-- /builtins:gatherer -->
 
 A call is a run. It prints the status, the logs, and the result, and only one run goes at a time. The default timeout is 60 seconds (`--timeout <ms>`). The MCP tool `call_routine` takes the same name and `args`. Without `--args`, a call passes `{}`.
 

@@ -157,7 +157,7 @@ function rank(documents: readonly Document[], query: string): { document: Docume
   return rankFields(counted, queryTerms).map(({ document, score }) => ({ document: document.document, score }));
 }
 
-/** The modules `names` lists and everything they use, in catalog order. Throws naming a module the catalog does not have. The one closure: the body's offer and the benchmark's removal (bench/tier/remove.ts) both use it. */
+/** The modules `names` lists and everything they use, in catalog order. Throws naming a module the catalog does not have. The body's offer and the benchmark's removal (bench/tier/remove.ts) use it; bench/gen-tasks.ts keeps a copy for the task files, which test/bench-tasks.test.ts pins to the body's offer. */
 export function closureOf(names: readonly string[]): BuiltinModule[] {
   const byName = new Map(BUILTIN_MODULES.map((module) => [module.name, module] as const));
   const wanted = new Set<string>();

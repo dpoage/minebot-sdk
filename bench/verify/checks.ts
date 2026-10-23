@@ -39,9 +39,9 @@ export type WorldSnapshot = z.infer<typeof WorldSnapshot>;
 const CONTAINER_BLOCKS = ["chest", "trapped_chest"];
 const checkBase = { id: z.string(), description: z.string() };
 /**
- * Which snapshot a world check grades: the one taken for this step (`current`, the default), or the one the grader took for the step before
- * (`previous`), so a later step can re-grade a condition of an earlier one from the grader's own record of it. `previous` fails
- * when the task has no step before.
+ * Which snapshot a `distance` check grades (the only check that takes a choice): the one taken for this step (`current`, the default), or the one
+ * the grader took for the step before (`previous`), so a later step can re-grade a condition of an earlier one from the grader's own record of it.
+ * `previous` fails when the task has no step before.
  */
 const snapshotChoice = z.enum(["current", "previous"]).optional();
 
