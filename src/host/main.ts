@@ -178,7 +178,7 @@ async function shutdown(): Promise<void> {
   try {
     world?.close();
   } catch (err) {
-    // Closing right after start can throw (mb-1mk); the stats are flushed and the host still goes.
+    // Closing right after start can throw; the stats are flushed and the host still goes.
     console.error("[minebot] closing the body failed:", err);
   }
   // Runs the abort ended report their end, and everything sent so far is written, before the host goes.

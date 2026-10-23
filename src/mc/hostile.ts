@@ -1,5 +1,5 @@
-// Which creatures count as hostile. One predicate serves the `hostile_near` event, the survival kit,
-// and the combat kit, so they never disagree about what a threat is.
+// Which creatures count as hostile. One predicate serves the `hostile_near` event and the survival and
+// combat routines, so they never disagree about what a threat is.
 
 /** Registry category of creatures that attack on sight. The registry `type` is not enough: phantoms, slimes, magma cubes, ghasts, and shulkers have type `mob`. */
 const HOSTILE_KIND = "Hostile mobs";

@@ -177,7 +177,7 @@ The body runs one run at a time: runs, calls, and reflex firings share one slot.
 
 `globalThis` keeps its values between runs. A restart of the body clears them, and so does a restart of the bot host, the process that runs the modules. The bot host restarts after a crash, and when the body kills it for a run that does not stop. A timer or a `bot.on` listener that you create yourself outlives the run, and one that throws after the run has ended restarts the bot host.
 
-The body does not add notices to run results. Facts stay in the observation: it keeps the open-sky view and `programsWithoutChange`, and `minebot observe --brief` adds `no change for N programs` when 3 or more runs in a row changed neither position nor inventory.
+The body does not add notices to run results. Facts stay in the observation: it keeps the open-sky view and `programsWithoutChange`, and `minebot observe --brief` adds `no change for N runs` when 3 or more runs in a row changed neither position nor inventory.
 
 The observation reports, besides position, vitals, inventory, and nearby creatures: `armor` (head, chest, legs, feet) and `offhand`, `effects` (name, `amplifier` where 0 is level I, seconds `remaining`), the `biome`, the block the player is `standingOn`, the block in the line of sight within 5 blocks (`lookingAt`), and the `light` at the feet. `light.sky` is absent when the chunk has no sky light data. The brief line adds the biome, and lists armor, the offhand item, and effects only while there are some.
 
@@ -250,7 +250,7 @@ The operator decides which built-in modules a body **offers**. The flag `--built
 - Without `--builtins`, the body offers every built-in module.
 - `minebot body --bot ana --builtins gatherer,crafter` offers the two named modules and every module they use (`move`, `sense`, `dig`, `inventory`, `items`, `place`, `craft`, and `furnace`).
 - `--builtins none` offers none. A name that is not a built-in module stops the start.
-- A module that the body does not offer is absent from every surface: it is not listed, documented, searched, or called, and a routine cannot import it.
+- A module that the body does not offer is absent from every surface: it is not listed, documented, searched, or called, and a routine that imports `minebot-sdk/routines/<module>` for it fails. That refusal is not a security boundary: an import of an encoded subpath reaches the module.
 
 There is no active set to choose from. Every offered routine is callable at any time.
 

@@ -37,8 +37,8 @@ export default defineRoutine(
 `;
 
 const EXAMPLE_RUN = `// A run: a module the body evaluates each time \`minebot run runs/say-hello.ts\` sends it. \`./hello.ts\`
-// is the library routine \`hello\` once you have saved it, so the file name must not be the same as a
-// routine's: runs/hello.ts would import itself. What the default export returns is the run's result.
+// is the library module \`hello\` once you have saved it. Give a run a file name that no routine has: in
+// runs/hello.ts, \`tsc\` would read \`./hello.ts\` as the run itself. The run's result is its default export; a function is called with (ctx, args).
 import type { RoutineContext } from "minebot-sdk/routine";
 import hello from "./hello.ts";
 
@@ -70,8 +70,8 @@ const README = `# Minebot workspace
 Routines live in \`routines/\`, runs in \`runs/\`, routine tests in \`test/\`. All TypeScript, checked by \`tsc\`.
 
 - A routine is a module whose default export is \`defineRoutine({ description, args, returns }, async (ctx, args) => result)\`. The body keeps saved routines in its library and runs them by name.
-- A run is a module that \`minebot run\` sends to the body. It runs once and is gone. Its \`./x.ts\` imports are library routines, so a run calls what you saved. The result is what its default export returns (or, for a default export that is a function, what it returns when called with \`(ctx, args)\`).
-- A run file must not have the same file name as a routine: \`runs/hello.ts\` would import itself, not \`routines/hello.ts\`. Here the run is \`runs/say-hello.ts\`.
+- A run is a module that \`minebot run\` sends to the body. It runs once and is gone. Its \`./x.ts\` imports are library modules, so a run calls what you saved. The result is its default export; a default export that is a function is called with \`(ctx, args)\`, and what it returns is the result.
+- A run file must not have the same file name as a routine: in \`runs/hello.ts\`, \`tsc\` reads \`./hello.ts\` as the run itself, not as \`routines/hello.ts\`. Here the run is \`runs/say-hello.ts\`.
 
 1. Install: \`npm install\`
 2. Start a body (a separate process: \`npx minebot body\`, with the server flags you need; \`npx minebot --help\`)
@@ -106,8 +106,8 @@ async function packageJson(dir: string): Promise<string> {
   )}\n`;
 }
 
-// The body's routine check options, plus what only a workspace has: the Node types it installs, and the run folder.
-// The body's check also sets customConditions when it runs from source; a workspace takes the installed package.
+// The body's routine check options, plus `types: ["node"]` (the body's check sets it too, when @types/node is installed next to the library) and the
+// run folder in rootDirs. The body's check also sets customConditions when it runs from source; a workspace takes the installed package.
 const TSCONFIG = `${JSON.stringify(
   {
     compilerOptions: {

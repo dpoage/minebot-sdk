@@ -43,15 +43,15 @@ export class HostEvents implements EventSink {
 export interface RunReporterOptions {
   /** Sends a message to the supervisor. `written` is called once the message is written to the channel, or could not be. */
   send: (message: FromHost, written?: () => void) => void;
-  /** Aborts the running program; false when none runs. */
+  /** Aborts the running run; false when none runs. */
   stop: () => boolean;
-  /** Whether the runner runs a program now (one whose code has started and not settled, its grace included). */
+  /** Whether the runner runs code now (one whose code has started and not settled, its grace included). */
   running: () => boolean;
 }
 
 /**
- * The runner as the reflex scheduler sees it: busy while the run slot holds a run (reserved, running, or in its grace), and a
- * preemption is the recorder's to carry out, so the supervisor's deadline covers the abort. The body and the reflex fixture both wire their Triggers with this.
+ * The runner as the reflex scheduler sees it. Its `running` is the recorder's `busy`: true while the run slot is taken (a run reserved,
+ * running, or in its grace), not only while a run's code executes. A preemption is the recorder's to carry out, so the supervisor's deadline covers the abort. The body and the reflex fixture both wire their Triggers with this.
  */
 export function preemptingRunner(recorder: Pick<RunRecorder, "busy" | "preempt">): { readonly running: boolean; stop(): boolean } {
   return {

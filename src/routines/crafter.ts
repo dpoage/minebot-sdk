@@ -1,6 +1,6 @@
 // The crafter routines: plan recipe chains and make sure a crafting table or a furnace is there to
-// craft and smelt them at — built from the move, sense, place, inventory, craft, items, and
-// furnace primitives.
+// craft and smelt them at — calling the move, inventory, craft, and furnace primitives, and placing
+// the table or furnace itself.
 import { type Block, defineRoutine, isAir, type RoutineContext, smeltInputs, Vec3, z } from "minebot-sdk/routine";
 import * as move from "minebot-sdk/routines/move";
 import * as inventory from "minebot-sdk/routines/inventory";

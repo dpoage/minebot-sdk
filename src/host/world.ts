@@ -1,5 +1,5 @@
 // The bot host's world: the state directory, the built-in routines on offer, the routine library and its
-// bindings, the wiki, and the Body, served through the route table. Everything a program reads synchronously lives here.
+// bindings, the wiki, and the Body, served through the route table.
 import { mkdirSync } from "node:fs";
 import path from "node:path";
 import type { HostInit, EventSink } from "../protocol/host.ts";
@@ -30,7 +30,7 @@ export interface World {
 /** Builds the world from the host's init. Throws with the reason when it cannot (an unknown built-in module, an unreadable state). */
 export function buildWorld(options: HostInit, io: { events: EventSink; recorder: RunRecorder }): World {
   const state = new BodyState(options.stateDir);
-  // Per-routine call counts live in the state directory; this one instance takes the built-in routines' counts.
+  // `KitStats` counts the calls of built-in routines, into kit-stats.json in the state directory; this one instance takes every count.
   const stats = new KitStats(state.kitStats);
   const builtins = new Builtins({ offer: options.builtins, stats });
   setOfferGate(builtins.allows);

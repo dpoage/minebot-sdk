@@ -127,7 +127,7 @@ export type Observation =
       program: { running: boolean; elapsedMs?: number };
       /** Looking straight up from the player; water counts as cover, leaves do not. */
       sky: { open: boolean; cover?: string; solidAbove: number; waterAbove: number };
-      /** Programs in a row that ended with the same position and inventory. */
+      /** Runs and calls in a row that ended with the same position and inventory. */
       programsWithoutChange: number;
     };
 
@@ -196,7 +196,7 @@ export type TypeCheck = { status: "passed" } | { status: "failed"; errors: strin
 export interface BuiltinInfo {
   name: string;
   description: string;
-  /** The built-in modules this one calls; every one of them is offered too. */
+  /** The built-in modules offered together with this one (`uses`); every one of them is offered too. */
   uses: string[];
   /** Routine names, in the order the module declares them, e.g. `to`. */
   routines: string[];

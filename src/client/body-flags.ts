@@ -66,7 +66,7 @@ export const OPERATOR_FLAG_HELP = [
   `          --port <port> (default ${DEFAULT_SERVER_PORT}), --api-host <host> (default 127.0.0.1),`,
   "          --auth <offline|microsoft> (default offline; microsoft signs in with a device code on first start",
   "          and caches tokens in <state>/auth; the in-game name is the account's, and --username keys the cache),",
-  "          --api-port <port> (default 0, a free port), --history <file> (append each program run as JSON),",
+  "          --api-port <port> (default 0, a free port), --history <file> (append one JSON line per run, call and reflex firing),",
   "          --builtins <a,b|none> (built-in routine modules the body offers, with the modules they use; default: every built-in module),",
   "          --wiki <off|read|write> (default read; write lets the agent add lessons),",
   "          --wiki-dir <dir> (curated pages; default the repository's wiki/),",

@@ -1,7 +1,7 @@
 // Loads routine modules from a library directory as real ES modules, through Node's resolve and
 // load hooks, registered once per process (hooks cannot be unregistered, and one set serves every
 // directory). Library modules are flat `<dir>/<name>.ts` files that may import each other, the
-// body's packages, and Node built-ins.
+// body's packages, Node built-ins, and `data:` URLs.
 //
 // The hooks touch only library modules and runs: a `<dir>/<name>.ts` of a library directory, under a URL
 // stamped with one of that library's generations (only this loader writes such URLs), a run under
@@ -24,8 +24,10 @@
 // `createRequire` anchored where the module's bare specifiers resolve, unless the module has a
 // binding of that name of its own.
 //
-// A library module may not import (or `require`) a built-in routine module the body does not offer:
-// the body sets that offer once, process-wide (`setOfferGate`), and the hook refuses the specifier.
+// The hook refuses a bare `minebot-sdk/routines/<module>` specifier (import or `require`), in a library module or a run, for a built-in routine
+// module the body does not offer (the body sets the offer once, process-wide, with `setOfferGate`). The refusal is a courtesy
+// to an agent, not a boundary: a %-encoded subpath (`minebot-sdk/routines/inv%65ntory`) or a `createRequire` anchored in the
+// package reaches the module.
 //
 // A run (`RoutineLoader.run`) is a module of its own, evaluated once per run, whose imports resolve
 // as a library module's do: `./<name>.ts` is the library's module of that name at the library's
@@ -33,7 +35,7 @@
 // too, whatever it names) is refused. A run never changes a generation: its text is kept apart
 // from the library's, under a URL no library module has (`<dir>/.run.ts` with a query of its own;
 // the hooks serve it, and its imports, like a library module's). A body without a library has runs
-// too, which import packages and Node built-ins only.
+// too, which import packages, Node built-ins and `data:` URLs, and no file.
 import { createHash, randomUUID } from "node:crypto";
 import { readdirSync, readFileSync, realpathSync } from "node:fs";
 import { createRequire, findPackageJSON, registerHooks, type ResolveFnOutput } from "node:module";
@@ -105,7 +107,7 @@ function moduleOf(url: string | undefined): Served | undefined {
 
 /** The error for a relative specifier that names no module of the importer's library. */
 function refusal(specifier: string): Error {
-  return new Error(`routine modules may import only the library's own modules (<name>.ts next to them), packages, and Node built-ins; "${specifier}" is none of these`);
+  return new Error(`routine modules may import only the library's own modules (<name>.ts next to them), packages, Node built-ins, and data: URLs; "${specifier}" is none of these`);
 }
 
 /** A specifier that names a file by path or URL, rather than a package, a built-in, or another kind of URL. */
@@ -113,10 +115,10 @@ function isFileSpecifier(specifier: string): boolean {
   return specifier.startsWith(".") || specifier.startsWith("/") || specifier.startsWith("file:");
 }
 
-/** Whether a library module may import a bare specifier; unset (before a body is built) allows every one. Process-wide: one body runs in a host process. */
+/** Whether a library module or a run may import a bare specifier; unset (before a body is built) allows every one. Process-wide: one body runs in a host process. */
 let offerGate: ((specifier: string) => boolean) | undefined;
 
-/** Sets which bare specifiers library modules may import: the body's offer of built-in routine modules, which are `minebot-sdk/routines/<module>`. */
+/** Sets which bare specifiers library modules and runs may import: the body's offer of built-in routine modules, which are `minebot-sdk/routines/<module>`. */
 export function setOfferGate(gate: (specifier: string) => boolean): void {
   offerGate = gate;
 }
@@ -126,7 +128,7 @@ function checkOffered(specifier: string): void {
   if (offerGate !== undefined && !offerGate(specifier)) throw new Error(`routine modules may not import "${specifier}": this body does not offer that built-in routine module`);
 }
 
-/** The specifier of the import `withRequire` appends; the resolve hook answers it, for library modules only, with this module. */
+/** The specifier of the import `withRequire` appends; the resolve hook answers it, for library modules and runs only, with this module. */
 const REQUIRE_SPECIFIER = "minebot:require";
 
 /**
@@ -301,7 +303,7 @@ interface Scan {
 export class RoutineLoader {
   /** The directory's real path; every module URL and every error frame uses it. */
   readonly dir: string;
-  /** Whether `dir` is a routine library; a loader that is not has no routines to load, and its runs import only packages and Node built-ins. */
+  /** Whether `dir` is a routine library; a loader that is not has no routines to load, and its runs import packages, Node built-ins and `data:` URLs, and no file. */
   readonly library: boolean;
   readonly #library: Library | undefined;
 

@@ -110,7 +110,7 @@ export function burnTicks(item: string): number {
   return 0;
 }
 
-/** Fuels the kit picks on its own, in order of preference: clean fuel first, then wood. Never buckets, blocks, or tools. */
+/** Fuels `pickFuel` picks on its own, in order of preference: clean fuel first, then wood. Never buckets, blocks, or tools. */
 const AUTO_FUEL_ORDER = ["charcoal", "coal"];
 
 function autoFuelRank(name: string): number {

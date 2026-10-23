@@ -44,7 +44,7 @@ const API_DOC_FALLBACK = "Call the api_reference tool for how a run works and wh
 export const TOOL_SETS = ["core", "full"] as const;
 export type ToolSet = (typeof TOOL_SETS)[number];
 
-/** The tools of the core set. Programs reach everything else through their globals. */
+/** The tools of the core set. A run reaches everything else through its context (`ctx`). */
 const CORE_TOOLS: Readonly<Record<string, true>> = { observe: true, run_program: true, stop_program: true, wait_for: true, get_events: true, api_reference: true, builtin_docs: true, call_routine: true, bind_routine: true };
 
 /** Which kinds of name a call takes: an action's (the body has routines) and a built-in's (it has built-ins). */
@@ -87,7 +87,7 @@ export function toolPlan(features: BodyFeatures, toolSet: ToolSet): Record<strin
     },
     list_builtins: {
       enabled: caps.builtins,
-      description: "The built-in routine modules this body offers, their uses, and how often each built-in routine succeeded and failed on this body (stats).",
+      description: "The built-in routine modules this body offers, their uses, and how often each built-in routine that has run on this body succeeded and failed (stats).",
     },
     builtin_docs: {
       enabled: caps.builtins,
@@ -95,7 +95,7 @@ export function toolPlan(features: BodyFeatures, toolSet: ToolSet): Record<strin
     },
     builtin_search: {
       enabled: caps.builtins,
-      description: "Find built-in routines by what they do, e.g. 'collect logs': ranks the built-in routines and their modules by name, description, and argument names. Each hit says how often the built-in routine worked on this body.",
+      description: "Find built-in routines by what they do, e.g. 'collect logs': ranks the built-in routines and their modules by name, description, and argument names. A hit for a built-in routine that has run on this body says how often it worked.",
     },
     builtin_source: {
       enabled: caps.builtins,
@@ -243,7 +243,7 @@ export async function serveMcp(bodyName: string, toolSet: ToolSet): Promise<void
 
   server.registerTool(
     "stop_program",
-    { description: "Abort the running program and halt movement, pathfinding and digging.", inputSchema: {} },
+    { description: "Abort the current run and halt movement, pathfinding and digging.", inputSchema: {} },
     () => call(async (c) => json(await c.stop())),
   );
 
@@ -477,7 +477,7 @@ export async function serveMcp(bodyName: string, toolSet: ToolSet): Promise<void
   }
 
   for (const tool of [listBuiltins, builtinDocs, builtinSearch, builtinSource, wikiSearch, wikiRead, wikiList, addLesson, callRoutine, bindRoutine, listRoutines, routineSave, routineSource, routineVersions, routineRevert, unbindRoutine]) tool.disable();
-  // Ungated tools outside the core set: programs have notes, status(), and bot.chat.
+  // Ungated tools outside the core set: a run's context has notes, status(), and bot.chat.
   if (toolSet !== "full") for (const tool of [status, notesList, notesSet, notesDelete, sendChat]) tool.disable();
   await sync();
   await server.connect(new StdioServerTransport());

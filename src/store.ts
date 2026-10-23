@@ -1,4 +1,4 @@
-// A small JSON key-value file that survives body restarts. Bodies keep notes, milestones, and per-kit state in these.
+// A small JSON key-value file that survives body restarts. Bodies keep notes, milestones, and routine stores in these.
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
@@ -25,7 +25,7 @@ export class JsonStore {
     }
   }
 
-  /** A store that never touches the disk: for a kit that runs once without being saved. */
+  /** A store that never touches the disk: for tests and for the `minebot-sdk/testing` harness, whose notes and `ctx.store` namespaces live in memory. */
   static memory(): JsonStore {
     return new JsonStore("", { memory: true });
   }

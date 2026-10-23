@@ -115,6 +115,6 @@ function builtinsDoc(features: BodyFeatures): string {
   const imports = caps.routines ? ` A routine imports a module (import * as <module> from "minebot-sdk/routines/<module>") and calls its routines as <module>.<routine>(ctx, { ... }).` : "";
   // Without a library the routines section, which says what a call is, is absent.
   const call = ` POST /call { name: "<module>.<routine>"${example}, args?, timeoutMs? } calls one as a run${caps.routines ? ", with no bind" : ""}, and answers like /run: status, result, error, logs.${caps.routines ? "" : " A call is a run: one at a time with the other runs, stopped by /stop, ended by its timeout."}`;
-  return `Built-in routines: ${features.builtins.join(", ")}. Reference: minebot builtins docs [module...] (GET /builtins/docs?names=), minebot builtins search <query> (GET /builtins/search?q=), minebot builtins source <module> (GET /builtins/source?name=); GET /builtins lists the modules with how often each built-in routine succeeded and failed on this body.${imports}${call}`;
+  return `Built-in routines: ${features.builtins.join(", ")}. Reference: minebot builtins docs [module...] (GET /builtins/docs?names=), minebot builtins search <query> (GET /builtins/search?q=), minebot builtins source <module> (GET /builtins/source?name=); GET /builtins lists the modules with how often each built-in routine that has run succeeded and failed on this body.${imports}${call}`;
 }
 

@@ -46,7 +46,7 @@ The operator usually sets milestones. `minebot milestones` prints them. A set is
 
 ## When nothing changes
 
-The one-line observation (`minebot observe --brief`) ends with `no change for N programs` once several programs in a row change neither your position nor your inventory. That is your signal to change your approach, not to repeat the program. See `flows/escape-underground` if you are trapped.
+The one-line observation (`minebot observe --brief`) ends with `no change for N runs` once several runs in a row change neither your position nor your inventory. That is your signal to change your approach, not to repeat the run. See `flows/escape-underground` if you are trapped.
 
 ## Waiting
 

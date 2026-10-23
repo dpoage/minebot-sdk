@@ -145,7 +145,7 @@ describe("reference text", () => {
 });
 
 describe("search", () => {
-  /** The queries of the base kit tests (kit search: agent-kit.test, the body API's /kits/search), plus ones that tie. */
+  /** The queries of the base kit tests at 5218f99 (kit search in agent-kit.test and the body API's /kits/search, both since deleted), plus ones that tie. */
   const CORPUS = ["walk", "collect logs", "collect drops", "waypoints", "crafter", "pickaxe", "xyzzy plugh", "   ", "smelt iron", "eat food", "place block", "chat players", "follow player", "bucket water", "dig down", "attack hostile", "craft table", "inventory", "items", "gather", "make", "list", "scan", "stop", "to", "position range"];
 
   const builtins = new Builtins({ stats: memoryStats() });

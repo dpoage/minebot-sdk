@@ -28,7 +28,7 @@ export interface BuiltinModule {
   /** The module's name, as in `minebot-sdk/routines/<name>` and the `<name>.<routine>` call name. */
   name: string;
   description: string;
-  /** The built-in modules this one calls. */
+  /** The built-in modules offered together with this one (the offer is the closure of `uses`); the module imports only modules listed here. */
   uses: readonly string[];
   /** The module's routines by export name, in declaration order. */
   routines: Readonly<Record<string, Routine>>;

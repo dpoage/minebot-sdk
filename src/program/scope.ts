@@ -1,12 +1,12 @@
-// The environment a running program or kit action sees. Shared by the runner and the kit
-// framework, so nested kit actions receive the calling program's scope unchanged.
+// The environment one run sees: its log, sleep, signal, and event subscription. The runner builds it
+// and `routineContext` spreads it into the context of a routine call, a module run, or a reflex firing.
 export interface ProgramScope {
   log: (...args: unknown[]) => void;
-  /** Resolves after `ms`; rejects when the program is aborted. */
+  /** Resolves after `ms`; rejects when the run is aborted. */
   sleep: (ms: number) => Promise<void>;
   /** Fires on timeout or stop. */
   signal: AbortSignal;
-  /** Subscribes to an event source event until the program ends. */
+  /** Subscribes to an event source event until the run ends. */
   on: (event: string, handler: (...args: unknown[]) => void) => void;
 }
 

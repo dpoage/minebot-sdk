@@ -1,5 +1,5 @@
 // The explorer routines: explore new ground, summarize surroundings, remember named places, and
-// climb out of holes to open sky — built from the move, sense, and dig primitives.
+// climb out of holes to open sky — calling the move and dig primitives.
 import { biomeAt, type Block, defineRoutine, Point, Position, type RoutineContext, skyAbove, toVec3, Vec3, z } from "minebot-sdk/routine";
 import * as move from "minebot-sdk/routines/move";
 import * as dig from "minebot-sdk/routines/dig";
