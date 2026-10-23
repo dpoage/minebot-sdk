@@ -455,7 +455,6 @@ interface TaskRow {
   dir: string;
   task: string;
   tier: string;
-  /** The container's command. */
   command: string[];
   /** The body's arguments: the command after `body`. */
   argv: string[];

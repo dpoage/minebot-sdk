@@ -14,8 +14,8 @@
 // module the tier promises fails the run instead of silently taking the Mineflayer path.
 //
 // The default export takes the run's ctx and arguments, and the helpers read them as `ctx`, `bot`, `log`, `sleep`, `signal`,
-// `notes`, `target` and `builtins`; a `!` or a helper marks what the compiler needs and the program did not (a value that
-// is dereferenced without a check, and the type of a catch variable).
+// `notes`, `target` and `builtins`. A `!` marks a value that the types allow to be absent and that the program uses without a check
+// (it dereferences the value or passes it on); `errMessage` reads the message of a catch variable, whose type is unknown.
 import { goals } from "mineflayer-pathfinder";
 import type { Block, Entity, Item, RoutineContext } from "minebot-sdk/routine";
 import type * as vec3 from "vec3";

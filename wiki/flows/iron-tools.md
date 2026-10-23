@@ -14,10 +14,6 @@ Prerequisites: a stone pickaxe, a crafting table, sticks.
 
 Underground is dark: hostile mobs spawn there at any time of day.
 
-<!-- builtins -->
-With built-in routines:
-
-<!-- /builtins -->
 <!-- builtins:crafter -->
 - `minebot call crafter.make --args '{"item":"furnace"}'` crafts the furnace.
 <!-- /builtins:crafter -->

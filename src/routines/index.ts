@@ -63,7 +63,7 @@ const CATALOG: readonly CatalogEntry[] = [
   entry("social", () => import("./social.ts"), ["say", "waitForChat", "players", "follow", "give"]),
 ];
 
-// Imported one after the other, in catalog order, as the static imports were: a module's own imports of the modules it uses evaluate first.
+// Imported one after the other, in catalog order, so that a module's own imports of the modules it uses evaluate first.
 const present: BuiltinModule[] = [];
 for (const { name, load } of CATALOG) if (existsSync(path.join(BUILTIN_ROUTINE_DIR, `${name}.ts`))) present.push(await load());
 

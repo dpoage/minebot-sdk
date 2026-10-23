@@ -81,7 +81,7 @@ Routines live in \`routines/\`, runs in \`runs/\`, routine tests in \`test/\`. A
 6. Test routines without a server: \`npm test\` (\`test/\` uses \`minebot-sdk/testing\`)
 7. Check types: \`npx tsc\`. Because the tsconfig lists both folders in \`rootDirs\`, an error in a routine's signature shows up where a run calls it.
 
-Saving a routine again replaces it on the running body. \`npx minebot builtins docs\` lists the built-in routines you may import from \`minebot-sdk/routines/<module>\`.
+Saving a routine again replaces it on the running body. If the body offers built-in routines, \`npx minebot builtins docs\` lists them, and a routine imports each from \`minebot-sdk/routines/<module>\`.
 `;
 
 const OwnPackage = z.object({
