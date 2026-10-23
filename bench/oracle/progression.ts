@@ -1,7 +1,9 @@
 // Reference ("oracle") program for the benchmark tasks. It proves each task is solvable
 // through the body API and that its verifier passes. Run it as a module with the target in its arguments:
 //   minebot run progression.ts --args '{"target":"wooden_pickaxe","builtins":false}' --timeout 900000
-// or save it as a routine (`minebot routines save progression.ts`) and call it with the same arguments.
+// or save it as a routine (`minebot routines save progression.ts`) and call it with the same arguments. The solutions of the
+// benchmark tasks use all three paths: collect-logs saves it, binds it as the action `oracle`, and calls it; craft-wooden-pickaxe
+// saves it and runs run-saved.ts, which imports it from the library; every other solution runs this file.
 // target is "logs" (collect LOG_GOAL logs), "wooden_pickaxe", "stone_pickaxe", "iron_pickaxe", "diamond_pickaxe", "shelter"
 // (dig in and seal the hole; the shell waits for the nights), "stock_chest", "stash_chest" (the first session of
 // two-sessions), "retrieve_logs" (the second), or "dawn" (strike what comes close until the first night is over).
@@ -11,10 +13,9 @@
 // that does not offer it), so with `builtins: false` no built-in import is evaluated, and a body that fails to offer a
 // module the tier promises fails the run instead of silently taking the Mineflayer path.
 //
-// The file is the former progression.js moved into the default export, so that the run's ctx and arguments reach the
-// helpers as `ctx`, `bot`, `log`, `sleep`, `signal`, `notes`, `target` and `builtins`; a `!` or a helper marks what the
-// compiler needs and the program did not (a value the old code dereferenced without a check, and the type of a catch
-// variable).
+// The default export takes the run's ctx and arguments, and the helpers read them as `ctx`, `bot`, `log`, `sleep`, `signal`,
+// `notes`, `target` and `builtins`; a `!` or a helper marks what the compiler needs and the program did not (a value that
+// is dereferenced without a check, and the type of a catch variable).
 import { goals } from "mineflayer-pathfinder";
 import type { Block, Entity, Item, RoutineContext } from "minebot-sdk/routine";
 import type * as vec3 from "vec3";

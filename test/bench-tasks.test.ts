@@ -54,14 +54,11 @@ describe("generated tasks", () => {
   });
 
   it("runs a program that the oracle knows in every solution", async () => {
-    const oracle = await readFile(path.join(BENCH, "oracle", "progression.js"), "utf8");
-    const solutions = (await readdir(TASKS, { recursive: true })).filter((file) => file.endsWith(`solution${path.sep}solve.sh`));
-    assert.ok(solutions.length >= TIERS.length * 8, `only ${solutions.length} solutions`);
-    for (const file of solutions) {
-      const target = /const TARGET = "(\w+)"/.exec(await read(file))![1]!;
-      // The three early targets are the default branch of the dispatch; the others are named in it.
-      if (!["logs", "wooden_pickaxe", "stone_pickaxe"].includes(target)) assert.ok(oracle.includes(`TARGET === "${target}"`), `${file}: the oracle has no ${target}`);
-    }
+    const oracle = await readFile(path.join(BENCH, "oracle", "progression.ts"), "utf8");
+    const targets = (await solutions()).map((solution) => solution.target);
+    assert.ok(targets.length >= TIERS.length * 8, `only ${targets.length} solutions`);
+    // The three early targets are the default branch of the dispatch; the others are named in it.
+    for (const target of new Set(targets)) if (!["logs", "wooden_pickaxe", "stone_pickaxe"].includes(target)) assert.ok(oracle.includes(`target === "${target}"`), `the oracle has no ${target}`);
   });
 
   it("requires every step of the iron chain, and does not claim that the world has no iron", async () => {
@@ -77,6 +74,7 @@ describe("generated tasks", () => {
     const solve = await read("survive-nights-raw", "solution", "solve.sh");
     assert.match(solve, /minebot wait --types day/);
     assert.match(solve, /-lt 2 \]/);
+    assert.ok(solve.indexOf("/solution/progression.ts") < solve.indexOf("minebot wait"), "the wait comes after the program");
   });
 
   it("makes diamond-night require the whole chain, the first dawn, and no death, with reflexes on", async () => {
@@ -89,9 +87,103 @@ describe("generated tasks", () => {
       assert.deepEqual(spec.checks.map((c) => c.type), ["nights", "deaths"]);
       assert.doesNotMatch(await read(`diamond-night-${tier}`, "environment", "docker-compose.yaml"), /--no-reflexes|--no-routines/);
     }
-    const solve = await read("diamond-night-raw", "solution", "solve.sh");
-    assert.match(solve, /const TARGET = "diamond_pickaxe"/);
-    assert.match(solve, /bot\.time\.day < 1/);
+    // The pickaxe is made first; the dawn program keeps the player alive until the first night is over.
+    assert.match(await read("diamond-night-raw", "solution", "solve.sh"), /"target":"diamond_pickaxe".*\n.*"target":"dawn"/);
+  });
+});
+
+/** One solution directory of a generated task: its family and tier, the step of a multi-step task, and the oracle target that its solve.sh passes. */
+interface Solution {
+  dir: string;
+  family: string;
+  tier: string;
+  target: string;
+}
+
+/** The oracle target of each family's solution, by step name for a multi-step task. */
+const SOLUTION_TARGETS: Record<string, string | Record<string, string>> = {
+  "collect-logs": "logs",
+  "craft-wooden-pickaxe": "wooden_pickaxe",
+  "craft-stone-pickaxe": "stone_pickaxe",
+  "iron-tools": "iron_pickaxe",
+  "diamond-night": "diamond_pickaxe",
+  "survive-nights": "shelter",
+  "stock-chest": "stock_chest",
+  "two-sessions": { stash: "stash_chest", retrieve: "retrieve_logs" },
+};
+
+/** Every solution directory under bench/tasks, with the target that its family and step give it. */
+async function solutions(): Promise<Solution[]> {
+  const found: Solution[] = [];
+  for (const dir of await readdir(TASKS)) {
+    const tier = TIERS.find((name) => dir.endsWith(`-${name}`));
+    assert.ok(tier, `${dir}: no tier in the name`);
+    const family = dir.slice(0, -tier.length - 1);
+    const targets = SOLUTION_TARGETS[family];
+    assert.ok(targets, `${family}: no oracle target is listed for this family`);
+    if (typeof targets === "string") found.push({ dir: path.join(dir, "solution"), family, tier, target: targets });
+    else for (const [step, target] of Object.entries(targets)) found.push({ dir: path.join(dir, "steps", step, "solution"), family, tier, target });
+  }
+  return found;
+}
+
+/** The commands of a solve.sh after `set -eu`: no comments, no blank lines. */
+function commandsOf(script: string): string[] {
+  const lines = script.split("\n");
+  return lines.slice(lines.indexOf("set -eu") + 1).filter((line) => line.trim() !== "" && !line.startsWith("#"));
+}
+
+describe("the solution of every generated task", () => {
+  // Contract of the oracle: the tier offers built-ins (kits, full) or not (raw, wiki), and collect-logs and craft-wooden-pickaxe go through the library in every tier.
+  const SAVE = ["minebot routines save /solution/progression.ts", "minebot bind action oracle progression"];
+  function expected(solution: Solution): string[] {
+    const args = JSON.stringify({ target: solution.target, builtins: solution.tier === "kits" || solution.tier === "full" });
+    if (solution.family === "collect-logs") return [...SAVE, `minebot call oracle --args '${args}' --timeout 900000`];
+    if (solution.family === "craft-wooden-pickaxe") return [...SAVE, `minebot run /solution/run-saved.ts --args '${args}' --timeout 900000`];
+    return [`minebot run /solution/progression.ts --args '${args}' --timeout 900000`];
+  }
+
+  it("runs the oracle module the way the family and the tier give, with nothing but the wait and the dawn program after it", async () => {
+    const all = await solutions();
+    assert.equal(all.length, TIERS.length * 9, "one solution per tier of each of the 7 single-step families and 2 steps of two-sessions");
+    for (const solution of all) {
+      const commands = commandsOf(await read(solution.dir, "solve.sh"));
+      const head = expected(solution);
+      assert.deepEqual(commands.slice(0, head.length), head, solution.dir);
+      const after = commands.slice(head.length);
+      if (solution.family === "diamond-night") {
+        const builtins = solution.tier === "kits" || solution.tier === "full";
+        assert.deepEqual(after, [`minebot run /solution/progression.ts --args '${JSON.stringify({ target: "dawn", builtins })}' --timeout 1800000`], solution.dir);
+      } else if (solution.family === "survive-nights") {
+        assert.equal(after[0], "nights=0", solution.dir);
+        assert.ok(after.some((line) => line.includes("minebot wait --types day")), solution.dir);
+      } else assert.deepEqual(after, [], solution.dir);
+    }
+  });
+
+  it("holds in each solution directory exactly the files that its solve.sh reads, and keeps no progression.js anywhere in bench", async () => {
+    for (const solution of await solutions()) {
+      const files = (await readdir(path.join(TASKS, solution.dir))).sort();
+      assert.deepEqual(files, solution.family === "craft-wooden-pickaxe" ? ["progression.ts", "run-saved.ts", "solve.sh"] : ["progression.ts", "solve.sh"], solution.dir);
+      for (const file of files.filter((name) => name.endsWith(".ts"))) {
+        assert.equal(await read(solution.dir, file), await readFile(path.join(BENCH, "oracle", file), "utf8"), `${solution.dir}/${file} is the file of bench/oracle`);
+      }
+      // Every file that solve.sh names under /solution is in the directory.
+      const named = new Set([...(await read(solution.dir, "solve.sh")).matchAll(/\/solution\/([\w.-]+)/g)].map((match) => match[1]!));
+      for (const file of named) assert.ok(files.includes(file), `${solution.dir}: solve.sh reads ${file}`);
+    }
+    const everything = await readdir(BENCH, { recursive: true });
+    assert.deepEqual(everything.filter((file) => path.basename(file) === "progression.js"), []);
+  });
+
+  it("sends the body a module that uses require and a named import from a body package, on every path", async () => {
+    for (const solution of await solutions()) {
+      // The module that the body evaluates: the run when solve.sh runs a file, the saved routine when it calls one.
+      const sent = (await read(solution.dir, "solve.sh")).includes("/solution/run-saved.ts") ? "run-saved.ts" : "progression.ts";
+      const source = await read(solution.dir, sent);
+      assert.match(source, /\brequire\(/, `${solution.dir}/${sent}`);
+      assert.match(source, /import \{[^}]+\} from "(mineflayer|mineflayer-pathfinder|vec3|minecraft-data|prismarine-[a-z]+|zod)"/, `${solution.dir}/${sent}`);
+    }
   });
 });
 

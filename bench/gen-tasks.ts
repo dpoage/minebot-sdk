@@ -17,8 +17,8 @@ const PLAYER = "agent";
 type Milestones = NonNullable<MilestoneSpecInput["milestones"]>;
 type Milestone = Milestones[number];
 
-/** The programs of bench/oracle/progression.js, by TARGET. */
-type OracleTarget = "logs" | "wooden_pickaxe" | "stone_pickaxe" | "iron_pickaxe" | "diamond_pickaxe" | "shelter" | "stock_chest" | "stash_chest" | "retrieve_logs";
+/** The programs of bench/oracle/progression.ts, by `target`. */
+type OracleTarget = "logs" | "wooden_pickaxe" | "stone_pickaxe" | "iron_pickaxe" | "diamond_pickaxe" | "shelter" | "stock_chest" | "stash_chest" | "retrieve_logs" | "dawn";
 
 /** One agent session of a task: its goal, its time, its reference solution, and what grades it. */
 interface Stage {
@@ -33,10 +33,10 @@ interface Stage {
   minReward?: number;
   /** The reward needs every milestone, not only the last (see `gradeTrial` in verify/checks.ts). */
   allRequired?: boolean;
-  /** TARGET passed to bench/oracle/progression.js by the reference solution. */
+  /** `target` passed to bench/oracle/progression.ts by the reference solution. */
   oracleTarget: OracleTarget;
-  /** Shell lines that run after the reference program in solve.sh. */
-  oracleAfter?: string;
+  /** Shell lines that run after the reference program in solve.sh, given whether the tier offers built-ins. */
+  oracleAfter?: (builtins: boolean) => string;
   milestones: Milestones;
   checks?: CheckInput[];
 }
@@ -237,17 +237,8 @@ You are graded when you stop or when the time limit passes, whichever is first. 
         allRequired: true,
         agentTimeoutSec: 5400,
         oracleTarget: "diamond_pickaxe",
-        oracleAfter: `# The pickaxe is made and the player is walled in. Keep it alive until the server's clock passes the end of the first night.
-cat > /tmp/dawn.js <<'EOF'
-while (bot.time.day < 1) {
-  const foe = bot.nearestEntity((e) => e.kind === "Hostile mobs" && e.position.distanceTo(bot.entity.position) < 3.5);
-  if (foe) bot.attack(foe);
-  await sleep(1000);
-}
-return bot.time.time;
-EOF
-minebot run --timeout 1800000 /tmp/dawn.js
-`,
+        // The pickaxe is made and the player is walled in. Keep it alive until the server's clock passes the end of the first night.
+        oracleAfter: (builtins) => `${runOracle("dawn", builtins, 1800000)}\n`,
         milestones: [
           ...ironChain,
           // Diamond ore is dug, and it drops diamonds.
@@ -279,7 +270,7 @@ You are graded when you stop or when the time limit passes, whichever is first. 
         grading: `The server's clock and the number of times the player died are graded instead of the items: the clock has to show at least ${NIGHTS} days (${NIGHTS * 24000} ticks) and the player must not have died.`,
         agentTimeoutSec: 3600,
         oracleTarget: "shelter",
-        oracleAfter: `# The shelter is built. Wait for the dawn that ends each night: each \`day\` event is one. A wait that times out counts for nothing.
+        oracleAfter: () => `# The shelter is built. Wait for the dawn that ends each night: each \`day\` event is one. A wait that times out counts for nothing.
 nights=0
 while [ "$nights" -lt ${NIGHTS} ]; do
   out=$(minebot wait --types day --timeout 1500000 || true)
@@ -742,15 +733,40 @@ set -eu
 exec node /opt/verifier/bench/verify/check.ts /tests/milestones.json
 `;
 
-function solveSh(stage: Stage): string {
+/** `minebot run` of the oracle module with its arguments: the program of every solution that does not go through the library. */
+const runOracle = (target: OracleTarget, builtins: boolean, timeoutMs = 900000): string =>
+  `minebot run /solution/progression.ts --args '${JSON.stringify({ target, builtins })}' --timeout ${timeoutMs}`;
+
+/**
+ * The solutions that reach the oracle the way an agent reaches a routine it saved: collect-logs calls it by the action name `oracle`,
+ * and craft-wooden-pickaxe runs bench/oracle/run-saved.ts, a run that imports it from the library. Every tier takes the same path,
+ * so each trial of those two tasks exercises the library, the bindings, and a `call` or a run that imports a library module.
+ */
+const SAVED_SOLUTIONS: Partial<Record<OracleTarget, "call" | "run-saved">> = { logs: "call", wooden_pickaxe: "run-saved" };
+
+/** The oracle commands of solve.sh: the files are the ones the emit loop copies into the solution directory. */
+function oracleCommands(stage: Stage, builtins: boolean): string[] {
+  const how = SAVED_SOLUTIONS[stage.oracleTarget];
+  if (how === undefined) return [runOracle(stage.oracleTarget, builtins)];
+  const args = JSON.stringify({ target: stage.oracleTarget, builtins });
+  return [
+    "minebot routines save /solution/progression.ts",
+    "minebot bind action oracle progression",
+    how === "call" ? `minebot call oracle --args '${args}' --timeout 900000` : `minebot run /solution/run-saved.ts --args '${args}' --timeout 900000`,
+  ];
+}
+
+function solveSh(stage: Stage, builtins: boolean): string {
   return `#!/bin/sh
 # Oracle: runs the reference program through the same API the agent uses.
 # Harbor uploads this directory to /solution; the agent's image does not contain the program.
 set -eu
-{ echo 'const TARGET = "${stage.oracleTarget}";'; cat /solution/progression.js; } \\
-  | minebot run --timeout 900000
-${stage.oracleAfter ?? ""}`;
+${oracleCommands(stage, builtins).join("\n")}
+${stage.oracleAfter?.(builtins) ?? ""}`;
 }
+
+/** The files solve.sh reads, from bench/oracle. */
+const solutionFiles = (stage: Stage): string[] => ["progression.ts", ...(SAVED_SOLUTIONS[stage.oracleTarget] === "run-saved" ? ["run-saved.ts"] : [])];
 
 async function emit(file: string, content: string, executable = false): Promise<void> {
   await mkdir(path.dirname(file), { recursive: true });
@@ -774,8 +790,8 @@ for (const task of TASKS) {
       await emit(path.join(stageDir, "tests", "Dockerfile"), VERIFIER_DOCKERFILE);
       await emit(path.join(stageDir, "tests", "test.sh"), TEST_SH, true);
       await emit(path.join(stageDir, "tests", "milestones.json"), `${JSON.stringify(spec, null, 2)}\n`);
-      await emit(path.join(stageDir, "solution", "solve.sh"), solveSh(stage), true);
-      await copyFile(path.join(import.meta.dirname, "oracle", "progression.js"), path.join(stageDir, "solution", "progression.js"));
+      await emit(path.join(stageDir, "solution", "solve.sh"), solveSh(stage, tier.builtins.length > 0), true);
+      for (const file of solutionFiles(stage)) await copyFile(path.join(import.meta.dirname, "oracle", file), path.join(stageDir, "solution", file));
     }
   }
 }
