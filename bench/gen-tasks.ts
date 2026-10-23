@@ -3,7 +3,7 @@
 // Edit this file, not the generated directories; the generator deletes and rewrites bench/tasks/.
 import { chmod, copyFile, mkdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { BUILTIN_KITS } from "../src/kit/index.ts";
+import { BUILTIN_MODULES } from "../src/routines/index.ts";
 import { MC_VERSION } from "../src/mc/version.ts";
 import type { CheckInput } from "./verify/checks.ts";
 import { type MilestoneSpecInput, offlineUuid } from "./verify/milestones.ts";
@@ -46,10 +46,8 @@ interface TaskSpec {
   description: string;
   keywords: string[];
   difficulty: string;
-  /** Kits that the kits and full tiers offer besides the tier's own; the primitives they use come with them. */
-  extraKits?: string[];
-  /** The body starts with triggers, and the instruction describes them. Every other task starts with `--no-triggers`. */
-  triggers?: boolean;
+  /** Built-in modules that the kits and full tiers offer besides the tier's own; the modules they use come with them. */
+  extraBuiltins?: string[];
   /** The instruction describes the notes. Only a task in which the notes matter says so. */
   notes?: boolean;
   /** One session per stage. A task with several stages is a multi-step Harbor task: a new agent session starts at each. */
@@ -58,43 +56,44 @@ interface TaskSpec {
 
 /**
  * What the agent gets on top of the base body. The base body is Mineflayer plus notes, status (deaths and
- * reconnects), the event log with blocking waits, and the one-line observation; every tier has it. Every tier also locks its kits.
- * The lock is advisory: programs run in a node:vm context that is not a security boundary (see compose()).
+ * reconnects), the event log with blocking waits, the one-line observation, and the routine library with its action and reflex bindings;
+ * every tier has it, and every tier starts its body with the same flags except `--builtins` and `--wiki`. A tier differs by the built-in
+ * routine modules its body offers and by the wiki: those are the tier features.
  */
 interface Tier {
   name: string;
-  kits: string[];
+  /** Built-in modules the body is told to offer (`--builtins`); the modules they use are offered with them. Empty offers none. */
+  builtins: string[];
   wiki: "off" | "read";
 }
 
 const TIERS: Tier[] = [
-  { name: "raw", kits: [], wiki: "off" },
-  { name: "kits", kits: ["gatherer", "crafter", "builder", "explorer", "social"], wiki: "off" },
-  { name: "wiki", kits: [], wiki: "read" },
-  { name: "full", kits: ["gatherer", "crafter", "builder", "explorer", "social"], wiki: "read" },
+  { name: "raw", builtins: [], wiki: "off" },
+  { name: "kits", builtins: ["gatherer", "crafter", "builder", "explorer", "social"], wiki: "off" },
+  { name: "wiki", builtins: [], wiki: "read" },
+  { name: "full", builtins: ["gatherer", "crafter", "builder", "explorer", "social"], wiki: "read" },
 ];
 
+/** The built-in modules a tier names in a task: the tier's own, plus the task's extra modules. None in a tier without built-ins. */
+const tierBuiltins = (task: TaskSpec, tier: Tier): string[] => (tier.builtins.length > 0 ? [...tier.builtins, ...(task.extraBuiltins ?? [])] : []);
+
 /**
- * The kits a body offers when it is started with `--kits=<names>`: the named kits and, transitively, the kits they use.
- * Primitives use no kits; routines build on them. The instruction names both groups.
+ * The built-in modules a body offers when it is started with `--builtins=<names>`: the named modules and, transitively, the modules they use,
+ * in catalog order (the body's own closure over `uses`, which a live test compares with its /features).
  */
-function offered(names: string[]): { primitives: string[]; routines: string[] } {
-  const byName = new Map(BUILTIN_KITS.map((kit) => [kit.name, kit]));
+function offered(names: string[]): string[] {
+  const byName = new Map(BUILTIN_MODULES.map((module) => [module.name, module]));
   const all = new Set<string>();
   const add = (name: string): void => {
-    const kit = byName.get(name);
-    if (!kit) throw new Error(`unknown kit "${name}"`);
+    const module = byName.get(name);
+    if (!module) throw new Error(`unknown built-in module "${name}"`);
     if (all.has(name)) return;
     all.add(name);
-    kit.uses.forEach(add);
+    module.uses.forEach(add);
   };
   names.forEach(add);
-  const kits = BUILTIN_KITS.filter((kit) => all.has(kit.name));
-  return { primitives: kits.filter((k) => k.uses.length === 0).map((k) => k.name), routines: kits.filter((k) => k.uses.length > 0).map((k) => k.name) };
+  return BUILTIN_MODULES.filter((module) => all.has(module.name)).map((module) => module.name);
 }
-
-/** The kits a tier offers in a task: the tier's own, plus the task's extra kits. None in a tier without kits. */
-const tierKits = (task: TaskSpec, tier: Tier): string[] => (tier.kits.length > 0 ? [...tier.kits, ...(task.extraKits ?? [])] : []);
 
 // Items that come from the world are graded by "gathered" (blocks dug and items picked up, never counted twice);
 // items that are made are graded by "crafted". See `grade` in src/milestones/milestones.ts.
@@ -224,8 +223,7 @@ const TASKS: TaskSpec[] = [
     keywords: ["crafting", "mining", "smelting", "survival"],
     difficulty:
       "Fourteen dependent steps: the iron pickaxe chain, then diamonds dug from 60 blocks and more below the surface, and the diamond pickaxe; and no death until the first night is over. Adds a deep descent past caves, lava, and the dark, a night in which hostile creatures spawn, and a clock the agent cannot hurry: it has to stay alive until dawn even when the pickaxe is done early.",
-    extraKits: ["survival", "combat"],
-    triggers: true,
+    extraBuiltins: ["survival", "combat"],
     stages: [
       {
         name: "dig",
@@ -268,9 +266,8 @@ minebot run --timeout 1800000 /tmp/dawn.js
     description: `Survive ${NIGHTS} in-game nights in a fresh world without dying.`,
     keywords: ["survival", "endurance"],
     difficulty:
-      "Open-ended and long: about 40 minutes of real time. Nothing is crafted or collected; the agent has to find a way to be safe through the dark, keep fed, and wait cheaply. Tests reflexes (triggers), shelter, and idling without losing the connection to the task.",
-    extraKits: ["survival", "combat"],
-    triggers: true,
+      "Open-ended and long: about 40 minutes of real time. Nothing is crafted or collected; the agent has to find a way to be safe through the dark, keep fed, and wait cheaply. Tests reflexes, shelter, and idling without losing the connection to the task.",
+    extraBuiltins: ["survival", "combat"],
     stages: [
       {
         name: "survive",
@@ -307,7 +304,7 @@ done
     keywords: ["crafting", "mining", "storage"],
     difficulty:
       "Nine dependent steps: the wooden pickaxe chain, then cobblestone mined in bulk, a chest crafted at a table, placed, and filled. Adds containers, which the server's statistics do not show: the verifier reads the chest's contents from the saved world.",
-    extraKits: ["container"],
+    extraBuiltins: ["container"],
     stages: [
       {
         name: "stock",
@@ -326,14 +323,14 @@ done
     keywords: ["crafting", "storage", "memory", "continuity"],
     difficulty:
       "Two Harbor steps in one world, each a new agent session. The first sets up a chest of logs and leaves it far behind; the second has to find it again, from whatever the first session wrote down or left in the body, and use it. Tests notes and handoff, not game mechanics.",
-    extraKits: ["container"],
+    extraBuiltins: ["container"],
     notes: true,
     stages: [
       {
         name: "stash",
         goal: `Put ${STASH_LOGS} logs in a chest and leave them there. Collect logs, craft a chest, place it, store ${STASH_LOGS} logs in it, and then walk at least ${STASH_DISTANCE} blocks away from the chest and stop.
 
-This is the first of two sessions. When you stop, a second session starts: a new agent session that has none of your context and none of your memory of this one. It starts where you stopped, with the inventory you leave, on the same body. The second session is asked to craft a stone pickaxe from the logs in this chest. It can read the body's notes and see the world; it knows nothing else about what you did. Leave it what it needs.`,
+This is the first of two sessions. When you stop, a second session starts: a new agent session that has none of your context and none of your memory of this one. It starts where you stopped, with the inventory you leave, on the same body. The second session is asked to craft a stone pickaxe from the logs in this chest. It can read the body's notes, list its saved routines, and see the world; it knows nothing else about what you did. Leave it what it needs.`,
         grading: `The contents of the chests in the world and where the player stands are graded too, as the server saved them: ${STASH_LOGS} logs have to be in a chest, and the player has to be at least ${STASH_DISTANCE} blocks from it when you stop.`,
         agentTimeoutSec: 1800,
         // The second session needs the chest that this one filled; without it the trial has nothing to measure.
@@ -349,7 +346,7 @@ This is the first of two sessions. When you stop, a second session starts: a new
         name: "retrieve",
         goal: `Craft a stone pickaxe, using the logs in the chest that a previous session of this agent left.
 
-You are the second of two sessions. The first session collected logs and put ${STASH_LOGS} of them in a chest somewhere in this world, then walked away from it. You know nothing about that session except what it left in the body (the notes) and in the world. Find the chest, take at least ${STASH_LOGS / 2} logs out of it, and use them for the tools. You start with whatever the first session left in the inventory.`,
+You are the second of two sessions. The first session collected logs and put ${STASH_LOGS} of them in a chest somewhere in this world, then walked away from it. You know nothing about that session except what it left in the body (the notes and the saved routines) and in the world. Find the chest, take at least ${STASH_LOGS / 2} logs out of it, and use them for the tools. You start with whatever the first session left in the inventory.`,
         grading: `The contents of the chests in the world are graded too, as the server saved them: the chest that the first session filled has to be where it was and hold ${STASH_LOGS / 2} logs or fewer when you finish.`,
         agentTimeoutSec: 1800,
         oracleTarget: "retrieve_logs",
@@ -396,11 +393,12 @@ keywords = ${JSON.stringify(keywords)}
 [metadata]
 category = "minecraft"
 tier = "${tier.name}"
-# Every tier has the base body: Mineflayer plus notes, status (deaths and reconnects), the event log with blocking waits, and the one-line observation.
-kits = ${JSON.stringify(tierKits(task, tier))}
+# Every tier has the base body: Mineflayer plus notes, status (deaths and reconnects), the event log with blocking waits, the one-line observation,
+# and the routine library with action and reflex bindings. The tier features are below: the built-in modules the body offers (the closure of its
+# --builtins over their uses) and the wiki.
+builtins = ${JSON.stringify(offered(tierBuiltins(task, tier)))}
 wiki = "${tier.wiki}"
 goals = false
-triggers = ${task.triggers === true}
 difficulty_explanation = ${JSON.stringify(task.difficulty)}
 ${multiStep ? steps : `
 [agent]
@@ -457,19 +455,88 @@ ${stage.goal}
 The \`minebot\` command in this terminal controls the player. The same actions are available as \`minebot\` MCP tools.
 
 - \`minebot observe\` prints the position, health, inventory, and nearby entities as JSON.
-- \`minebot run <file>\` runs a JavaScript program against the player and prints its logs and return value. Without a file, it reads the program from stdin.
-- \`minebot api\` prints the program reference. A program is the body of an async function that receives a live Mineflayer \`bot\`.
+- \`minebot run <file>\` runs a module (TypeScript or JavaScript) against the player and prints its logs and result. Without a file, it reads the module from stdin. \`--args <json>\` passes arguments.
+- \`minebot api\` prints how a run works and what its context \`ctx\` holds on this body.
 - \`minebot events\` prints recent chat, damage, and deaths.
-- \`minebot stop\` aborts the running program.
+- \`minebot stop\` aborts the running run.
 
-A program stops after 60 seconds unless you pass \`--timeout <ms>\`. Values that you store on \`globalThis\` persist between programs, so you can build helper functions and reuse them. The API references are at \`/opt/minebot/node_modules/mineflayer/docs/api.md\` and \`/opt/minebot/node_modules/mineflayer-pathfinder/readme.md\`.`,
+The API references are at \`/opt/minebot/node_modules/mineflayer/docs/api.md\` and \`/opt/minebot/node_modules/mineflayer-pathfinder/readme.md\`.
+
+## Runs
+
+A run is a module. Its default export is a function: the body calls it with \`ctx\` and the \`--args\` object, and sends back what it returns. \`ctx.bot\` is the live Mineflayer bot; \`ctx.log\`, \`ctx.sleep\`, \`ctx.signal\`, \`ctx.notes\`, and \`ctx.store\` come with it. A module uses named imports from Node's core modules and from the packages that the body ships (\`mineflayer-pathfinder\`, \`vec3\`, \`minecraft-data\`), and \`require()\` works too. Save this as \`look.ts\`, then run \`minebot run look.ts\`:
+
+\`\`\`ts
+import { Vec3 } from "vec3";
+import type { RoutineContext } from "minebot-sdk/routine";
+
+export default async (ctx: RoutineContext) => {
+  const mcData = require("minecraft-data")(ctx.bot.version);
+  const feet = ctx.bot.entity.position.floored();
+  const below = ctx.bot.blockAt(feet.plus(new Vec3(0, -1, 0)));
+  ctx.log("standing on", below?.name);
+  return { feet, below: below?.name, logId: mcData.itemsByName.oak_log.id };
+};
+\`\`\`
+
+A run stops after 60 seconds unless you pass \`--timeout <ms>\`. Check \`ctx.signal.aborted\` in long loops. One run goes at a time. Values that you store on \`globalThis\` persist between runs.
+
+## Routines
+
+A routine is a module that you save in the body's library and call by name. The body keeps the library and the bindings. \`minebot routines save <file...>\` saves each file under its file name without the extension, and reports the type errors of its source (they do not stop the save). Save the modules that a routine imports first, and import them as \`./<name>.ts\`. \`minebot routines\` lists the routines and their bindings, and \`minebot routines source <name>\` prints one. \`defineRoutine\` from \`minebot-sdk/routine\` adds a description and zod schemas for the arguments and the result.
+
+\`minebot bind action <name> <routine>\` names a routine for \`minebot call <name> --args <json>\`, which runs it like \`minebot run\` (same timeout, one run at a time). \`minebot unbind <name>\` removes a binding. Save this as \`where.ts\`:
+
+\`\`\`ts
+import type { RoutineContext } from "minebot-sdk/routine";
+
+export default async (ctx: RoutineContext, args: { note?: string }) => {
+  const { x, y, z } = ctx.bot.entity.position;
+  ctx.log(args.note ?? "position");
+  return { x: Math.floor(x), y: Math.floor(y), z: Math.floor(z), health: ctx.bot.health };
+};
+\`\`\`
+
+\`\`\`sh
+minebot routines save where.ts
+minebot bind action pos where
+minebot call pos --args '{"note":"now"}'
+\`\`\`
+
+## Reflexes
+
+A reflex is a routine that the body runs when an event arrives, so a reaction does not wait for your next turn. \`minebot bind reflex <name> <routine> --on <events>\` binds one, and the body calls the routine as \`(ctx, { event })\`, where \`event\` is \`{ seq, type, time, data }\`. The events include \`hurt\`, \`death\`, \`chat\`, \`low_health\` (health below 8), \`low_food\` (food below 6), \`hostile_near\` (a hostile creature within 16 blocks), \`night\`, and \`day\`. Options: \`--cooldown <ms>\` (default 1000), \`--timeout <ms>\` (default 30000), \`--priority <n>\`, \`--preempt\` (the firing stops the running run), \`--when <expression>\`, and \`--from\` and \`--match\` for chat. A firing waits until no run is active unless it preempts. A reflex that fails 3 times in a row disables itself; bind it again to enable it. \`minebot routines\` shows what each reflex did, and \`minebot unbind <name>\` removes one. Save this as \`eat.ts\`, then run \`minebot routines save eat.ts\` and \`minebot bind reflex eater eat --on low_food\`:
+
+\`\`\`ts
+import type { BodyEvent } from "minebot-sdk/client";
+import type { RoutineContext } from "minebot-sdk/routine";
+
+export default async (ctx: RoutineContext, { event }: { event?: BodyEvent }) => {
+  const food = ctx.bot.inventory.items().find((item) => ctx.bot.registry.foodsByName[item.name]);
+  if (!food) return { ate: null, on: event?.type };
+  await ctx.bot.equip(food, "hand");
+  await ctx.bot.consume();
+  return { ate: food.name, on: event?.type };
+};
+\`\`\``,
   ];
-  const kits = tierKits(task, tier);
-  if (kits.length > 0) {
-    const { primitives, routines } = offered(kits);
-    sections.push(`## Kits
+  const builtins = offered(tierBuiltins(task, tier));
+  if (builtins.length > 0) {
+    if (!builtins.includes("gatherer") || !builtins.includes("crafter")) throw new Error(`${task.name}-${tier.name}: the built-ins example calls gatherer and crafter`);
+    sections.push(`## Built-in routines
 
-Programs call ready-made actions through the \`kit\` global, namespaced by kit, with one object argument: \`await kit.gatherer.gather({ blocks: "*_log", count: 4 })\` or \`await kit.crafter.make({ item: "wooden_pickaxe" })\`. Run \`minebot kits docs\` for every action, its arguments, and their defaults. The body offers the primitive kits ${primitives.join(", ")} and the routine kits ${routines.join(", ")}, which are built from them. You cannot change the active kits.`);
+The body offers these built-in routines, which take \`ctx\` and one object of arguments: ${builtins.join(", ")}. \`minebot builtins docs [module...]\` prints every routine with its arguments and result, and \`minebot builtins search <query>\` finds routines by what they do. Call one from the terminal with \`minebot call <module>.<routine> --args <json>\`, with no bind: \`minebot call gatherer.gather --args '{"blocks":"*_log","count":4}'\`. A run or a routine imports a module as \`minebot-sdk/routines/<module>\` and calls its routines with \`ctx\`:
+
+\`\`\`ts
+import * as gatherer from "minebot-sdk/routines/gatherer";
+import * as crafter from "minebot-sdk/routines/crafter";
+import type { RoutineContext } from "minebot-sdk/routine";
+
+export default async (ctx: RoutineContext) => {
+  await gatherer.gather(ctx, { blocks: "*_log", count: 4 });
+  return crafter.make(ctx, { item: "wooden_pickaxe" });
+};
+\`\`\``);
   }
   if (tier.wiki !== "off") {
     sections.push(`## Wiki
@@ -479,17 +546,12 @@ The wiki has notes on game mechanics, step-by-step plans, and known quirks of th
 - \`minebot wiki search <words>\` lists matching pages.
 - \`minebot wiki read <page>\` prints a page.
 
-Programs can use \`wiki.search(words)\` and \`wiki.read(page)\` too.`);
+A module can use \`ctx.wiki.search(words)\` and \`ctx.wiki.read(page)\` too.`);
   }
   if (task.notes) {
     sections.push(`## Notes
 
-The body keeps notes that outlast your session: \`minebot notes\` lists them, \`minebot notes get <key>\` reads one, and \`minebot notes set <key> <text>\` writes one (the text comes from stdin when omitted). Programs use \`notes.list()\`, \`notes.get(key)\`, and \`notes.set(key, text)\`.`);
-  }
-  if (task.triggers) {
-    sections.push(`## Triggers
-
-A trigger is a program that the body starts when an event arrives, so a reaction does not wait for your next turn. \`minebot triggers add <name> --on <events> [file]\` saves one (the program comes from stdin when the file is omitted; options \`--cooldown <ms>\`, \`--timeout <ms>\`, \`--priority <n>\`, and \`--preempt\`, which lets the trigger stop the running program). \`minebot triggers\` lists the triggers and what they did, and \`minebot triggers rm <name>\` deletes one. Programs can use \`triggers.add({ name, on, run })\` too. The events include \`hurt\`, \`low_health\`, \`low_food\`, \`hostile_near\`, \`night\`, and \`day\`. The body runs only the triggers you register.`);
+The body keeps notes that outlast your session: \`minebot notes\` lists them, \`minebot notes get <key>\` reads one, and \`minebot notes set <key> <text>\` writes one (the text comes from stdin when omitted). A module uses \`ctx.notes.list()\`, \`ctx.notes.get(key)\`, and \`ctx.notes.set(key, text)\`.`);
   }
   // A task without milestones has nothing to say about statistics; its stage says what is graded instead.
   const graded = [
@@ -500,9 +562,7 @@ A trigger is a program that the body starts when an event arrives, so a reaction
   ].filter(Boolean);
   sections.push(`## Grading
 
-${graded.join(" ")}
-
-Every program you run is recorded and audited. A program that reaches outside the program environment fails the trial with reward 0. The audit flags these names wherever they appear in a program, comments and strings included: \`process\`, \`require(\`, \`import(\`, \`getBuiltinModule\`, \`Function(\`, \`constructor.constructor\`, and \`globalThis.constructor\`.`);
+${graded.join(" ")}`);
   return `${sections.join("\n\n")}\n`;
 }
 
@@ -517,6 +577,12 @@ const HEALTHCHECK = [
 ].join(" && ");
 
 /**
+ * The shell script of the body's command: remove what the tier withholds, then start the body, with the body's arguments as "$@".
+ * Compose reads `$` in a value as interpolation and takes `$$` for a literal `$`, so each "$@" is written "$$@" in the file.
+ */
+const TIER_WRAPPER = 'node /opt/minebot/bench/tier/remove.ts "$$@" && exec minebot "$$@"';
+
+/**
  * The compose file of a trial. Harbor reserves `main` for the agent and merges this file over its own.
  *
  * Isolation. The agent runs in `main` as root and must not reach the grading, so:
@@ -525,7 +591,7 @@ const HEALTHCHECK = [
  *   rootless podman routes between the bridges of a project (the `isolate` network option does not stop it with this netavark),
  *   so the server container refuses the game and RCON ports to everything outside its own network (RESTRICT_TO_OWN_SUBNET).
  *   A network attached to `main` that is not internal also gives it the internet, which agent harnesses need for their model API.
- * - `main` runs the client image (bench/images/client), which has no oracle, kits, wiki, or verifier.
+ * - `main` runs the client image (bench/images/client), which has no body, built-ins, wiki, oracle, or verifier.
  * - The verifier is a separate Harbor environment (task.toml, [verifier.environment]) that runs apart from `main`.
  *   Its inputs are artifacts that Harbor copies from the sidecars: the grader's snapshot of the statistics and the world, and the body's program history.
  *   Harbor's alternatives either run the verifier in `main`, where the agent can edit it, or give it a second compose project
@@ -541,21 +607,17 @@ const HEALTHCHECK = [
  * - The server lets in only the agent's player (WHITELIST, enforced), so code that runs in the body cannot log in a second player.
  *   Its healthcheck fails closed: the server must have applied both protections (the whitelist, and the loopback-only RCON rule),
  *   so a server image that ignores them never becomes healthy and the trial fails at start.
- * A program that escapes the VM still reaches the body's process (its tier lock, the program history), so the body flags such programs
- * (src/audit.ts) and the verifier fails the trial: the verifier reads the program history that the audit writes and disqualifies flagged programs.
- * That is an audit, not a security boundary: code that builds the flagged names at run time passes it.
+ * - A module that runs in the body has the body process's privileges: it can `require` any package that the image holds and read any file
+ *   that the body's user can. That is why the body holds neither the RCON password nor the world, and why nothing the verifier grades
+ *   comes from the body: it grades from the grader's snapshot, and the program history is a record for whoever reads the trial.
+ * - The tiers are what the body's container holds. The body command is a shell wrapper: it first runs bench/tier/remove.ts with the body's own
+ *   arguments, which deletes the built-in modules and the wiki that the arguments do not offer, and starts the body only if that succeeds
+ *   (`&&`), so a trial whose tier cannot be set up fails at start. The body flags are the single source of the tier.
  */
 function compose(task: TaskSpec, tier: Tier): string {
-  const kits = tierKits(task, tier);
-  const flags = [
-    ...(kits.length > 0 ? [`--kits=${kits.join(",")}`] : ["--kits="]),
-    "--lock-kits",
-    "--no-agent-kits",
-    `--wiki=${tier.wiki}`,
-    "--no-milestones",
-    // Triggers are off unless the task is about reflexes (see TaskSpec.triggers).
-    ...(task.triggers ? [] : ["--no-triggers"]),
-  ];
+  const builtins = tierBuiltins(task, tier);
+  // Every tier has routines and reflexes (the body's defaults) and no milestones: the agent has no live grader.
+  const flags = [`--builtins=${builtins.length > 0 ? builtins.join(",") : "none"}`, `--wiki=${tier.wiki}`, "--no-milestones"];
   return `# Generated by bench/gen-tasks.ts. See compose() there for the isolation design.
 services:
   main:
@@ -594,7 +656,10 @@ services:
     image: minebot.local/minebot:dev
     pull_policy: never
     command:
-      - minebot
+      - sh
+      - -c
+      - ${JSON.stringify(TIER_WRAPPER)}
+      - tier
       - body
       - --bot=${PLAYER}
       - --host=minecraft

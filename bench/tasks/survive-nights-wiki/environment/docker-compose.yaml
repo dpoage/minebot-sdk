@@ -36,7 +36,10 @@ services:
     image: minebot.local/minebot:dev
     pull_policy: never
     command:
-      - minebot
+      - sh
+      - -c
+      - "node /opt/minebot/bench/tier/remove.ts \"$$@\" && exec minebot \"$$@\""
+      - tier
       - body
       - --bot=agent
       - --host=minecraft
@@ -44,9 +47,7 @@ services:
       - --api-port=7070
       - --history=/var/log/minebot/programs.jsonl
       # Tier "wiki".
-      - --kits=
-      - --lock-kits
-      - --no-agent-kits
+      - --builtins=none
       - --wiki=read
       - --no-milestones
     environment:

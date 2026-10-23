@@ -15,11 +15,12 @@ keywords = ["minecraft","crafting","mining","smelting","survival","embodied","co
 [metadata]
 category = "minecraft"
 tier = "wiki"
-# Every tier has the base body: Mineflayer plus notes, status (deaths and reconnects), the event log with blocking waits, and the one-line observation.
-kits = []
+# Every tier has the base body: Mineflayer plus notes, status (deaths and reconnects), the event log with blocking waits, the one-line observation,
+# and the routine library with action and reflex bindings. The tier features are below: the built-in modules the body offers (the closure of its
+# --builtins over their uses) and the wiki.
+builtins = []
 wiki = "read"
 goals = false
-triggers = true
 difficulty_explanation = "Fourteen dependent steps: the iron pickaxe chain, then diamonds dug from 60 blocks and more below the surface, and the diamond pickaxe; and no death until the first night is over. Adds a deep descent past caves, lava, and the dark, a night in which hostile creatures spawn, and a clock the agent cannot hurry: it has to stay alive until dawn even when the pickaxe is done early."
 
 [agent]
