@@ -40,6 +40,6 @@ Observed: `dirt` became `farmland` after one use. Read the moisture with `Number
 
 Place a water source with a bucket (`mechanics/buckets`). Plant on the farmland and harvest as in `mechanics/crop-growth`.
 
-<!-- builtins -->
+<!-- builtins:farm -->
 `minebot call farm.till --args '{"at":[10,64,5]}'` tills one block.
-<!-- /builtins -->
+<!-- /builtins:farm -->

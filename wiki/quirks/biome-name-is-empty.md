@@ -26,6 +26,6 @@ export default ({ bot }: RoutineContext) => bot.registry.biomes[bot.world.getBio
 
 The `biome` field of the observation (`minebot observe`) is resolved this way, so read the biome there when you only need the name.
 
-<!-- builtins -->
+<!-- builtins:explorer -->
 `minebot call explorer.scan` reports the biome this way.
-<!-- /builtins -->
+<!-- /builtins:explorer -->

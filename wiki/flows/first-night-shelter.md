@@ -46,6 +46,6 @@ You need 10 cobblestone, or any other solid block. A wooden pickaxe digs cobbles
 
 Eat before you seal in (`mechanics/food-sources`): the night lasts about 9 minutes.
 
-<!-- builtins -->
+<!-- builtins:survival -->
 `minebot call survival.sleep` skips the night when a bed is in reach and every player on the server sleeps (`mechanics/day-night-cycle`).
-<!-- /builtins -->
+<!-- /builtins:survival -->

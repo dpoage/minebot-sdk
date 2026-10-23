@@ -25,6 +25,6 @@ export default async ({ bot }: RoutineContext, { name, itemId, count }: { name: 
 };
 ```
 
-<!-- builtins -->
+<!-- builtins:social -->
 `minebot call social.give --args '{"player":"alice","item":"cobblestone","count":8}'` does this.
-<!-- /builtins -->
+<!-- /builtins:social -->

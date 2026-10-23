@@ -25,6 +25,9 @@ export default () => {
 };
 ```
 
-<!-- builtins -->
-`minebot call furnace.smelt --args '{"item":"raw_iron","count":3}'` knows the recipes. `minebot call crafter.make --args '{"item":"iron_ingot"}'` smelts when it must.
-<!-- /builtins -->
+<!-- builtins:furnace -->
+`minebot call furnace.smelt --args '{"item":"raw_iron","count":3}'` knows the recipes.
+<!-- /builtins:furnace -->
+<!-- builtins:crafter -->
+`minebot call crafter.make --args '{"item":"iron_ingot"}'` smelts when it must.
+<!-- /builtins:crafter -->

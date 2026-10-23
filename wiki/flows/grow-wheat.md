@@ -39,6 +39,6 @@ You need a hoe, seeds, and a bucket of water. A hoe is 2 head material and 2 sti
 
 Check the inventory after each step: `bot.inventory.items()`.
 
-<!-- builtins -->
+<!-- builtins:farm -->
 `minebot call farm.till --args '{"at":[10,64,5]}'`, `minebot call farm.plant --args '{"at":[10,64,5],"seed":"wheat_seeds"}'`, and `minebot call farm.harvest --args '{"radius":8,"replant":true}'` do steps 2, 3, and 5.
-<!-- /builtins -->
+<!-- /builtins:farm -->

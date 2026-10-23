@@ -55,6 +55,6 @@ export default async ({ bot }: RoutineContext) => {
 
 Observed: with an iron helmet and copper boots worn and a diamond helmet and golden boots in the pack, this swapped both, and a second run kept everything. An iron set plus a diamond helmet added up to 16 points (3 + 6 + 5 + 2).
 
-<!-- builtins -->
+<!-- builtins:survival -->
 `minebot call survival.armor` equips the best armor in the inventory.
-<!-- /builtins -->
+<!-- /builtins:survival -->

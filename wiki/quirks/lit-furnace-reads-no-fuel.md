@@ -38,6 +38,6 @@ export default async ({ bot, sleep }: RoutineContext, { x, y, z }: { x: number; 
 
 Remove the listener when you close the furnace. The `lit` block property is `false` when the furnace is cold, and then no packet comes.
 
-<!-- builtins -->
+<!-- builtins:furnace -->
 `furnace.smelt` counts the burning fuel left before it adds any, so a second `smelt` right after the first needs no new fuel item.
-<!-- /builtins -->
+<!-- /builtins:furnace -->

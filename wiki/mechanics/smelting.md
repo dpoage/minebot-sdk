@@ -63,6 +63,6 @@ export default async ({ bot, sleep }: RoutineContext) => {
 
 A furnace keeps smelting while you walk away, so you can start it and do other work. Come back and take the output.
 
-<!-- builtins -->
+<!-- builtins:furnace -->
 `minebot call furnace.smelt --args '{"item":"raw_iron","count":3}'` finds a furnace within 4.5 blocks, loads fuel and input, waits, and takes the output. `minebot call furnace.take` collects what a furnace finished while you were away.
-<!-- /builtins -->
+<!-- /builtins:furnace -->

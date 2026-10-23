@@ -50,6 +50,9 @@ Test: a zombie took no damage from a second swing 0.1 s after the first, and ful
 
 Armor reduces the hits you take (`mechanics/armor-tiers`). Hostile mobs and their special rules: `mechanics/creeper-fuse`, `mechanics/daylight-burning`, `mechanics/hostile-mobs-and-night`.
 
-<!-- builtins -->
-`minebot call combat.attack --args '{"target":"zombie"}'` fights one mob. `minebot call combat.fight --args '{"radius":12,"timeoutMs":30000}'` fights every hostile in range until none is left. `minebot call survival.eat` and `minebot call survival.armor` prepare for it.
-<!-- /builtins -->
+<!-- builtins:combat -->
+`minebot call combat.attack --args '{"target":"zombie"}'` fights one mob. `minebot call combat.fight --args '{"radius":12,"timeoutMs":30000}'` fights every hostile in range until none is left.
+<!-- /builtins:combat -->
+<!-- builtins:survival -->
+`minebot call survival.eat` and `minebot call survival.armor` prepare for a fight.
+<!-- /builtins:survival -->

@@ -54,6 +54,6 @@ Dig the crop to harvest it. Observed on wheat:
 
 Breaking a crop early loses the harvest, so dig only at the ripe stage. Replant with the seeds the crop dropped. Bone meal speeds growth (`mechanics/bonemeal`). A full wheat plot, step by step: `flows/grow-wheat`.
 
-<!-- builtins -->
+<!-- builtins:farm -->
 `minebot call farm.plant --args '{"at":[10,64,5],"seed":"wheat_seeds"}'` plants one seed. `minebot call farm.harvest --args '{"radius":8,"replant":true}'` harvests every ripe crop within 8 blocks and replants it.
-<!-- /builtins -->
+<!-- /builtins:farm -->

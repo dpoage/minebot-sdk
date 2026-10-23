@@ -1,15 +1,19 @@
 # minebot runtime: the body sidecar (see bench/gen-tasks.ts). The agent's container uses
-# bench/images/client instead, so that it has none of this.
+# bench/images/client instead, so that it has none of this. A tier's withheld built-in modules and wiki are
+# deleted from the container's own layer when the body service starts, before any agent code runs.
 # Build context: the repository root (see bench/build-images.sh).
 FROM docker.io/library/node:24-slim
 
 WORKDIR /opt/minebot
 COPY package.json package-lock.json ./
-RUN npm ci --omit=dev --ignore-scripts && npm cache clean --force
+# The dev dependencies too: typescript, which `routines save` runs to type-check a routine (without it the check reports "skipped").
+RUN npm ci --ignore-scripts && npm cache clean --force
 COPY src ./src
 # The grading snapshot (bench/verify/snapshot.ts), which the grader sidecar runs from this image after the agent is done. The body's copy has no RCON or world to use.
 COPY bench/verify ./bench/verify
 COPY wiki ./wiki
+# What the body service's command runs before the body: it deletes what the body's tier withholds (bench/tier/remove.ts).
+COPY bench/tier ./bench/tier
 
 RUN printf '#!/bin/sh\nexec node --conditions=minebot-sdk:source /opt/minebot/src/cli.ts "$@"\n' > /usr/local/bin/minebot \
  && chmod +x /usr/local/bin/minebot

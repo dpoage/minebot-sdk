@@ -37,6 +37,6 @@ Close the window when you are done.
 
 Furnaces use `bot.openFurnace` (`mechanics/smelting`), enchanting tables `bot.openEnchantmentTable` (`mechanics/enchanting-basics`), villagers `bot.openVillager` (`mechanics/villagers-and-trading`).
 
-<!-- builtins -->
+<!-- builtins:container -->
 `minebot call container.list --args '{"at":[10,64,5]}'` lists a container. `minebot call container.deposit --args '{"at":[10,64,5],"items":"cobblestone","count":40}'` and `minebot call container.withdraw --args '{"at":[10,64,5],"items":"iron_ingot","count":3}'` move items.
-<!-- /builtins -->
+<!-- /builtins:container -->

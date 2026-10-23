@@ -8,7 +8,9 @@ import { MC_VERSION } from "../src/mc/version.ts";
 import { formatPage, Wiki, WIKI_DIR, WikiDisabledError, WikiPageNotFoundError } from "../src/wiki/wiki.ts";
 import { FULL_VIEW, WikiAccess, wikiView, type WikiView } from "../src/wiki/access.ts";
 import { WikiFeature } from "../src/protocol/index.ts";
-import { BUILTINS_VOCABULARY, markedLines, REFLEXES_VOCABULARY, strayVocabulary, WIKI_SEARCH_QUERIES } from "./helpers/wiki-vocabulary.ts";
+import { BUILTIN_MODULES } from "../src/routines/index.ts";
+import { closureOf } from "../src/host/routines/builtins.ts";
+import { BUILTINS_VOCABULARY, markedLines, markedModules, REFLEXES_VOCABULARY, strayVocabulary, WIKI_SEARCH_QUERIES } from "./helpers/wiki-vocabulary.ts";
 import { chunk, compress, dataPages, loadMinecraftData } from "../scripts/wiki-reference.ts";
 
 async function fixture(): Promise<{ root: string; lessons: string }> {
@@ -142,6 +144,33 @@ describe("Wiki views", () => {
     assert.ok(!wiki.search("collects", 5, none).some((h) => h.id === "quirks/logs"));
   });
 
+  it("shows a per-module block only to a body that offers every module it names", async () => {
+    const { root } = await fixture();
+    const page = (meta: string, body: string) => `---\n${meta}\n---\n\n${body}\n`;
+    await writeFile(
+      path.join(root, "quirks", "logs.md"),
+      page(
+        "title: Gathering logs\nverified_by: test",
+        "Dig the log.\n\n<!-- builtins -->\nBuilt-in routines may help.\n<!-- /builtins -->\n<!-- builtins:gatherer -->\ngatherer.gather digs logs.\n<!-- /builtins:gatherer -->\n<!-- builtins:crafter,gatherer -->\ncrafter.make crafts what gatherer.gather digs.\n<!-- /builtins:crafter,gatherer -->",
+      ),
+    );
+    const wiki = Wiki.load(root);
+    const body = (view: WikiView) => wiki.read("quirks/logs", view).body.split("\n").filter(Boolean);
+    const on = { builtins: true, milestones: false, reflexes: false, routines: false };
+    assert.deepEqual(body(on), ["Dig the log.", "Built-in routines may help.", "gatherer.gather digs logs.", "crafter.make crafts what gatherer.gather digs."], "no module list: every module is offered");
+    assert.deepEqual(body({ ...on, modules: ["gatherer", "crafter"] }), body(on));
+    assert.deepEqual(body({ ...on, modules: ["gatherer"] }), ["Dig the log.", "Built-in routines may help.", "gatherer.gather digs logs."]);
+    assert.deepEqual(body({ ...on, modules: ["crafter"] }), ["Dig the log.", "Built-in routines may help."]);
+    assert.deepEqual(body({ ...on, modules: [] }), ["Dig the log.", "Built-in routines may help."]);
+    assert.deepEqual(body({ ...on, builtins: false, modules: ["gatherer", "crafter"] }), ["Dig the log."], "a body without the feature sees no block, whatever it offers");
+    // The search index sees the same text.
+    assert.ok(wiki.search("crafter.make", 5, { ...on, modules: ["gatherer", "crafter"] }).some((hit) => hit.id === "quirks/logs"));
+    assert.ok(wiki.search("crafter.make", 5, { ...on, modules: ["gatherer"] }).every((hit) => !hit.snippet.includes("crafter.make")));
+    // A body's view carries its offer.
+    const features = { wiki: "read" as const, lessons: false, milestones: false, reflexes: false, routines: false };
+    assert.deepEqual(wikiView({ ...features, builtins: ["move", "sense"] }).modules, ["move", "sense"]);
+  });
+
   it("applies the body's view through WikiAccess as its features change", async () => {
     const wiki = await featureFixture();
     let view = none;
@@ -243,7 +272,7 @@ describe("repository wiki", () => {
 
   /** Every view a body can have: each feature on or off. */
   const VIEWS: WikiView[] = Array.from({ length: 1 << WikiFeature.options.length }, (_, bits) =>
-    Object.fromEntries(WikiFeature.options.map((feature, i) => [feature, ((bits >> i) & 1) === 1])) as WikiView,
+    Object.fromEntries(WikiFeature.options.map((feature, i) => [feature, ((bits >> i) & 1) === 1])) as Record<WikiFeature, boolean>,
   );
   const viewName = (view: WikiView) => WikiFeature.options.filter((feature) => view[feature]).join("+") || "no features";
 
@@ -286,6 +315,44 @@ describe("repository wiki", () => {
       for (const query of WIKI_SEARCH_QUERIES) {
         for (const hit of wiki.search(query, 20, view)) {
           assert.deepEqual(strayVocabulary(`${hit.title}\n${hit.tags.join(" ")}\n${hit.snippet}`, view), [], `search "${query}" with ${viewName(view)} shows ${hit.id}`);
+        }
+      }
+    }
+  });
+
+  /** The offers a body can have, as views with every other feature on: each module withheld in turn, and each module offered alone (with what it uses). */
+  const MODULE_VIEWS: { name: string; view: WikiView }[] = BUILTIN_MODULES.flatMap((module) => [
+    { name: `all but ${module.name}`, view: { ...FULL_VIEW, modules: BUILTIN_MODULES.filter((other) => other.name !== module.name).map((other) => other.name) } },
+    { name: `${module.name} alone`, view: { ...FULL_VIEW, modules: closureOf([module.name]).map((other) => other.name) } },
+  ]);
+
+  it("shows a body that withholds a built-in module no call or import of it, in a page's text, title, or tags, or in a search result", () => {
+    const wiki = Wiki.load(WIKI_DIR);
+    for (const { name, view } of MODULE_VIEWS) {
+      for (const { id } of wiki.list(undefined, view)) {
+        const page = wiki.read(id, view);
+        assert.deepEqual(strayVocabulary(`${formatPage(page)}\n${page.meta.tags.join(" ")}`, view), [], `${id} with ${name}`);
+      }
+      for (const query of WIKI_SEARCH_QUERIES) {
+        for (const hit of wiki.search(query, 20, view)) {
+          assert.deepEqual(strayVocabulary(`${hit.title}\n${hit.tags.join(" ")}\n${hit.snippet}`, view), [], `search "${query}" with ${name} shows ${hit.id}`);
+        }
+      }
+    }
+  });
+
+  it("shows each per-module line exactly where the body offers every module it needs", () => {
+    const wiki = Wiki.load(WIKI_DIR);
+    const needing = wiki.pages.map((page) => [page.id, markedModules(page.id)] as const).filter(([, modules]) => modules.size > 0);
+    assert.ok(needing.length > 20, "the repository wiki marks lines per module");
+    for (const { name, view } of MODULE_VIEWS) {
+      for (const [id, modules] of needing) {
+        const shown = wiki.list(undefined, view).some((page) => page.id === id);
+        if (!shown) continue;
+        const text = new Set(formatPage(wiki.read(id, view)).split("\n").map((line) => line.trim()));
+        for (const line of markedLines(id).builtins) {
+          const offered = (modules.get(line) ?? []).every((module) => view.modules!.includes(module));
+          assert.equal(text.has(line), offered, `${id} with ${name}: ${line}`);
         }
       }
     }

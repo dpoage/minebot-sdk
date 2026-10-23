@@ -3,12 +3,11 @@
 // reads them by, and the count of every call into kit-stats.json. Everything is derived from the
 // catalog's routine metadata (src/routines/index.ts), never from evaluating a library module.
 import { readFileSync } from "node:fs";
-import path from "node:path";
 import { z } from "zod";
 import type { ActionStats, BuiltinInfo, BuiltinSearchHit } from "../../protocol/index.ts";
 import { countTokens, rankFields } from "../../rank.ts";
 import { type Routine, type RoutineCallObserver, metaOf } from "../../routine/define.ts";
-import { BUILTIN_MODULES, type BuiltinModule } from "../../routines/index.ts";
+import { BUILTIN_MODULES, BUILTIN_ROUTINE_DIR, type BuiltinModule } from "../../routines/index.ts";
 import type { KitStats } from "./stats.ts";
 
 /** The specifier prefix of a built-in module: `minebot-sdk/routines/<module>`. */
@@ -158,8 +157,8 @@ function rank(documents: readonly Document[], query: string): { document: Docume
   return rankFields(counted, queryTerms).map(({ document, score }) => ({ document: document.document, score }));
 }
 
-/** The modules `names` lists and everything they use, in catalog order. Throws naming a module the catalog does not have. */
-function closureOf(names: readonly string[]): BuiltinModule[] {
+/** The modules `names` lists and everything they use, in catalog order. Throws naming a module the catalog does not have. The one closure: the body's offer and the benchmark's removal (bench/tier/remove.ts) both use it. */
+export function closureOf(names: readonly string[]): BuiltinModule[] {
   const byName = new Map(BUILTIN_MODULES.map((module) => [module.name, module] as const));
   const wanted = new Set<string>();
   const visit = (name: string): void => {
@@ -189,7 +188,7 @@ export class Builtins {
   /** Names of the offered modules, in catalog order (primitives first). */
   readonly offered: readonly string[];
   /** The package's `src/routines`, where the module sources that `source()` returns are. A routine's error reports the stack frames inside it, so a body that runs the built modules (`dist/routines`) reports none of them. */
-  readonly dir: string = path.dirname(BUILTIN_MODULES[0]!.file);
+  readonly dir: string = BUILTIN_ROUTINE_DIR;
 
   /** Throws, naming the module and listing the catalog, when `offer` names a module that is not a built-in. */
   constructor({ offer, stats }: BuiltinsOptions) {

@@ -45,9 +45,9 @@ The default export is a function `(ctx, args) => result`. With `defineRoutine`, 
 
 `Vec3`, `goals`, and `Movements` are not in `ctx`. Import them by name from `minebot-sdk/routine`, or from the packages: `import { goals, Movements } from "mineflayer-pathfinder"` and `import { Vec3 } from "vec3"`. Named imports of the body's CommonJS packages work, and so does `require`: `require("vec3")`.
 
-<!-- builtins -->
+<!-- builtins:move -->
 A built-in routine is an import, not a `ctx` member: `import * as move from "minebot-sdk/routines/move"`, then `await move.to(ctx, { position: [10, 64, 10], range: 1 })`. See `minebot/kits`.
-<!-- /builtins -->
+<!-- /builtins:move -->
 
 ## Imports
 

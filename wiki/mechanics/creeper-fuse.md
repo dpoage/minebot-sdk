@@ -47,6 +47,6 @@ export default async ({ bot, sleep }: RoutineContext) => {
 
 A sprinting bot outruns a creeper: starting 4 blocks away, it was 9, 12, and 14 blocks away after 1, 2, and 3 seconds.
 
-<!-- builtins -->
+<!-- builtins:combat -->
 `minebot call combat.retreat --args '{"from":123,"distance":8}'` runs away from it. `from` is the creeper's entity id.
-<!-- /builtins -->
+<!-- /builtins:combat -->

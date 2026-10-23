@@ -46,6 +46,6 @@ export default async ({ bot }: RoutineContext) => {
 
 Observed: with food 19, eating `cooked_beef` brought `bot.food` to 20 (the bar caps at 20). Points above 20 are lost, so eat an 8-point meal at food 12 or lower.
 
-<!-- builtins -->
+<!-- builtins:survival -->
 `minebot call survival.eat` eats the best food in the inventory. `minebot call survival.eat --args '{"item":"bread"}'` eats that item.
-<!-- /builtins -->
+<!-- /builtins:survival -->

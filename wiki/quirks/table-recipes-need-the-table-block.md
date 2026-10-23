@@ -28,6 +28,9 @@ export default async ({ bot }: RoutineContext) => {
 };
 ```
 
-<!-- builtins -->
-`crafter.make` finds, places, or crafts a table when a recipe needs one. `craft.craft` uses a table within 4 blocks and fails when there is none.
-<!-- /builtins -->
+<!-- builtins:crafter -->
+`crafter.make` finds, places, or crafts a table when a recipe needs one.
+<!-- /builtins:crafter -->
+<!-- builtins:craft -->
+`craft.craft` uses a table within 4 blocks and fails when there is none.
+<!-- /builtins:craft -->

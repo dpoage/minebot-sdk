@@ -27,8 +27,11 @@ Save this as `look.ts` and run `minebot run look.ts`. A run takes its inputs fro
 8. **Search the wiki on surprises.** Search for the error text: `minebot wiki search "<error words>"`.
 
 <!-- builtins -->
-When built-in routines are offered, prefer one over raw Mineflayer code: `minebot call gatherer.gather --args '{"blocks":"*_log","count":4}'`. Run `minebot builtins docs` for the full list with argument types.
+When built-in routines are offered, prefer one over raw Mineflayer code. Run `minebot builtins docs` for the full list with argument types.
 <!-- /builtins -->
+<!-- builtins:gatherer -->
+For example, `minebot call gatherer.gather --args '{"blocks":"*_log","count":4}'` collects four logs.
+<!-- /builtins:gatherer -->
 
 <!-- routines -->
 When you run the same code again and again, or you want to call it by name after a restart, save it as a routine. See `minebot/routines`.

@@ -36,6 +36,6 @@ export default ({ bot }: RoutineContext) => {
 
 To place where leaf litter or grass is, dig it first.
 
-<!-- builtins -->
+<!-- builtins:crafter -->
 `minebot call crafter.make --args '{"item":"wooden_pickaxe"}'` does this search for you when it places a crafting table or a furnace.
-<!-- /builtins -->
+<!-- /builtins:crafter -->

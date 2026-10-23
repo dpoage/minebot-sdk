@@ -32,7 +32,7 @@ minebot unbind eat                    # removes the reflex and keeps the routine
 
 The body calls the routine as `(ctx, { event })`. The event is `{ seq, type, time, data }`. The routine above does not read it. A reflex routine gets the same `ctx` as any routine. The MCP tool `bind_routine` binds a reflex with `kind: "reflex"` and `on`, and with `source` it saves the routine in the same call.
 
-<!-- builtins -->
+<!-- builtins:survival -->
 A reflex routine can call a built-in routine instead of the code above:
 
 ```ts
@@ -43,7 +43,7 @@ export default (ctx: RoutineContext) => survival.eat(ctx);
 ```
 
 `survival.eat` fails when the inventory holds no food. A failure counts toward the failure rule below.
-<!-- /builtins -->
+<!-- /builtins:survival -->
 
 ## What a reflex has
 

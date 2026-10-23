@@ -40,6 +40,6 @@ export default async ({ bot }: RoutineContext) => {
 
 A mob that burns in daylight (`mechanics/daylight-burning`) is gone by morning, but you can only sleep at night. Rules of beds: `mechanics/beds-and-spawn`.
 
-<!-- builtins -->
-`minebot call combat.fight` clears hostile mobs near you before `minebot call survival.sleep`.
-<!-- /builtins -->
+<!-- builtins:combat -->
+`minebot call combat.fight` clears hostile mobs near you before you sleep.
+<!-- /builtins:combat -->
