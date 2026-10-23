@@ -347,22 +347,24 @@ async function unknownCommand(features: BodyFeatures | null): Promise<number> {
   return 1;
 }
 
-/** Ends the process once stdout and stderr have taken everything written to them: Node writes to a pipe or a socket asynchronously, and `process.exit` with output still queued cuts it short. */
+/** Resolves once `stream` has taken everything written to it so far: Node writes to a pipe or a socket asynchronously. */
+function drained(stream: NodeJS.WriteStream): Promise<void> {
+  return new Promise<void>((done) => {
+    // A reader that has gone (EPIPE) leaves nothing to wait for.
+    stream.once("error", () => done());
+    stream.write("", () => done());
+  });
+}
+
+/** Ends the process once stdout and stderr have taken everything written to them: `process.exit` with output still queued cuts it short. */
 async function exit(code: number): Promise<never> {
-  await Promise.all(
-    [process.stdout, process.stderr].map(
-      (stream) =>
-        new Promise<void>((done) => {
-          // A reader that has gone (EPIPE) leaves nothing to wait for.
-          stream.once("error", () => done());
-          stream.write("", () => done());
-        }),
-    ),
-  );
+  await Promise.all([drained(process.stdout), drained(process.stderr)]);
   process.exit(code);
 }
 
-main().then(exit, (err: unknown) => {
+main().then(exit, async (err: unknown) => {
+  // stdout and stderr may be one pipe (`2>&1 | cat`): the message waits for what was printed before it, or it lands inside it.
+  await drained(process.stdout);
   console.error(`[minebot] ${err instanceof Error ? err.message : String(err)}`);
   return exit(1);
 });

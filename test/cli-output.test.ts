@@ -3,10 +3,12 @@
 // real CLI against a body that answers with far more than a pipe holds (64 KB), once with stdout and stderr
 // real pipes whose reader is slow, once with both redirected to files, and once through the sockets
 // child_process hands a parent; each must carry, byte for byte, the text a terminal would show, and the
-// exit code the command ends with.
+// exit code the command ends with. A command that prints and then fails also runs with stdout and stderr
+// merged into one pipe and one file, where its error line must come after everything it printed.
 import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -34,6 +36,7 @@ const NOTE = bulk("note");
 const SOURCE = bulk("source");
 const LOGS = bulk("log");
 const FAILURE = bulk("failure");
+const TYPE_ERRORS = bulk("type error").split("\n");
 
 let server: Server;
 let url: string;
@@ -53,6 +56,7 @@ before(async () => {
       case "GET /builtins/docs": return answer({ docs: DOCS });
       case "GET /builtins/source": return answer({ error: FAILURE }, 404);
       case "GET /routines/source": return answer({ name: "big", source: SOURCE });
+      case "POST /routines/save": return answer({ routine: { name: body.name, version: 1, savedAt: "now" }, typeCheck: { status: "failed", errors: TYPE_ERRORS } });
       case "GET /api": return answer({ doc: API });
       case "GET /wiki/page": return answer({ page: {}, text: PAGE });
       case "GET /notes/big": return answer({ key: "big", text: NOTE, updated: "now" });
@@ -100,6 +104,13 @@ const throughPipes = (args: string[]) =>
 /** Both streams redirected to files by the shell. */
 const toFiles = (args: string[]) => viaShell(`"$NODE" "$@" > "$DIR/out" 2> "$DIR/err"; echo $? > "$DIR/code"`, args);
 
+/** stdout and stderr one pipe, as `2>&1 | cat` makes them, read by a `cat` that starts only after a delay. */
+const mergedPipe = (args: string[]) =>
+  viaShell(`: > "$DIR/err"; { "$NODE" "$@"; echo $? > "$DIR/code"; } 2>&1 | { sleep 0.4; cat > "$DIR/out"; }`, args);
+
+/** stdout and stderr one file. */
+const mergedFile = (args: string[]) => viaShell(`: > "$DIR/err"; "$NODE" "$@" > "$DIR/out" 2>&1; echo $? > "$DIR/code"`, args);
+
 /** Both streams as a parent process reads them. */
 async function throughSockets(args: string[]): Promise<Captured> {
   try {
@@ -134,6 +145,13 @@ interface Case {
   err: string;
 }
 
+const MISSING = path.join(SCRATCH, "missing.ts");
+// The message Node gives for the file the CLI cannot read, as the CLI receives it.
+const MISSING_MESSAGE = await readFile(MISSING, "utf8").then(
+  () => assert.fail(`${MISSING} exists`),
+  (err: Error) => err.message,
+);
+
 const CASES: Case[] = [
   { name: "builtins docs", args: () => ["builtins", "docs"], code: 0, out: `${DOCS}\n`, err: "" },
   { name: "api", args: () => ["api"], code: 0, out: `${API}\n`, err: "" },
@@ -145,6 +163,13 @@ const CASES: Case[] = [
   { name: "call with large logs", args: () => ["call", "good"], code: 0, out: runText("ok"), err: "" },
   { name: "call that fails (status 2)", args: () => ["call", "bad"], code: 2, out: runText("error"), err: "" },
   { name: "an error exit with a large message on stderr", args: () => ["builtins", "source", "missing"], code: 1, out: "", err: `[minebot] ${FAILURE}\n` },
+  {
+    name: "an error exit after large output (the second of two routines is missing)",
+    args: () => ["routines", "save", RUN_FILE("ok"), MISSING],
+    code: 1,
+    out: `saved module-ok  v1  now\ntype check: failed\n${TYPE_ERRORS.map((error) => `  ${error}`).join("\n")}\n`,
+    err: `[minebot] ${MISSING_MESSAGE}\n`,
+  },
 ];
 
 // The unknown-command exit prints the command word back, so a long word makes its stderr past 64 KB.
@@ -164,6 +189,19 @@ describe("client output past a pipe's capacity", () => {
         const got = await run(c.args());
         assertBytes(got.out, c.out, "stdout");
         assertBytes(got.err, c.err, "stderr");
+        assert.equal(got.code, c.code, "exit code");
+      });
+    }
+  }
+});
+
+describe("client output past a pipe's capacity, stdout and stderr merged", () => {
+  // Every command that writes to stderr after it has printed to stdout.
+  for (const c of CASES.filter((c) => c.out !== "" && c.err !== "")) {
+    for (const [leg, run] of [["one pipe", mergedPipe], ["one file", mergedFile]] as const) {
+      it(`${c.name}: what it printed, then the error, to ${leg} as to a terminal`, async () => {
+        const got = await run(c.args());
+        assertBytes(got.out, c.out + c.err, "stdout and stderr");
         assert.equal(got.code, c.code, "exit code");
       });
     }
