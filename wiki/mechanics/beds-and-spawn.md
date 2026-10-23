@@ -36,6 +36,6 @@ Do not use `bot.wake()`: on 26.1 it does nothing (`quirks/bot-wake-does-not-leav
 
 A bed is 3 wool of one color above 3 planks of one kind. Search `white_bed recipe` for the grid. A bed and a shelter together make the first night safe: `flows/first-night-shelter`.
 
-<!-- builtins -->
+<!-- builtins:survival -->
 `minebot call survival.sleep` goes to the nearest bed and sleeps. `minebot call survival.sleep --args '{"at":[10,64,5]}'` uses the bed at that position. `minebot call survival.wake` gets up.
-<!-- /builtins -->
+<!-- /builtins:survival -->

@@ -17,10 +17,20 @@ Underground is dark: hostile mobs spawn there at any time of day.
 <!-- builtins -->
 With built-in routines:
 
+<!-- /builtins -->
+<!-- builtins:crafter -->
 - `minebot call crafter.make --args '{"item":"furnace"}'` crafts the furnace.
+<!-- /builtins:crafter -->
+<!-- builtins:sense -->
 - `minebot call sense.find --args '{"blocks":"*coal_ore"}'` and `minebot call sense.find --args '{"blocks":"*iron_ore","radius":32}'` give positions.
+<!-- /builtins:sense -->
+<!-- builtins:explorer -->
 - `minebot call explorer.scan --args '{"radius":24}'` lists the ores near you.
+<!-- /builtins:explorer -->
+<!-- builtins:furnace -->
 - `minebot call furnace.smelt --args '{"item":"raw_iron","count":3}'` smelts at a furnace within 4.5 blocks. It loads coal, charcoal, planks, or logs as fuel, waits 10 seconds per item, and takes the ingots.
+<!-- /builtins:furnace -->
+<!-- builtins:crafter -->
 - `minebot call crafter.make --args '{"item":"iron_ingot","count":3}'` does the same from anywhere. It finds a furnace within 32 blocks, or places or crafts one (8 cobblestone).
 - `minebot call crafter.make --args '{"item":"iron_pickaxe"}'` smelts the ingots it lacks from the `raw_iron` you hold, then crafts the pickaxe.
-<!-- /builtins -->
+<!-- /builtins:crafter -->

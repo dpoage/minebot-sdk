@@ -33,6 +33,6 @@ export default async ({ bot, sleep }: RoutineContext) => {
 
 Check the ray before you try: `bot.world.raycast(eyes, direction, distance)` returns a block when something solid lies between your eyes and the point.
 
-<!-- builtins -->
+<!-- builtins:bucket -->
 `minebot call bucket.fill --args '{"fluid":"lava"}'` tries several points of the source and uses the first one that the eyes can see.
-<!-- /builtins -->
+<!-- /builtins:bucket -->

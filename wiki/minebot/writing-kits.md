@@ -90,6 +90,8 @@ Save this file as `runs/try-visits.ts`. A run must not have the file name of a r
 ## Compose built-in routines
 
 Search first: a built-in routine may already do the job. `minebot builtins search "collect logs"` ranks the routines by what they do, and `minebot builtins docs gatherer` prints the call shapes. See `minebot/kits`.
+<!-- /builtins -->
+<!-- builtins:dig,move,sense -->
 
 A routine reaches a built-in routine by import. This routine walks to each of the nearest logs and digs it:
 
@@ -134,5 +136,9 @@ test("woodcutter digs the nearest logs", async () => {
 });
 ```
 
-Save the routine as `routines/woodcutter.ts` and the test as `test/woodcutter.test.ts`. The body counts every call of a built-in routine, so `minebot builtins` shows which routines work on this body. When two routines do the same job, call the one that works.
+Save the routine as `routines/woodcutter.ts` and the test as `test/woodcutter.test.ts`.
+<!-- /builtins:dig,move,sense -->
+<!-- builtins -->
+
+The body counts every call of a built-in routine, so `minebot builtins` shows which routines work on this body. When two routines do the same job, call the one that works.
 <!-- /builtins -->

@@ -31,6 +31,6 @@ export default async ({ bot, sleep }: RoutineContext) => {
 };
 ```
 
-<!-- builtins -->
+<!-- builtins:gatherer -->
 `minebot call gatherer.collectDrops` does the same, and `gatherer.gather` already picks up drops after each block.
-<!-- /builtins -->
+<!-- /builtins:gatherer -->

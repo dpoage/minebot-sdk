@@ -31,6 +31,6 @@ export default async ({ bot, sleep }: RoutineContext) => {
 
 `bot.sleep(bed)` itself is fine. It throws `it's not night and it's not a thunderstorm` in daylight (night is `timeOfDay` 12541 to 23458), and `there are monsters nearby` when a hostile mob is within about 8 blocks of the bed.
 
-<!-- builtins -->
+<!-- builtins:survival -->
 `minebot call survival.sleep` walks to the nearest bed within 16 blocks and sleeps. `minebot call survival.wake` sends the right packet.
-<!-- /builtins -->
+<!-- /builtins:survival -->

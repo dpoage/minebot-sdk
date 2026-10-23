@@ -30,6 +30,6 @@ export default ({ bot }: RoutineContext, { x, y, z }: { x: number; y: number; z:
 };
 ```
 
-<!-- builtins -->
+<!-- builtins:crafter -->
 `minebot call crafter.make --args '{"item":"wooden_pickaxe"}'` picks a recipe that matches your inventory and crafts missing planks and sticks first.
-<!-- /builtins -->
+<!-- /builtins:crafter -->

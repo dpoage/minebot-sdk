@@ -25,6 +25,6 @@ Tier order: wooden, stone, iron, diamond, netherite. Copper pickaxes have the st
 
 In code, `block.canHarvest(bot.heldItem?.type ?? null)` tells you whether the held item gets a drop, and `bot.pathfinder.bestHarvestTool(block)` picks the best tool you hold.
 
-<!-- builtins -->
+<!-- builtins:gatherer -->
 `minebot call gatherer.gather --args '{"blocks":"stone","count":3}'` equips the best tool and fails if a required tool is missing.
-<!-- /builtins -->
+<!-- /builtins:gatherer -->

@@ -118,7 +118,7 @@ export default () => {
 
 Check the result after each step with `ctx.bot.inventory.items()`. Do not assume a step worked because the call returned.
 
-<!-- builtins -->
+<!-- builtins:crafter,gatherer -->
 Steps 1-4 are one call each:
 
 ```sh
@@ -127,6 +127,8 @@ minebot call crafter.make --args '{"item":"wooden_pickaxe"}'
 minebot call gatherer.gather --args '{"blocks":"stone","count":3}'
 minebot call crafter.make --args '{"item":"stone_pickaxe"}'
 ```
+<!-- /builtins:crafter,gatherer -->
+<!-- builtins:inventory -->
 
 `minebot call inventory.list` shows the result.
-<!-- /builtins -->
+<!-- /builtins:inventory -->

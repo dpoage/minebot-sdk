@@ -34,6 +34,6 @@ export default async ({ bot }: RoutineContext) => {
 
 Armor cuts the arrow damage (`mechanics/armor-tiers`). A fight: `mechanics/combat-basics`.
 
-<!-- builtins -->
+<!-- builtins:combat -->
 `minebot call combat.attack --args '{"target":"skeleton"}'` fights one. `minebot call combat.retreat --args '{"from":123}'` backs off from the entity with that id.
-<!-- /builtins -->
+<!-- /builtins:combat -->

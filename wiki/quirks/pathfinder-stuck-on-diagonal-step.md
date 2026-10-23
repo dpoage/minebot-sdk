@@ -29,6 +29,6 @@ export default ({ bot }: RoutineContext) => {
 };
 ```
 
-<!-- builtins -->
+<!-- builtins:move -->
 `move.to` does this automatically, and so does every built-in routine that walks with it: `gatherer`, `crafter`, `explorer`, and `social`.
-<!-- /builtins -->
+<!-- /builtins:move -->

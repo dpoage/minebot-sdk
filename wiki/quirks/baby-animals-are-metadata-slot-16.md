@@ -28,6 +28,6 @@ export default ({ bot }: RoutineContext) => {
 
 To find the calf that a breeding produced, poll for a cow with the flag that was not in the world before.
 
-<!-- builtins -->
+<!-- builtins:farm -->
 `minebot call farm.breed --args '{"animal":"cow"}'` picks adults only and reports the baby it sees.
-<!-- /builtins -->
+<!-- /builtins:farm -->

@@ -30,6 +30,6 @@ export default async ({ bot, sleep }: RoutineContext, { x, y, z }: { x: number; 
 };
 ```
 
-<!-- builtins -->
+<!-- builtins:farm -->
 `farm.harvest` waits before it computes `gained`.
-<!-- /builtins -->
+<!-- /builtins:farm -->

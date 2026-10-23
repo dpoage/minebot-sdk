@@ -15,25 +15,46 @@ function statusOf(meta: PageMeta, lesson: boolean): PageStatus {
   return meta.mc_version === MC_VERSION ? "verified" : "stale";
 }
 
+const FRONT_MATTER = /^---\n([\s\S]*?)\n---\n?([\s\S]*)$/;
+
 export function parsePage(id: string, text: string, lesson: boolean): WikiPage {
-  const match = /^---\n([\s\S]*?)\n---\n?([\s\S]*)$/.exec(text);
+  const match = FRONT_MATTER.exec(text);
   if (!match) throw new Error(`wiki page ${id}: missing --- frontmatter`);
   const parsed = PageMeta.safeParse(parseYaml(match[1]!));
   if (!parsed.success) throw new Error(`wiki page ${id}: ${z.prettifyError(parsed.error)}`);
   return { id, meta: parsed.data, status: statusOf(parsed.data, lesson), body: match[2]!.trim() };
 }
 
-/** Feature-cut blocks, derived from the feature enum so a new gate needs no second edit. */
-const CUT_BLOCK = new RegExp(`<!-- (${WikiFeature.options.join("|")}) -->\\n?([\\s\\S]*?)<!-- /\\1 -->\\n?`, "g");
+/**
+ * Feature-cut blocks, derived from the feature enum so a new gate needs no second edit. A `builtins` block may name the
+ * built-in modules it needs, `<!-- builtins:gatherer -->` or `<!-- builtins:dig,move -->`; its closing marker repeats them.
+ */
+const CUT_BLOCK = new RegExp(`<!-- (${WikiFeature.options.join("|")}|builtins:[a-z]+(?:,[a-z]+)*) -->\\n?([\\s\\S]*?)<!-- /\\1 -->\\n?`, "g");
+
+/** Whether a body with `view` sees a block marked `gate` (`builtins`, or `builtins:<module>,...`): the feature is on, and every module the gate names is offered. */
+function shows(gate: string, view: WikiView): boolean {
+  const [feature, modules] = gate.split(":") as [WikiFeature, string | undefined];
+  if (!view[feature]) return false;
+  return modules === undefined || view.modules === undefined || modules.split(",").every((module) => view.modules!.includes(module));
+}
 
 /** The page as a body with `view` sees it, or null when the page needs a feature the body lacks. */
 export function visible(page: WikiPage, view: WikiView): WikiPage | null {
   if (page.meta.requires.some((feature) => !view[feature])) return null;
   const body = page.body
-    .replace(CUT_BLOCK, (_, feature: WikiFeature, inner: string) => (view[feature] ? inner : ""))
+    .replace(CUT_BLOCK, (_, gate: string, inner: string) => (shows(gate, view) ? inner : ""))
     .replace(/\n{3,}/g, "\n\n")
     .trim();
   return { ...page, body };
+}
+
+/**
+ * The text of the page file `text` as a body with `view` sees it: the page's own front matter, then the body that `visible` leaves.
+ * Null when the page needs a feature the body lacks. Reading the result under the same view gives the page that `visible` gives.
+ */
+export function pageFileFor(id: string, text: string, view: WikiView): string | null {
+  const page = visible(parsePage(id, text, false), view);
+  return page && `---\n${FRONT_MATTER.exec(text)![1]}\n---\n\n${page.body}\n`;
 }
 
 /** Lowercase word tokens; `oak_log` also yields `oak` and `log`. */

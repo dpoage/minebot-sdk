@@ -27,6 +27,6 @@ export default ({ bot }: RoutineContext) => {
 };
 ```
 
-<!-- builtins -->
+<!-- builtins:combat -->
 `minebot call combat.fight --args '{"radius":16,"targets":["blaze"]}'` fights blazes in range.
-<!-- /builtins -->
+<!-- /builtins:combat -->

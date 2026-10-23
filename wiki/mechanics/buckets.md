@@ -51,6 +51,6 @@ Observed: water appeared in the air cell in front of the wall that the bot looke
 
 Water and lava interact: see `mechanics/water-and-lava`.
 
-<!-- builtins -->
+<!-- builtins:bucket -->
 `minebot call bucket.fill --args '{"fluid":"water"}'` fills a bucket from the nearest source. `minebot call bucket.empty --args '{"at":[10,64,5]}'` places the fluid at a position.
-<!-- /builtins -->
+<!-- /builtins:bucket -->

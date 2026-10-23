@@ -9,9 +9,16 @@ import { WikiDisabledError, Wiki, formatPage } from "./wiki.ts";
 /**
  * What a body sees of the wiki. A body without built-in routines must not read about them, so pages that
  * need a missing feature are hidden, and blocks marked `<!-- builtins -->...<!-- /builtins -->`
- * (or `milestones`, `reflexes`, `routines`) are cut from the pages that stay.
+ * (or `milestones`, `reflexes`, `routines`) are cut from the pages that stay. A body that offers only some
+ * built-in modules does not see the blocks of the others: `<!-- builtins:<module> -->...<!-- /builtins:<module> -->`.
  */
-export type WikiView = Record<WikiFeature, boolean>;
+export type WikiView = Record<WikiFeature, boolean> & {
+  /**
+   * The built-in modules the body offers. A `<!-- builtins:<module> -->` block shows only when the feature is on and every module it
+   * names is in this list. Absent: every module is offered.
+   */
+  modules?: readonly string[];
+};
 
 /** The view that shows every page whole. */
 export const FULL_VIEW: WikiView = { builtins: true, milestones: true, reflexes: true, routines: true };
@@ -19,7 +26,7 @@ export const FULL_VIEW: WikiView = { builtins: true, milestones: true, reflexes:
 /** Derives the wiki view from the body's features: the capability table is the only source. */
 export function wikiView(features: BodyFeatures): WikiView {
   const caps = capabilities(features);
-  return { builtins: caps.builtins, milestones: caps.milestones, reflexes: caps.reflexes, routines: caps.routines };
+  return { builtins: caps.builtins, milestones: caps.milestones, reflexes: caps.reflexes, routines: caps.routines, modules: features.builtins };
 }
 
 /** A body's view of the wiki: enforces the access mode, hides content for features the body lacks, and names lessons after the body. */

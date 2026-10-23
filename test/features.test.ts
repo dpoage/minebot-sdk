@@ -11,7 +11,7 @@ import { BodyClient } from "../src/client/client.ts";
 import { toolPlan } from "../src/client/mcp.ts";
 import { z } from "zod";
 import { type BodyFeatures, programApiDoc, WikiFeature } from "../src/protocol/index.ts";
-import { markedLines, strayVocabulary, WIKI_SEARCH_QUERIES } from "./helpers/wiki-vocabulary.ts";
+import { markedLines, markedModules, strayVocabulary, WIKI_SEARCH_QUERIES } from "./helpers/wiki-vocabulary.ts";
 import { usageFor } from "../src/client/usage.ts";
 import { defineRoutine } from "../src/routine/define.ts";
 import { createHarness } from "../src/testing/index.ts";
@@ -376,7 +376,9 @@ describe("tier visibility on a running body", () => {
    * What a body with `view` serves of the wiki: the pages it lists; the ones whose text says something stale; the marked lines
    * its text shows without their feature or hides with it; and the words of features the view lacks that its pages or search results show.
    */
-  async function served(body: BodyClient, view: Record<WikiFeature, boolean>): Promise<{ ids: string[]; stale: string[]; misplaced: string[]; stray: string[] }> {
+  async function served(body: BodyClient, features: Record<WikiFeature, boolean>): Promise<{ ids: string[]; stale: string[]; misplaced: string[]; stray: string[] }> {
+    const offered = (await body.features()).builtins;
+    const view = { ...features, modules: offered };
     const ids = (await body.wikiList()).pages.map((page) => page.id).sort();
     const stale: string[] = [];
     const misplaced: string[] = [];
@@ -387,8 +389,9 @@ describe("tier visibility on a running body", () => {
       stray.push(...strayVocabulary(`${text}\n${page.meta.tags.join(" ")}`, view).map((found) => `${id} ${found}`));
       const lines = new Set(text.split("\n").map((line) => line.trim()));
       const marked = markedLines(id);
+      const modules = markedModules(id);
       for (const feature of WikiFeature.options) {
-        for (const line of marked[feature]) if (lines.has(line) !== view[feature]) misplaced.push(`${id} ${feature}: ${line}`);
+        for (const line of marked[feature]) if (lines.has(line) !== (view[feature] && (modules.get(line) ?? []).every((module) => offered.includes(module)))) misplaced.push(`${id} ${feature}: ${line}`);
       }
     }
     for (const query of WIKI_SEARCH_QUERIES) {
