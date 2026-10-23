@@ -347,10 +347,22 @@ async function unknownCommand(features: BodyFeatures | null): Promise<number> {
   return 1;
 }
 
-main().then(
-  (code) => process.exit(code),
-  (err: unknown) => {
-    console.error(`[minebot] ${err instanceof Error ? err.message : String(err)}`);
-    process.exit(1);
-  },
-);
+/** Ends the process once stdout and stderr have taken everything written to them: Node writes to a pipe or a socket asynchronously, and `process.exit` with output still queued cuts it short. */
+async function exit(code: number): Promise<never> {
+  await Promise.all(
+    [process.stdout, process.stderr].map(
+      (stream) =>
+        new Promise<void>((done) => {
+          // A reader that has gone (EPIPE) leaves nothing to wait for.
+          stream.once("error", () => done());
+          stream.write("", () => done());
+        }),
+    ),
+  );
+  process.exit(code);
+}
+
+main().then(exit, (err: unknown) => {
+  console.error(`[minebot] ${err instanceof Error ? err.message : String(err)}`);
+  return exit(1);
+});
