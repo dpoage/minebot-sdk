@@ -531,7 +531,7 @@
       },
       {
         "name": "table",
-        "doc": "The position of a crafting table within 4 blocks, so programs can stand next to it. Fails when there is none nearby.",
+        "doc": "The position of a crafting table within 4 blocks, so a routine can stand next to it. Fails when there is none nearby.",
         "args": {
           "$schema": "https://json-schema.org/draft/2020-12/schema",
           "type": "object",
@@ -2792,7 +2792,7 @@
       },
       {
         "name": "remember",
-        "doc": "Save a named place at `at` (default: where the player stands) and return it. `kind` is one of chest, bed, farm, ore, base, portal, other (default other); `tags` and `note` describe it; `contents` maps item names to counts for a chest. Remembering a name again keeps the kind, tags, note, and contents you do not pass. Places survive programs, kit swaps, and body restarts.",
+        "doc": "Save a named place at `at` (default: where the player stands) and return it. `kind` is one of chest, bed, farm, ore, base, portal, other (default other); `tags` and `note` describe it; `contents` maps item names to counts for a chest. Remembering a name again keeps the kind, tags, note, and contents you do not pass. Places survive runs and body restarts.",
         "args": {
           "$schema": "https://json-schema.org/draft/2020-12/schema",
           "type": "object",
@@ -3203,7 +3203,7 @@
       },
       {
         "name": "surface",
-        "doc": "Climb to open sky by digging a staircase; use it when trapped underground or in a pit. Needs no blocks; slow without a pickaxe, so pass a long program timeout (e.g. --timeout 600000). Under water it checks the air supply: it does not dig what the air cannot cover and swims to air first. `maxSteps` (default 120) bounds the climb. Returns { surfaced, from, to, steps }.",
+        "doc": "Climb to open sky by digging a staircase; use it when trapped underground or in a pit. Needs no blocks; slow without a pickaxe, so pass a long call timeout (e.g. --timeout 600000). Under water it checks the air supply: it does not dig what the air cannot cover and swims to air first. `maxSteps` (default 120) bounds the climb. Returns { surfaced, from, to, steps }.",
         "args": {
           "$schema": "https://json-schema.org/draft/2020-12/schema",
           "type": "object",

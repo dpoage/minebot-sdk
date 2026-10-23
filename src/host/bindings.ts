@@ -38,7 +38,7 @@ export class Bindings {
       const held = deps.triggers?.holds(name);
       if (parsed.success && stored.success && held !== undefined) {
         // The reflexes' store is read first and a name is held once: the reflex or the skipped entry wins, the action's entry waits in the file.
-        deps.events.push("binding_error", { name, error: `"${name}" is also ${held === "reflex" ? "a reflex" : "a stored entry the reflexes skipped"}, which takes the name; unbind it to use this action` });
+        deps.events.push("binding_error", { name, error: `"${name}" is also ${held === "reflex" ? "a reflex" : "a stored entry the reflexes skipped"}, which takes the name; unbind it, then restart the body to use this action` });
       } else if (parsed.success && stored.success) this.#actions.set(name, { kind: "action", name, routine: stored.data.routine });
       else deps.events.push("binding_error", { name, error: z.prettifyError(parsed.success ? stored.error! : parsed.error) });
     }

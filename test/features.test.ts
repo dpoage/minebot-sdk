@@ -1,14 +1,20 @@
 import assert from "node:assert/strict";
 import { type ChildProcess, execFile, spawn } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { setTimeout } from "node:timers/promises";
 import { after, before, describe, it } from "node:test";
 import { promisify } from "node:util";
+import { parse as parseYaml } from "yaml";
 import { BodyClient } from "../src/client/client.ts";
-import { type BodyFeatures, programApiDoc } from "../src/protocol/index.ts";
+import { toolPlan } from "../src/client/mcp.ts";
+import { z } from "zod";
+import { type BodyFeatures, programApiDoc, WikiFeature } from "../src/protocol/index.ts";
+import { markedLines, strayVocabulary, WIKI_SEARCH_QUERIES } from "./helpers/wiki-vocabulary.ts";
 import { usageFor } from "../src/client/usage.ts";
+import { defineRoutine } from "../src/routine/define.ts";
+import { createHarness } from "../src/testing/index.ts";
 import { OPERATOR_FLAG_HELP } from "../src/client/body-flags.ts";
 
 const exec = promisify(execFile);
@@ -284,7 +290,7 @@ describe("tier visibility on a running body", () => {
     assert.match((await cli(fullBody, "--help")).out, /builtins docs[\s\S]*wiki search/);
     assert.doesNotMatch((await cli(fullBody, "--help")).out, /milestone/i);
     assert.match((await cli(fullBody, "builtins", "docs")).out, /## gatherer/);
-    assert.match((await cli(fullBody, "wiki", "read", "flows/first-day")).out, /collect\(isLog/);
+    assert.match((await cli(fullBody, "wiki", "read", "flows/first-day")).out, /collect\((ctx, )?isLog/);
   });
 
   it("serves a body with reflexes its binding command and reference, and offers no code triggers: no route, command, flag, or word", async () => {
@@ -318,15 +324,24 @@ describe("tier visibility on a running body", () => {
     assert.deepEqual(await fullBody.unbind("react"), { unbound: "react" });
   });
 
-  it("serves a body without built-ins and routines none of their content in the wiki", async () => {
+  it("serves a body without built-ins and routines none of their content in the wiki", { timeout: 60_000 }, async () => {
     const wikiBody = await start("features-wiki", "--wiki", "read", "--no-milestones", "--builtins", "none", "--no-routines");
+    const features = await wikiBody.features();
+    assert.deepEqual([features.builtins.length, features.milestones, features.routines], [0, false, false]);
     const first = (await cli(wikiBody, "wiki", "read", "flows/first-day")).out;
-    assert.match(first, /collect\(isLog/);
+    assert.match(first, /collect\((ctx, )?isLog/);
     assert.doesNotMatch(first, KIT_WORDS);
     assert.doesNotMatch((await cli(wikiBody, "wiki", "read", "flows/escape-underground")).out, KIT_WORDS);
     const search = (await cli(wikiBody, "wiki", "search", "gather logs")).out;
     assert.doesNotMatch(search, KIT_WORDS);
     assert.match((await cli(wikiBody, "wiki", "read", "minebot/kits")).out, /no wiki page/);
+    // Reflexes need routines (CAPABILITY_GATES.reflexes), so this body's view has none.
+    const view = { builtins: false, milestones: false, reflexes: false, routines: false };
+    const { ids, stale, misplaced, stray } = await served(wikiBody, view);
+    assert.deepEqual(ids, pagesFor(view));
+    assert.deepEqual(stale, [], "pages whose served text names kit.*, kits.*, defineKit, or trigger_*");
+    assert.deepEqual(misplaced, [], "marked lines the served text shows without their feature");
+    assert.deepEqual(stray, [], "built-in or reflex words that the served pages or search results show to a body without them");
   });
 
   it("shows a body with built-ins only the modules it offers", async () => {
@@ -336,5 +351,114 @@ describe("tier visibility on a running body", () => {
     await assert.rejects(some.builtinDocs(["social"]), /unknown built-in module "social"/);
     const { doc } = await some.apiDoc();
     assert.match(doc, new RegExp(`^Built-in routines: ${offered.join(", ")}\\.`, "m"));
+  });
+
+  /** The front matter field the wiki's page view reads. */
+  const FrontMatter = z.object({ requires: z.array(z.string()).default([]) });
+
+  /** The ids of the pages under wiki/ that a body with these features serves: the pages whose `requires` the body has, read from the front matter on disk. */
+  function pagesFor(features: Record<string, boolean>): string[] {
+    const wikiDir = path.join(import.meta.dirname, "..", "wiki");
+    const ids: string[] = [];
+    for (const entry of readdirSync(wikiDir, { withFileTypes: true, recursive: true })) {
+      if (!entry.isFile() || !entry.name.endsWith(".md") || entry.name === "README.md") continue;
+      const file = path.join(entry.parentPath, entry.name);
+      const { requires } = FrontMatter.parse(parseYaml(/^---\n([\s\S]*?)\n---/.exec(readFileSync(file, "utf8"))![1]!));
+      if (requires.every((feature) => features[feature])) ids.push(path.relative(wikiDir, file).slice(0, -".md".length).split(path.sep).join("/"));
+    }
+    return ids.sort();
+  }
+
+  /** What no page may say to a body: the call shapes and tools of the kits and code triggers that are gone. */
+  const STALE_PAGE_TEXT = /kit\.|kits\.|defineKit|trigger_/;
+
+  /**
+   * What a body with `view` serves of the wiki: the pages it lists; the ones whose text says something stale; the marked lines
+   * its text shows without their feature or hides with it; and the words of features the view lacks that its pages or search results show.
+   */
+  async function served(body: BodyClient, view: Record<WikiFeature, boolean>): Promise<{ ids: string[]; stale: string[]; misplaced: string[]; stray: string[] }> {
+    const ids = (await body.wikiList()).pages.map((page) => page.id).sort();
+    const stale: string[] = [];
+    const misplaced: string[] = [];
+    const stray: string[] = [];
+    for (const id of ids) {
+      const { page, text } = await body.wikiRead(id);
+      if (STALE_PAGE_TEXT.test(text)) stale.push(id);
+      stray.push(...strayVocabulary(`${text}\n${page.meta.tags.join(" ")}`, view).map((found) => `${id} ${found}`));
+      const lines = new Set(text.split("\n").map((line) => line.trim()));
+      const marked = markedLines(id);
+      for (const feature of WikiFeature.options) {
+        for (const line of marked[feature]) if (lines.has(line) !== view[feature]) misplaced.push(`${id} ${feature}: ${line}`);
+      }
+    }
+    for (const query of WIKI_SEARCH_QUERIES) {
+      for (const hit of (await body.wikiSearch(query, 20)).hits) {
+        stray.push(...strayVocabulary(`${hit.title}\n${hit.tags.join(" ")}\n${hit.snippet}`, view).map((found) => `search "${query}" shows ${hit.id} ${found}`));
+      }
+    }
+    return { ids, stale, misplaced, stray };
+  }
+
+  it("serves a default body (routines on, no --builtins) every page its features fit, each marked line exactly where its feature is on, and no page that names the kits or the trigger tools", { timeout: 60_000 }, async () => {
+    const body = await start("features-view-default", "--wiki", "read", "--no-milestones");
+    const features = await body.features();
+    assert.deepEqual([features.routines, features.reflexes, features.builtins.length > 0], [true, true, true]);
+    const view = { builtins: true, milestones: false, reflexes: true, routines: true };
+    const { ids, stale, misplaced } = await served(body, view);
+    assert.deepEqual(ids, pagesFor(view));
+    assert.ok(ids.includes("minebot/routines"), "the routines page is served where routines are on");
+    assert.deepEqual(stale, [], "pages whose served text names kit.*, kits.*, defineKit, or trigger_*");
+    assert.deepEqual(misplaced, [], "marked lines the served text shows without their feature, or hides with it");
+  });
+
+  it("serves a builtins-only body (--builtins, no routines) every page its features fit, each marked line exactly where its feature is on, and no page or search result that names the kits, the trigger tools, or reflexes", { timeout: 60_000 }, async () => {
+    const body = await start("features-view-builtins", "--wiki", "read", "--no-milestones", "--builtins", "gatherer", "--no-routines");
+    const features = await body.features();
+    assert.deepEqual([features.routines, features.builtins.length > 0], [false, true]);
+    const view = { builtins: true, milestones: false, reflexes: false, routines: false };
+    const { ids, stale, misplaced, stray } = await served(body, view);
+    assert.deepEqual(ids, pagesFor(view));
+    assert.ok(!ids.includes("minebot/routines"), "the routines page is hidden where routines are off");
+    assert.deepEqual(stale, [], "pages whose served text names kit.*, kits.*, defineKit, or trigger_*");
+    assert.deepEqual(misplaced, [], "marked lines the served text shows without their feature, or hides with it");
+    assert.deepEqual(stray, [], "reflex words that the served pages or search results show to a body without reflexes");
+  });
+});
+
+describe("what the references say about imports and require", () => {
+  it("tells a run that paths and file: URLs fail to import, and does not say that every URL does", () => {
+    const doc = programApiDoc({ ...raw, routines: true });
+    assert.match(doc, /importing an absolute path, a `file:` URL, or a relative path to anything but a module of the library fails\./);
+    assert.doesNotMatch(doc, /an absolute path, a URL,/);
+    // The loader refuses a file: URL and an absolute path (module-run.test.ts); a data: or node: import is not refused, so the reference must not claim a URL import fails.
+  });
+
+  it("tells an agent that routine_save accepts require, which a saved routine has", () => {
+    const { routine_save: save } = toolPlan({ ...raw, routines: true }, "full");
+    assert.doesNotMatch(save!.description, /`require` does not work/);
+    assert.match(save!.description, /`require` works too/);
+  });
+});
+
+describe("what h.calls records", () => {
+  const unnamed = defineRoutine({ args: z.object({}) }, () => 1);
+  const named = defineRoutine({ name: "mine.one" }, () => 2);
+  const plain = () => 3;
+
+  it("records only the routine values named module.routine, nested calls included", async () => {
+    const h = createHarness();
+    const result = await h.run(async (ctx) => [await unnamed(ctx), await named(ctx, { a: 1 }), plain()]);
+    assert.deepEqual(result, [1, 2, 3]);
+    assert.deepEqual(h.calls, [{ kit: "mine", action: "one", args: { a: 1 } }]);
+  });
+
+  it("says so in the doc comments of the published harness types", () => {
+    const source = readFileSync(path.join(import.meta.dirname, "..", "src", "testing", "index.ts"), "utf8");
+    assert.match(source, /declared with a `module\.routine` name \(every built-in routine, and any other routine that declares one\)/);
+    assert.doesNotMatch(source, /\(the built-in routines\)/, "a routine of your own named module.routine is recorded too");
+    assert.match(source, /A routine value without such a name is not recorded\./);
+    assert.match(source, /those named `module\.routine` are recorded in `calls`/);
+    assert.doesNotMatch(source, /by import run with that scope and are recorded in `calls`/);
+    assert.doesNotMatch(source, /each routine value it calls by import is observed/);
   });
 });

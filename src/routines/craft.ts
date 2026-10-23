@@ -60,7 +60,7 @@ export const craft = defineRoutine(
 export const table = defineRoutine(
   {
     name: "craft.table",
-    description: "The position of a crafting table within 4 blocks, so programs can stand next to it. Fails when there is none nearby.",
+    description: "The position of a crafting table within 4 blocks, so a routine can stand next to it. Fails when there is none nearby.",
     args: z.object({}),
     returns: Point,
   },
