@@ -432,7 +432,7 @@ npx tsc                                      # checks routines/, runs/, and test
 npm test
 ```
 
-`init` writes `package.json` (dependency `minebot-sdk`, dev dependencies `typescript` and `@types/node`), a strict `tsconfig.json`, `routines/hello.ts` (an example routine that calls the `inventory.count` built-in), `runs/say-hello.ts` (a run that calls it), `test/hello.test.ts` (a routine test on the harness, run with `npm test`), `.gitignore`, and a README. It never overwrites a file that exists.
+`init` writes `package.json` (dependency `minebot-sdk`, dev dependencies `typescript` and `@types/node`), a strict `tsconfig.json`, `routines/hello.ts` (an example routine that says a message in chat, reports where the player stands, and counts the matching items in the bot's inventory itself, with no built-in), `runs/say-hello.ts` (a run that calls it), `test/hello.test.ts` (a routine test on the harness, run with `npm test`), `.gitignore`, and a README. It never overwrites a file that exists.
 
 A routine imports its helpers from `"minebot-sdk/routine"` and the built-in modules from `"minebot-sdk/routines/<module>"`. A run is a module like a routine, so it may use top-level `await` and `export default`. Its relative imports (`./hello.ts`) name modules of the body's library. The `tsconfig.json` lists `routines` and `runs` in `rootDirs`, so `tsc` reads a run's `./hello.ts` as `routines/hello.ts`. Give a run a file name that no routine has: `runs/hello.ts` would import itself. `minebot run` sends the file as it is, and the body strips the types.
 

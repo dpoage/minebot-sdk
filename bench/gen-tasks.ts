@@ -586,11 +586,12 @@ const TIER_WRAPPER = 'node --conditions=minebot-sdk:source /opt/minebot/bench/ti
  * The compose file of a trial. Harbor reserves `main` for the agent and merges this file over its own.
  *
  * Isolation. The agent runs in `main` as root and must not reach the grading, so:
- * - `main` is on the `agent` network with `body` only. `minecraft` is on the internal `game` network with `body`.
- *   `main` cannot resolve `minecraft`, and it does not mount the world volume. It could still reach the server by IP address:
+ * - `main` is on the `agent` network and the internal `api` network, which it shares with `body` only. `minecraft` is on the internal
+ *   `game` network with `body`. `main` cannot resolve `minecraft`, and it does not mount the world volume. It could still reach the server by IP address:
  *   rootless podman routes between the bridges of a project (the `isolate` network option does not stop it with this netavark),
  *   so the server container refuses the game and RCON ports to everything outside its own network (RESTRICT_TO_OWN_SUBNET).
- *   A network attached to `main` that is not internal also gives it the internet, which agent harnesses need for their model API.
+ *   A network attached to `main` that is not internal also gives it the internet, which agent harnesses need for their model API: that is `agent`.
+ *   Every network of `body` is internal, so code that runs in the body cannot reach the internet; `main` reaches `body` over `api`.
  * - `main` runs the client image (bench/images/client), which has no body, built-ins, wiki, oracle, or verifier.
  * - The verifier is a separate Harbor environment (task.toml, [verifier.environment]) that runs apart from `main`.
  *   Its inputs are artifacts that Harbor copies from the sidecars: the grader's snapshot of the statistics and the world, and the body's program history.
@@ -626,6 +627,7 @@ services:
         condition: service_healthy
     networks:
       - agent
+      - api
 
   minecraft:
     image: minebot.local/minebot-server:${MC_VERSION}
@@ -671,7 +673,7 @@ ${flags.map((f) => `      - ${f}`).join("\n")}
     environment:
       MINEBOT_TOKEN: minebot-bench-body
     networks:
-      - agent
+      - api
       - game
     depends_on:
       minecraft:
@@ -706,6 +708,8 @@ ${flags.map((f) => `      - ${f}`).join("\n")}
 
 networks:
   agent:
+  api:
+    internal: true
   game:
     internal: true
 

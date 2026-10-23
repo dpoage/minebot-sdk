@@ -7,9 +7,12 @@ import { parseArgs } from "node:util";
 import { parse } from "yaml";
 import { BODY_FLAG_OPTIONS, builtinOffer, parseBodyFlags } from "../src/client/body-flags.ts";
 import { usageFor } from "../src/client/usage.ts";
+import { Builtins } from "../src/host/routines/builtins.ts";
+import { KitStats } from "../src/host/routines/stats.ts";
 import { MC_VERSION } from "../src/mc/version.ts";
 import type { BodyFeatures } from "../src/protocol/index.ts";
 import { BUILTIN_MODULES } from "../src/routines/index.ts";
+import { JsonStore } from "../src/store.ts";
 import { MilestoneSpec, offlineUuid } from "../bench/verify/milestones.ts";
 
 const BENCH = path.join(import.meta.dirname, "..", "bench");
@@ -413,6 +416,17 @@ describe("the body of every generated task", () => {
     assert.deepEqual(closure(["gatherer"]), ["move", "sense", "dig", "inventory", "items", "gatherer"]);
   });
 
+  it("lists in task.toml exactly the built-ins that the body's own service offers for its --builtins flag", async () => {
+    for (const row of await taskRows()) {
+      // The body's path from its arguments to its offer: the flag parser of `minebot body`, then the host's built-in service.
+      const { values } = parseArgs({ args: row.argv, options: { bot: { type: "string" }, ...BODY_FLAG_OPTIONS } });
+      const offer = builtinOffer(parseBodyFlags(values.bot!, values).builtins);
+      const offered = new Builtins({ offer, stats: new KitStats(JsonStore.memory()) }).offered;
+      const metadata = parseToml(await read(row.dir, "task.toml")).metadata as Record<string, unknown>;
+      assert.deepEqual(metadata.builtins, offered, row.dir);
+    }
+  });
+
   it("runs the body behind the removal step that must succeed before the body starts", async () => {
     const script = 'node --conditions=minebot-sdk:source /opt/minebot/bench/tier/remove.ts "$@" && exec minebot "$@"';
     for (const row of await taskRows()) {
@@ -510,7 +524,7 @@ describe("the compose file of every generated task", () => {
   /** The one compose document that the generator may write, except the body's command (its own test). */
   const expectedCompose = (command: string[]) => ({
     services: {
-      main: { depends_on: { body: { condition: "service_healthy" } }, networks: ["agent"] },
+      main: { depends_on: { body: { condition: "service_healthy" } }, networks: ["agent", "api"] },
       minecraft: {
         image: `minebot.local/minebot-server:${MC_VERSION}`,
         pull_policy: "never",
@@ -539,7 +553,7 @@ describe("the compose file of every generated task", () => {
         pull_policy: "never",
         command,
         environment: { MINEBOT_TOKEN: "minebot-bench-body" },
-        networks: ["agent", "game"],
+        networks: ["api", "game"],
         depends_on: { minecraft: { condition: "service_healthy" } },
         healthcheck: {
           test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:7070/health').then(r => r.json()).then(h => process.exit(h.connected ? 0 : 1), () => process.exit(1))"],
@@ -559,7 +573,7 @@ describe("the compose file of every generated task", () => {
         depends_on: { minecraft: { condition: "service_healthy" } },
       },
     },
-    networks: { agent: null, game: { internal: true } },
+    networks: { agent: null, api: { internal: true }, game: { internal: true } },
     volumes: { world: null },
   });
 
@@ -578,7 +592,9 @@ describe("the compose file of every generated task", () => {
       assert.deepEqual(Object.keys(compose.services).sort(), Object.keys(allowed).sort(), `${dir}: the services`);
       for (const [name, keys] of Object.entries(allowed)) assert.deepEqual(Object.keys(compose.services[name]!).sort(), keys, `${dir}: the keys of ${name}`);
       // The properties that the isolation rests on, by name.
-      assert.deepEqual(compose.services.main!.networks, ["agent"], `${dir}: main is on the agent network only`);
+      assert.deepEqual(compose.services.main!.networks, ["agent", "api"], `${dir}: main is on the agent and api networks only`);
+      assert.deepEqual(compose.services.body!.networks, ["api", "game"], `${dir}: body is on the api and game networks only`);
+      for (const network of compose.services.body!.networks as string[]) assert.equal(compose.networks[network]?.internal, true, `${dir}: the body's network ${network} is internal`);
       assert.equal(compose.networks.game?.internal, true, `${dir}: the game network is internal`);
       assert.ok(!compose.networks.agent?.internal, `${dir}: the agent network is not internal`);
       // The whole document: every nested key and value.

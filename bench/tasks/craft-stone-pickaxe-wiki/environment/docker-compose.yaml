@@ -6,6 +6,7 @@ services:
         condition: service_healthy
     networks:
       - agent
+      - api
 
   minecraft:
     image: minebot.local/minebot-server:26.1
@@ -53,7 +54,7 @@ services:
     environment:
       MINEBOT_TOKEN: minebot-bench-body
     networks:
-      - agent
+      - api
       - game
     depends_on:
       minecraft:
@@ -88,6 +89,8 @@ services:
 
 networks:
   agent:
+  api:
+    internal: true
   game:
     internal: true
 
