@@ -13,10 +13,16 @@ Hold `bone_meal` and use it on a crop. Observed on wheat planted at age 0:
 | 2 | 5 | 7 (ripe) |
 | 3 and later | 7 | 7, and no bone meal was used up |
 
-```js
-await bot.equip(bot.inventory.items().find((i) => i.name === "bone_meal"), "hand");
-await bot.activateBlock(bot.blockAt(cropPosition));
-await sleep(300);
+```ts
+import { Vec3 } from "minebot-sdk/routine";
+import type { RoutineContext } from "minebot-sdk/routine";
+
+export default async ({ bot, sleep }: RoutineContext, { x, y, z }: { x: number; y: number; z: number }) => {
+  const cropPosition = new Vec3(x, y, z);
+  await bot.equip(bot.inventory.items().find((i) => i.name === "bone_meal")!, "hand");
+  await bot.activateBlock(bot.blockAt(cropPosition)!);
+  await sleep(300);
+};
 ```
 
 Check the new age before the next use: `Number(bot.blockAt(cropPosition).getProperties().age)` (see `quirks/block-properties-are-strings`). A ripe crop does not take bone meal.

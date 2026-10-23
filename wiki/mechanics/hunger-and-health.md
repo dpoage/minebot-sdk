@@ -10,12 +10,16 @@ At food 0 the player takes starvation damage. On Easy, starvation stops at 10 he
 
 To eat, hold the food and consume it:
 
-```js
-const food = bot.inventory.items().find((i) => bot.registry.foodsByName?.[i.name]);
-if (food) {
-  await bot.equip(food, "hand");
-  await bot.consume();
-}
+```ts
+import type { RoutineContext } from "minebot-sdk/routine";
+
+export default async ({ bot }: RoutineContext) => {
+  const food = bot.inventory.items().find((i) => bot.registry.foodsByName?.[i.name]);
+  if (food) {
+    await bot.equip(food, "hand");
+    await bot.consume();
+  }
+};
 ```
 
 Cooked meat restores the most. Cows, pigs, sheep, and chickens drop raw meat; cook it in a furnace. Bread needs 3 wheat in a row.

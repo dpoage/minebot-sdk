@@ -21,11 +21,16 @@ You passed an item from `bot.inventory.items()`. Its `slot` is a slot of the pla
 
 Take the item from the open window:
 
-```js
-const table = await bot.openEnchantmentTable(block);
-const sword = table.items().find((i) => i.name === "diamond_sword"); // slot 29 here
-await table.putTargetItem(sword);
-await table.putLapis(table.items().find((i) => i.name === "lapis_lazuli"));
+```ts
+import { Vec3 } from "minebot-sdk/routine";
+import type { RoutineContext } from "minebot-sdk/routine";
+
+export default async ({ bot }: RoutineContext, { x, y, z }: { x: number; y: number; z: number }) => {
+  const table = await bot.openEnchantmentTable(bot.blockAt(new Vec3(x, y, z))!);
+  const sword = table.items().find((i) => i.name === "diamond_sword")!; // slot 29 here
+  await table.putTargetItem(sword);
+  await table.putLapis(table.items().find((i) => i.name === "lapis_lazuli")!);
+};
 ```
 
 The same holds for any window you open: use that window's `items()` when a call takes an item by slot. `chest.withdraw` and `chest.deposit` take item ids and do not need it. See `mechanics/enchanting-basics`.

@@ -17,13 +17,18 @@ The planner allows a diagonal jump up by one block when one side of the corner i
 
 After two `stuck` resets, retry without diagonal moves:
 
-```js
-const straight = new Movements(bot);
-straight.getMoveDiagonal = () => {};
-bot.pathfinder.setMovements(straight);
-// ...goto again, then restore: bot.pathfinder.setMovements(new Movements(bot))
+```ts
+import { Movements } from "minebot-sdk/routine";
+import type { RoutineContext } from "minebot-sdk/routine";
+
+export default ({ bot }: RoutineContext) => {
+  const straight = new Movements(bot);
+  straight.getMoveDiagonal = () => {};
+  bot.pathfinder.setMovements(straight);
+  // ...goto again, then restore: bot.pathfinder.setMovements(new Movements(bot))
+};
 ```
 
 <!-- builtins -->
-`kit.move.to` does this automatically, and so does every kit action built on it.
+`move.to` does this automatically, and so does every built-in routine that walks with it: `gatherer`, `crafter`, `explorer`, and `social`.
 <!-- /builtins -->

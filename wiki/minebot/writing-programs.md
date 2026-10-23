@@ -4,21 +4,32 @@ tags: [program, run, minebot, strategy, debugging, helpers, globalThis, timeout,
 verified_by: "practices from the Gemini 4 Argon dragon run (arXiv 2610.22319) and minebot's own oracle and demo runs"
 ---
 
-A program is the body of an async function that runs against the live bot. These practices made long runs succeed:
+A program is a module that `minebot run` sends to the body. Its default export is a function `(ctx, args)` that runs against the live bot, and the result is what it returns. A `return` outside a function is a syntax error, and a run has no `bot` global: take `bot`, `log`, `sleep`, and `signal` from `ctx`.
 
-1. **Observe first.** Start with `minebot observe` or a short program that returns what you need to know: inventory, nearby blocks, position.
-2. **Keep programs short.** Do one step per program, return its result, and read the result before you write the next one.
+```ts
+import type { RoutineContext } from "minebot-sdk/routine";
+
+export default async ({ bot }: RoutineContext) => ({
+  position: bot.entity.position,
+  items: bot.inventory.items().map((item) => `${item.name} x${item.count}`),
+});
+```
+
+Save this as `look.ts` and run `minebot run look.ts`. A run takes its inputs from its args: `minebot run look.ts --args '{"x":1,"y":64,"z":2}'` passes `{ x: 1, y: 64, z: 2 }` as the second argument of the default function. Without `--args`, the second argument is `{}`. These practices made long runs succeed:
+
+1. **Observe first.** Start with `minebot observe` or a short run that returns what you need to know: inventory, nearby blocks, position.
+2. **Keep programs short.** Do one step per run, return its result, and read the result before you write the next one.
 3. **Verify, do not assume.** Compare the inventory before and after. A call that returns without an error can still have had no effect.
-4. **Reuse helpers.** Store working functions on `globalThis`; they persist between programs. Fix a helper once instead of rewriting it.
+4. **Reuse helpers.** Store working functions on `globalThis`; they persist between runs until the bot host restarts. A helper that needs the bot takes `ctx` as a parameter, because each run has its own `ctx`. Fix a helper once instead of rewriting it.
 5. **Bound every wait.** Pass `--timeout` and put time limits on moves and digs. See `quirks/pathfinding-needs-a-timeout`.
-6. **Log progress.** `log(...)` inside loops shows how far a program got when it fails.
-7. **Check `signal.aborted`** in long loops, so that `minebot stop` and timeouts end them.
+6. **Log progress.** `ctx.log(...)` inside loops shows how far a program got when it fails.
+7. **Check `ctx.signal.aborted`** in long loops, so that `minebot stop` and timeouts end them.
 8. **Search the wiki on surprises.** Search for the error text: `minebot wiki search "<error words>"`.
 
 <!-- builtins -->
-When kits are active, prefer a kit action over raw Mineflayer code: `await kit.gatherer.gather({ blocks: "*_log", count: 4 })`. Run `minebot kits docs` for the full list with argument types.
+When built-in routines are offered, prefer one over raw Mineflayer code: `minebot call gatherer.gather --args '{"blocks":"*_log","count":4}'`. Run `minebot builtins docs` for the full list with argument types.
 <!-- /builtins -->
 
 <!-- routines -->
-When you run the same code again and again, or it needs `import`, save it as a routine and call it by name. See `minebot/routines`.
+When you run the same code again and again, or you want to call it by name after a restart, save it as a routine. See `minebot/routines`.
 <!-- /routines -->

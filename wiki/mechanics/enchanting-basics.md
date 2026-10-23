@@ -17,16 +17,22 @@ check: enchanting-basics.js
 
 Pick the item and the lapis from the window's own items (`quirks/table-window-slots-differ-from-inventory-slots`):
 
-```js
-const table = await bot.openEnchantmentTable(bot.blockAt(position));
-await table.putTargetItem(table.items().find((i) => i.name === "diamond_sword"));
-await table.putLapis(table.items().find((i) => i.name === "lapis_lazuli"));
-await sleep(1500);                       // the three offers arrive after a moment
-for (const [i, o] of table.enchantments.entries()) {
-  console.log(i, o.level, bot.registry.enchantments[o.expected.enchant]?.name, o.expected.level);
-}
-const item = await table.enchant(1);     // 0, 1, or 2
-table.close();
+```ts
+import { Vec3 } from "minebot-sdk/routine";
+import type { RoutineContext } from "minebot-sdk/routine";
+
+export default async ({ bot, sleep, log }: RoutineContext, { x, y, z }: { x: number; y: number; z: number }) => {
+  const table = await bot.openEnchantmentTable(bot.blockAt(new Vec3(x, y, z))!);
+  await table.putTargetItem(table.items().find((i) => i.name === "diamond_sword")!);
+  await table.putLapis(table.items().find((i) => i.name === "lapis_lazuli")!);
+  await sleep(1500);                       // the three offers arrive after a moment
+  for (const [i, o] of table.enchantments.entries()) {
+    log(i, o.level, bot.registry.enchantments[o.expected.enchant]?.name, o.expected.level);
+  }
+  const item = await table.enchant(1);     // 0, 1, or 2
+  table.close();
+  return item.name;
+};
 ```
 
 `table.enchantments` has three entries. `level` is the level the offer needs. `expected` shows the first enchantment of the offer: observed `sharpness 2` on the middle offer, and the sword came back with exactly `sharpness 2`. Another try offered `unbreaking 2` and gave an iron pickaxe `efficiency 2` and `unbreaking 2`: an offer can add more than the one it shows.
@@ -36,5 +42,5 @@ Read what the item got from `item.enchants.enchantments`: a list of `{ id, level
 An enchantment that conflicts with another, such as `sharpness` and `smite`, never shares an item with it (`reference/enchantments`, column Excludes).
 
 <!-- builtins -->
-No kit action enchants yet; use the code above.
+No built-in routine enchants yet; use the code above.
 <!-- /builtins -->

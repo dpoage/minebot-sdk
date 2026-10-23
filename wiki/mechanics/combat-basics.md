@@ -9,17 +9,23 @@ verified_by: attack damage read from the 26.1 dev server with the attribute comm
 
 Equip the weapon, then hit the entity. Each `bot.attack(entity)` is one swing:
 
-```js
-const target = bot.nearestEntity((e) => e.type === "hostile" && e.position.distanceTo(bot.entity.position) < 16);
-const sword = bot.inventory.items().find((i) => i.name.endsWith("_sword"));
-if (sword) await bot.equip(sword, "hand");
-while (target.isValid && bot.health > 8 && !signal.aborted) {
-  if (target.position.distanceTo(bot.entity.position) > 3) {
-    await bot.pathfinder.goto(new goals.GoalNear(target.position.x, target.position.y, target.position.z, 2));
+```ts
+import { goals } from "minebot-sdk/routine";
+import type { RoutineContext } from "minebot-sdk/routine";
+
+export default async ({ bot, sleep, signal }: RoutineContext) => {
+  const target = bot.nearestEntity((e) => e.type === "hostile" && e.position.distanceTo(bot.entity.position) < 16);
+  if (!target) return "no hostile mob within 16 blocks";
+  const sword = bot.inventory.items().find((i) => i.name.endsWith("_sword"));
+  if (sword) await bot.equip(sword, "hand");
+  while (target.isValid && bot.health > 8 && !signal.aborted) {
+    if (target.position.distanceTo(bot.entity.position) > 3) {
+      await bot.pathfinder.goto(new goals.GoalNear(target.position.x, target.position.y, target.position.z, 2));
+    }
+    bot.attack(target);
+    await sleep(650); // swords swing 1.6 times per second; a mob also ignores a second hit within about 0.5 s
   }
-  bot.attack(target);
-  await sleep(650); // swords swing 1.6 times per second; a mob also ignores a second hit within about 0.5 s
-}
+};
 ```
 
 Look at `bot.health` in the loop and stop at a threshold. A fight you cannot win ends in a death, and the bot respawns with an empty inventory.
@@ -45,5 +51,5 @@ Test: a zombie took no damage from a second swing 0.1 s after the first, and ful
 Armor reduces the hits you take (`mechanics/armor-tiers`). Hostile mobs and their special rules: `mechanics/creeper-fuse`, `mechanics/daylight-burning`, `mechanics/hostile-mobs-and-night`.
 
 <!-- builtins -->
-`kit.combat.attack({ target: "zombie" })` fights one mob. `kit.combat.fight({ radius: 12, timeoutMs: 30000 })` fights every hostile in range until none is left. `kit.survival.eat()` and `kit.survival.armor()` prepare for it.
+`minebot call combat.attack --args '{"target":"zombie"}'` fights one mob. `minebot call combat.fight --args '{"radius":12,"timeoutMs":30000}'` fights every hostile in range until none is left. `minebot call survival.eat` and `minebot call survival.armor` prepare for it.
 <!-- /builtins -->

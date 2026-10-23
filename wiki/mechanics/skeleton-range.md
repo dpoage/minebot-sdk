@@ -18,17 +18,22 @@ Observed: skeletons and strays burn in daylight (`mechanics/daylight-burning`); 
 
 Find the shooter, then break its line of sight or close the distance:
 
-```js
-const skeleton = bot.nearestEntity((e) => e.name === "skeleton" && e.position.distanceTo(bot.entity.position) < 20);
-if (skeleton) {
-  // Rush it: a skeleton at melee range is easy to kill. Or step behind a block so that it cannot see you.
-  await bot.pathfinder.goto(new goals.GoalNear(skeleton.position.x, skeleton.position.y, skeleton.position.z, 2));
-  bot.attack(skeleton);
-}
+```ts
+import { goals } from "minebot-sdk/routine";
+import type { RoutineContext } from "minebot-sdk/routine";
+
+export default async ({ bot }: RoutineContext) => {
+  const skeleton = bot.nearestEntity((e) => e.name === "skeleton" && e.position.distanceTo(bot.entity.position) < 20);
+  if (skeleton) {
+    // Rush it: a skeleton at melee range is easy to kill. Or step behind a block so that it cannot see you.
+    await bot.pathfinder.goto(new goals.GoalNear(skeleton.position.x, skeleton.position.y, skeleton.position.z, 2));
+    bot.attack(skeleton);
+  }
+};
 ```
 
 Armor cuts the arrow damage (`mechanics/armor-tiers`). A fight: `mechanics/combat-basics`.
 
 <!-- builtins -->
-`kit.combat.attack({ target: "skeleton" })` fights one. `kit.combat.retreat({ from: skeletonId })` backs off.
+`minebot call combat.attack --args '{"target":"skeleton"}'` fights one. `minebot call combat.retreat --args '{"from":123}'` backs off from the entity with that id.
 <!-- /builtins -->

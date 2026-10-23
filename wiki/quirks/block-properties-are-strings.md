@@ -17,8 +17,18 @@ A loop that waits for a crop to ripen never ends: `bot.blockAt(p).getProperties(
 
 Convert number states before you compare:
 
-```js
-const age = Number(bot.blockAt(position).getProperties().age);
-const wet = Number(bot.blockAt(position).getProperties().moisture) === 7;
-const taken = bot.blockAt(bedPosition).getProperties().occupied; // a boolean already
+```ts
+import { Vec3 } from "minebot-sdk/routine";
+import type { RoutineContext } from "minebot-sdk/routine";
+
+type Point3 = [number, number, number];
+
+export default ({ bot }: RoutineContext, args: { position: Point3; bedPosition: Point3 }) => {
+  const position = new Vec3(...args.position);
+  const bedPosition = new Vec3(...args.bedPosition);
+  const age = Number(bot.blockAt(position)!.getProperties().age);
+  const wet = Number(bot.blockAt(position)!.getProperties().moisture) === 7;
+  const taken = bot.blockAt(bedPosition)!.getProperties().occupied; // a boolean already
+  return { age, wet, taken };
+};
 ```

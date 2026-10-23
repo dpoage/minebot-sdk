@@ -32,7 +32,7 @@ Repeat these steps until nothing solid and no water is above the head:
 Hold a pickaxe if you have one. By hand, each stone block takes about 7 seconds, so 20 blocks of depth take several minutes.
 
 <!-- builtins -->
-With the explorer kit active, one call does all of this: `return await kit.explorer.surface(); // run with --timeout 600000`.
+One call does all of this on a body with built-in routines: `minebot call explorer.surface` with `--timeout 600000`.
 <!-- /builtins -->
 
 ## Under water
@@ -42,5 +42,5 @@ The player has 20 points of air. Under water, air drops about 1 point per second
 Digging under water is 25 times slower than on land, so do not dig a ceiling while your head is under water. By hand, one stone block takes minutes, and the air lasts about 15 seconds. `bot.oxygenLevel` (0 to 20) is the air left; each level is 0.75 seconds. If a solid ceiling blocks you, swim sideways to air first (look for an air block above water), wait there until `bot.oxygenLevel` is back near 20, then dig.
 
 <!-- builtins -->
-`kit.explorer.surface()` checks `bot.oxygenLevel` before every dig under water. It swims to air first when the air does not cover the dig.
+`explorer.surface` checks `bot.oxygenLevel` before every dig under water. It swims to air first when the air does not cover the dig.
 <!-- /builtins -->

@@ -26,9 +26,14 @@ So put every farmland block within 4 blocks of a water source. One source in the
 
 Use a hoe on the top face of a dirt or grass block:
 
-```js
-await bot.equip(bot.inventory.items().find((i) => i.name.endsWith("_hoe")), "hand");
-await bot.activateBlock(bot.blockAt(dirtPosition), new Vec3(0, 1, 0));
+```ts
+import { Vec3 } from "minebot-sdk/routine";
+import type { RoutineContext } from "minebot-sdk/routine";
+
+export default async ({ bot }: RoutineContext, { x, y, z }: { x: number; y: number; z: number }) => {
+  await bot.equip(bot.inventory.items().find((i) => i.name.endsWith("_hoe"))!, "hand");
+  await bot.activateBlock(bot.blockAt(new Vec3(x, y, z))!, new Vec3(0, 1, 0)); // x, y, z: the dirt block
+};
 ```
 
 Observed: `dirt` became `farmland` after one use. Read the moisture with `Number(bot.blockAt(position).getProperties().moisture)` (see `quirks/block-properties-are-strings`).
@@ -36,5 +41,5 @@ Observed: `dirt` became `farmland` after one use. Read the moisture with `Number
 Place a water source with a bucket (`mechanics/buckets`). Plant on the farmland and harvest as in `mechanics/crop-growth`.
 
 <!-- builtins -->
-`kit.farm.till({ at })` tills one block.
+`minebot call farm.till --args '{"at":[10,64,5]}'` tills one block.
 <!-- /builtins -->

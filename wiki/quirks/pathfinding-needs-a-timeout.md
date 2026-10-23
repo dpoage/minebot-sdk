@@ -17,17 +17,24 @@ Neither call has a built-in time limit. Some goals are unreachable in a way the 
 
 Race every move and dig against a timer, and stop the action when the timer wins:
 
-```js
-async function within(ms, label, work, cancel) {
-  const expired = Promise.withResolvers();
+```ts
+import { goals } from "minebot-sdk/routine";
+import type { RoutineContext } from "minebot-sdk/routine";
+
+async function within<T>(ms: number, label: string, work: Promise<T>, cancel: () => void): Promise<T> {
+  const expired = Promise.withResolvers<never>();
   const timer = setTimeout(() => { cancel(); expired.reject(new Error(`${label} took longer than ${ms} ms`)); }, ms);
   try { return await Promise.race([work, expired.promise]); } finally { clearTimeout(timer); }
 }
-await within(45000, "goto", bot.pathfinder.goto(goal), () => bot.pathfinder.stop());
+
+export default async ({ bot }: RoutineContext, { x, y, z }: { x: number; y: number; z: number }) => {
+  const goal = new goals.GoalNear(x, y, z, 1);
+  await within(45000, "goto", bot.pathfinder.goto(goal), () => bot.pathfinder.stop());
+};
 ```
 
 When a target times out, skip it and choose another one.
 
 <!-- builtins -->
-Kit actions use time limits everywhere: `kit.move.to({ position, timeoutMs })` gives up after `timeoutMs`.
+Built-in routines that walk take time limits: `minebot call move.to --args '{"position":[10,64,5],"timeoutMs":30000}'` gives up after `timeoutMs`.
 <!-- /builtins -->

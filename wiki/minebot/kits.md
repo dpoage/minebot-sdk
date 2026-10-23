@@ -1,14 +1,21 @@
 ---
-title: Kits are composable libraries of actions you can swap
-tags: [kits, kit, actions, gather, craft, build, explore, social, swap, primitives]
+title: Built-in routines are ready-made actions that you call by name
+tags: [built-in routines, builtins, routines, actions, call, import, gather, craft, build, explore, social, primitives, docs, search, source, stats]
 requires: [builtins]
-verified_by: "smoke-tested on the 26.1 dev server, 2026-10-18"
+verified_by: "calls, docs, search, source, stats, and imports checked on the 26.1 dev server, 2026-10-22"
 mc_version: "26.1"
 ---
 
-A kit is a library of actions for one kind of work. Programs call them namespaced, with one object argument: `await kit.move.to({ position: [x, y, z] })`. Every action validates its arguments and fails with its schema if a call is wrong.
+A built-in routine is a ready-made action for one kind of work, such as walking to a position or digging a block. Built-in routines come in modules. You call a routine as `<module>.<routine>` with one object argument. Every call checks its arguments and fails with the schema when an argument is wrong.
 
-Kits come in two layers. Primitives are small kits that do one thing; routine kits are built out of them:
+```sh
+minebot call move.to --args '{"position":[10,64,10],"range":2,"timeoutMs":30000}'
+minebot call gatherer.gather --args '{"blocks":"*_log","count":4}'
+```
+
+A call is a run. It prints the status, the logs, and the result, and only one run goes at a time. The default timeout is 60 seconds (`--timeout <ms>`). The MCP tool `call_routine` takes the same name and `args`. Without `--args`, a call passes `{}`.
+
+A module is either a primitive or a composite. A primitive does one thing. A composite calls the routines of the primitives it uses:
 
 | Primitive | For |
 | - | - |
@@ -26,7 +33,7 @@ Kits come in two layers. Primitives are small kits that do one thing; routine ki
 | `farm` | Tilling, planting, harvesting ripe crops, breeding animals. |
 | `bucket` | Filling a bucket from a water or lava source; pouring it out. |
 
-| Routine kit | Uses | For |
+| Composite | Uses | For |
 | - | - | - |
 | `gatherer` | move, sense, dig, inventory, items | Digging matching blocks and picking up the drops (`gather`). |
 | `crafter` | move, sense, place, inventory, craft, items, furnace | Crafting chains (`make`), smelting furnace outputs, finding or placing crafting tables and furnaces. |
@@ -34,41 +41,37 @@ Kits come in two layers. Primitives are small kits that do one thing; routine ki
 | `explorer` | move, sense, dig | Scanning, exploring, remembering places (`remember`, `places`), and climbing out of holes (`surface`). |
 | `social` | move, sense, inventory | Chat, following, and giving items to other players. |
 
-- `kits.active` lists the active kits; `kits.available()` lists everything the body offers.
-- `kits.use("gatherer", "crafter")` swaps the active set, unless the body locks kits. Used kits activate automatically.
-- `kits.docs()` prints the action reference: call shape, argument types, and defaults, straight from each action's schema.
-- `kits.search("collect logs")` ranks the kits and actions by name and description, so you can find the one that does a job. Each kit in `kits.available()` also shows how often its actions worked on this body.
+## Find the routine for a job
 
-A routine kit reaches another kit only through the public actions of the kits it declares in `uses`, so anything a routine kit does, you can do too — and combine differently.
+- `minebot builtins` lists the modules this body offers, what each uses, and how often each routine worked and failed on this body, with the message of the last failure.
+- `minebot builtins docs [module...]` prints the call shape, the argument types and defaults, and the return value of each routine. Without a module name, it prints every offered module.
+- `minebot builtins search "collect logs"` ranks routines and modules by name, description, and argument names (`--limit <n>`, default 5).
+- `minebot builtins source move` prints the source file of a module. Read it when you need to know exactly what a routine does.
 
-<!-- routines -->
-## Your own kits
+The MCP tool `builtin_docs` prints the reference. With `--tools full`, the tools `list_builtins`, `builtin_search`, and `builtin_source` do the other three.
 
-You can save kits of your own, in the same shape as the built-ins: one import from `minebot-sdk/kit` (the only import a kit may have), then one exported kit (`export default`, or `export const <name> = defineKit(...)` as the built-ins are written; other exports are ignored):
+The body counts every call of a built-in routine, including the calls that one routine makes to another and the calls from your own code, and it keeps the counts across restarts. When two routines do the same job, call the one that works, and read the last failure before you call the other.
+
+## Call a routine from your own code
+
+A run imports a module and calls its routines with the run's `ctx`. The imports must name a module that this body offers.
 
 ```ts
-import { action, defineKit, Point, z } from "minebot-sdk/kit";
+import * as crafter from "minebot-sdk/routines/crafter";
+import * as gatherer from "minebot-sdk/routines/gatherer";
+import type { RoutineContext } from "minebot-sdk/routine";
 
-export default defineKit(
-  { name: "woodcutter", description: "Chops the nearest logs and reports where the player ends up.", uses: ["move", "sense", "dig"] },
-  {
-    chop: action({
-      doc: "Walks to each of the `times` nearest logs within 16 blocks and digs it. Returns how many it dug and where the player then stands.",
-      args: z.object({ times: z.number().int().positive().default(1) }),
-      returns: z.object({ chopped: z.number(), standingAt: Point }),
-      run: async (ctx, { times }) => {
-        const logs = await ctx.kits.sense.find({ blocks: "*_log", radius: 16, count: times });
-        for (const log of logs) {
-          await ctx.kits.move.to({ position: log, range: 3 });
-          await ctx.kits.dig.dig({ at: log });
-        }
-        const here = ctx.bot.entity.position.floored();
-        return { chopped: logs.length, standingAt: { x: here.x, y: here.y, z: here.z } };
-      },
-    }),
-  },
-);
+export default async (ctx: RoutineContext) => {
+  const { gained } = await gatherer.gather(ctx, { blocks: "*_log", count: 4 });
+  const planks = await crafter.make(ctx, { item: "oak_planks", count: 8 });
+  return { gained, planks };
+};
 ```
 
-Save it from a program with `await kits.save(source)`, or from the terminal with `minebot kits save <file>`. Nothing is written when the source is rejected: it must compile, use only kits this body offers, not take a built-in kit's name, and pass the escape audit. `kits.source("move")` prints a built-in kit's source — start from it. A saved kit is offered and active immediately. Several bodies can share the kit directory: a kit one body saves works on the others without a restart. Run an action once before you save the kit with `kits.try(source, { action, args })`, and take a save back with `kits.revert(name, version)`; see `minebot/writing-kits`.
+Save the file as `logs.ts` and run it with `minebot run logs.ts`. Calls from your own code validate their arguments like any other call, and a composite reaches other modules only through their public routines, so anything a composite does, you can do too, and combine differently.
+
+<!-- routines -->
+## Your own routines
+
+A routine that you save calls built-in routines the same way. Save a routine of your own to call it by name later: see `minebot/routines`. To compose built-in routines into one, test it without a server, and save it, see `minebot/writing-kits`.
 <!-- /routines -->

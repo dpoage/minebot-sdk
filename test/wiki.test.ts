@@ -7,6 +7,8 @@ import { describe, it } from "node:test";
 import { MC_VERSION } from "../src/mc/version.ts";
 import { formatPage, Wiki, WIKI_DIR, WikiDisabledError, WikiPageNotFoundError } from "../src/wiki/wiki.ts";
 import { FULL_VIEW, WikiAccess, wikiView, type WikiView } from "../src/wiki/access.ts";
+import { WikiFeature } from "../src/protocol/index.ts";
+import { BUILTINS_VOCABULARY, markedLines, REFLEXES_VOCABULARY, strayVocabulary, WIKI_SEARCH_QUERIES } from "./helpers/wiki-vocabulary.ts";
 import { chunk, compress, dataPages, loadMinecraftData } from "../scripts/wiki-reference.ts";
 
 async function fixture(): Promise<{ root: string; lessons: string }> {
@@ -219,15 +221,15 @@ describe("repository wiki", () => {
     }
   });
 
-  it("keeps the kit shortcuts for a body that has kits", () => {
+  it("keeps the built-in routine shortcuts for a body that has built-ins", () => {
     const wiki = Wiki.load(WIKI_DIR);
     const view: WikiView = { builtins: true, milestones: false, reflexes: false, routines: false };
-    assert.match(wiki.read("flows/first-day", view).body, /kit\.gatherer\.gather\(\{ blocks: "\*_log", count: 4 \}\)/);
+    assert.match(wiki.read("flows/first-day", view).body, /minebot call gatherer\.gather --args '\{"blocks":"\*_log","count":4\}'/);
     assert.ok(wiki.list(undefined, view).some((p) => p.id === "minebot/kits"));
     assert.doesNotMatch(wiki.read("flows/first-day", view).body, /<!--/);
   });
 
-  it("shows the triggers page only to a body with reflexes, and keeps kits out of it when the body has none", () => {
+  it("shows the reflex page only to a body with reflexes, and keeps kits out of it when the body has none", () => {
     const wiki = Wiki.load(WIKI_DIR);
     const without: WikiView = { builtins: false, milestones: false, reflexes: false, routines: false };
     const triggersOnly: WikiView = { ...without, reflexes: true };
@@ -236,7 +238,61 @@ describe("repository wiki", () => {
     assert.ok(wiki.search("trigger reflex", 20, without).every((h) => h.id !== "minebot/triggers"));
     const page = wiki.read("minebot/triggers", triggersOnly);
     assert.doesNotMatch(formatPage(page), /\bkits?\b|\bkit\./i);
-    assert.match(wiki.read("minebot/triggers", { ...triggersOnly, builtins: true }).body, /kit\.survival\.eat/);
+    assert.match(wiki.read("minebot/triggers", { ...triggersOnly, builtins: true }).body, /survival\.eat\(ctx\)/);
+  });
+
+  /** Every view a body can have: each feature on or off. */
+  const VIEWS: WikiView[] = Array.from({ length: 1 << WikiFeature.options.length }, (_, bits) =>
+    Object.fromEntries(WikiFeature.options.map((feature, i) => [feature, ((bits >> i) & 1) === 1])) as WikiView,
+  );
+  const viewName = (view: WikiView) => WikiFeature.options.filter((feature) => view[feature]).join("+") || "no features";
+
+  it("shows each page's marked lines exactly in the views with their feature, in the page text and in search", () => {
+    const wiki = Wiki.load(WIKI_DIR);
+    const marked = new Map(wiki.pages.map((page) => [page.id, markedLines(page.id)]));
+    for (const feature of ["builtins", "reflexes"] as const) {
+      assert.ok([...marked.values()].some((lines) => lines[feature].length > 0), `no page marks ${feature} content, so nothing below tests it`);
+    }
+    for (const view of VIEWS) {
+      for (const { id } of wiki.list(undefined, view)) {
+        const text = new Set(formatPage(wiki.read(id, view)).split("\n").map((line) => line.trim()));
+        for (const feature of WikiFeature.options) {
+          for (const line of marked.get(id)![feature]) assert.equal(text.has(line), view[feature], `${id} with ${viewName(view)}: ${feature} line ${line}`);
+        }
+      }
+    }
+    // Search: each marked line, in the view with every feature and in the one without just its feature.
+    for (const [id, lines] of marked) {
+      for (const feature of WikiFeature.options) {
+        const off: WikiView = { ...FULL_VIEW, [feature]: false };
+        for (const line of lines[feature].filter((l) => /[a-z0-9]/i.test(l))) {
+          assert.ok(wiki.search(line, wiki.pages.length, FULL_VIEW).some((hit) => hit.id === id), `search with ${feature} does not find ${id} by its ${feature} line ${line}`);
+          const hit = wiki.search(line, wiki.pages.length, off).find((h) => h.id === id);
+          // A field shows the line whole, or cut to the snippet length with "...".
+          const shown = hit && [hit.title, ...hit.tags, hit.snippet].find((field) => field === line || (field.endsWith("...") && line.startsWith(field.slice(0, -3))));
+          assert.equal(shown, undefined, `search without ${feature} shows ${id}'s ${feature} line ${line}`);
+        }
+      }
+    }
+  });
+
+  it("shows a view none of the words of a feature it lacks, in a page's text, title, or tags, or in a search result", () => {
+    const wiki = Wiki.load(WIKI_DIR);
+    for (const view of VIEWS) {
+      for (const { id } of wiki.list(undefined, view)) {
+        const page = wiki.read(id, view);
+        assert.deepEqual(strayVocabulary(`${formatPage(page)}\n${page.meta.tags.join(" ")}`, view), [], `${id} with ${viewName(view)}`);
+      }
+      for (const query of WIKI_SEARCH_QUERIES) {
+        for (const hit of wiki.search(query, 20, view)) {
+          assert.deepEqual(strayVocabulary(`${hit.title}\n${hit.tags.join(" ")}\n${hit.snippet}`, view), [], `search "${query}" with ${viewName(view)} shows ${hit.id}`);
+        }
+      }
+    }
+  });
+
+  it("searches with every word of the built-ins' and reflexes' vocabulary", () => {
+    for (const pattern of [...BUILTINS_VOCABULARY, ...REFLEXES_VOCABULARY]) assert.ok(WIKI_SEARCH_QUERIES.some((query) => pattern.test(query)), `no query has ${pattern}`);
   });
 });
 

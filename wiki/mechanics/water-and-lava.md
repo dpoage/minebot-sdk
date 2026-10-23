@@ -32,5 +32,5 @@ Obsidian takes a diamond pickaxe to mine (`mechanics/tool-tiers`). It has hardne
 Do not stand in lava. To make a lava source safe, pour water on it from above: it becomes obsidian (table above).
 
 <!-- builtins -->
-`kit.bucket.fill({ fluid: "water" })` and `kit.bucket.empty({ at })` handle the buckets.
+`minebot call bucket.fill --args '{"fluid":"water"}'` and `minebot call bucket.empty --args '{"at":[10,64,5]}'` handle the buckets.
 <!-- /builtins -->

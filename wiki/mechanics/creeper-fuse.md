@@ -28,21 +28,25 @@ So one creeper is deadly inside 3 blocks and harmless beyond 6. Armor lowers the
 
 Find creepers before they are close, and keep your distance:
 
-```js
-const creeper = bot.nearestEntity((e) => e.name === "creeper");
-if (creeper && creeper.position.distanceTo(bot.entity.position) < 8) {
-  // Run directly away from it.
-  const away = bot.entity.position.minus(creeper.position);
-  await bot.lookAt(bot.entity.position.plus(away), true);
-  bot.setControlState("forward", true);
-  bot.setControlState("sprint", true);
-  await sleep(1500);
-  bot.clearControlStates();
-}
+```ts
+import type { RoutineContext } from "minebot-sdk/routine";
+
+export default async ({ bot, sleep }: RoutineContext) => {
+  const creeper = bot.nearestEntity((e) => e.name === "creeper");
+  if (creeper && creeper.position.distanceTo(bot.entity.position) < 8) {
+    // Run directly away from it.
+    const away = bot.entity.position.minus(creeper.position);
+    await bot.lookAt(bot.entity.position.plus(away), true);
+    bot.setControlState("forward", true);
+    bot.setControlState("sprint", true);
+    await sleep(1500);
+    bot.clearControlStates();
+  }
+};
 ```
 
 A sprinting bot outruns a creeper: starting 4 blocks away, it was 9, 12, and 14 blocks away after 1, 2, and 3 seconds.
 
 <!-- builtins -->
-`kit.combat.retreat({ from: creeperId, distance: 8 })` runs away from it.
+`minebot call combat.retreat --args '{"from":123,"distance":8}'` runs away from it. `from` is the creeper's entity id.
 <!-- /builtins -->

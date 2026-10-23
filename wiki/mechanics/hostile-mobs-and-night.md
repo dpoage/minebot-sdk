@@ -21,5 +21,5 @@ To survive the night, stay in an enclosed space with a roof and a light source, 
 Details: `mechanics/creeper-fuse`, `mechanics/skeleton-range`, `mechanics/spider-climbing`, `mechanics/daylight-burning`, and how to fight (`mechanics/combat-basics`). A shelter you can build in one program: `flows/first-night-shelter`.
 
 <!-- builtins -->
-`kit.explorer.scan()` lists nearby entities.
+`minebot call explorer.scan` lists nearby entities.
 <!-- /builtins -->

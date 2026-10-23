@@ -9,15 +9,20 @@ verified_by: observed on the 26.1 dev server, 2026-10-19
 
 Walk to within 2 blocks of the villager, open it, read `villager.trades`, and call `bot.trade(villager, index, times)`:
 
-```js
-const entity = bot.nearestEntity((e) => e.name === "villager");
-await bot.pathfinder.goto(new goals.GoalNear(entity.position.x, entity.position.y, entity.position.z, 2));
-const villager = await bot.openVillager(entity);          // window type minecraft:merchant
-for (const [i, t] of villager.trades.entries()) {
-  console.log(i, `${t.inputItem1.count} ${t.inputItem1.name}`, t.hasItem2 ? `+ ${t.inputItem2.name}` : "", "->", `${t.outputItem.count} ${t.outputItem.name}`, `${t.nbTradeUses}/${t.maximumNbTradeUses} used`, t.tradeDisabled ? "disabled" : "");
-}
-await bot.trade(villager, 0, 2);    // the first trade, twice
-villager.close();
+```ts
+import { goals } from "minebot-sdk/routine";
+import type { RoutineContext } from "minebot-sdk/routine";
+
+export default async ({ bot, log }: RoutineContext) => {
+  const entity = bot.nearestEntity((e) => e.name === "villager")!;
+  await bot.pathfinder.goto(new goals.GoalNear(entity.position.x, entity.position.y, entity.position.z, 2));
+  const villager = await bot.openVillager(entity);          // window type minecraft:merchant
+  for (const [i, t] of villager.trades.entries()) {
+    log(i, `${t.inputItem1.count} ${t.inputItem1.name}`, t.hasItem2 ? `+ ${t.inputItem2!.name}` : "", "->", `${t.outputItem.count} ${t.outputItem.name}`, `${t.nbTradeUses}/${t.maximumNbTradeUses} used`, t.tradeDisabled ? "disabled" : "");
+  }
+  await bot.trade(villager, 0, 2);    // the first trade, twice
+  villager.close();
+};
 ```
 
 Observed with a farmer that sells 1 emerald for 20 wheat: `bot.trade(villager, 0, 2)` took 40 wheat and gave 2 emeralds.
@@ -31,5 +36,5 @@ Each trade has these fields: `inputItem1`, `inputItem2` (use it only when `hasIt
 Villagers are `e.name === "villager"`, and the wandering trader is `wandering_trader`. Find the nearest with `bot.nearestEntity((e) => e.name === "villager")`.
 
 <!-- builtins -->
-No kit action trades yet; use the code above.
+No built-in routine trades yet; use the code above.
 <!-- /builtins -->
