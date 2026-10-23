@@ -289,7 +289,7 @@ async function main(): Promise<number> {
       const written = await initWorkspace(dir);
       for (const file of written) console.log(`wrote ${path.join(dir, file)}`);
       if (written.length === 0) console.log(`${dir} already has every workspace file`);
-      console.log(`\nNext: cd ${dir} && npm install, then \`npx tsc\` and \`npm test\`. Start a body, save the routines with \`minebot routines save routines/*.ts\`, and bind one with \`minebot bind action hello hello\`; README.md has the rest.`);
+      console.log(`\nNext: cd ${dir} && npm install, then \`npx tsc\` and \`npm test\`. Start a body, save the routines with \`npx minebot routines save routines/*.ts\`, and bind one with \`npx minebot bind action hello hello\`; README.md has the rest.`);
       return 0;
     }
     case "wiki": {

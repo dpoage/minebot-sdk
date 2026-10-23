@@ -1,4 +1,4 @@
-// Block and item name patterns. Shared by kits, milestone grading, and the benchmark verifier,
+// Block and item name patterns. Shared by routines, milestone grading, and the benchmark verifier,
 // so this module imports nothing but zod.
 import { z } from "zod";
 

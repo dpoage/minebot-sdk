@@ -18,8 +18,8 @@ import { ProgramHistory } from "./history.ts";
 import { type Route, serveBodyApi } from "./http.ts";
 
 /**
- * Earlier bodies kept the kits agents saved in `<state>/agent-kits/`. Nothing reads, writes, or deletes that directory now; when it holds
- * kit files, this says so once on stderr, so an operator who still has them knows they are not loaded.
+ * Earlier bodies kept the kits agents saved in `<state>/agent-kits/`. Nothing loads, writes, or deletes the files there now; this only lists
+ * the directory and, when it holds kit files, says so once on stderr, so an operator who still has them knows they are not loaded.
  */
 function noteLeftoverAgentKits(stateDir: string): void {
   const dir = path.join(stateDir, "agent-kits");
@@ -46,7 +46,7 @@ export interface DaemonOptions {
   apiPort: number;
   /** Bearer token for the API. Generated when omitted. */
   token?: string;
-  /** Appends one JSON line per program run (code, status, logs, result) to this file. */
+  /** Appends one JSON line per run, call, and reflex firing (code, status, logs, result) to this file. */
   historyFile?: string;
   /** Wiki access for the agent. */
   wikiMode: WikiMode;

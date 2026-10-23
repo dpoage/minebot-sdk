@@ -131,7 +131,7 @@ async function sleepAt(ctx: RoutineContext, at: Position | undefined) {
 }
 
 /**
- * Leaves the bed. `bot.wakeUp()` in Mineflayer 4.39 sends action 2, which 26.1 reads as
+ * Leaves the bed. `bot.wake()` in Mineflayer 4.39 sends action 2, which 26.1 reads as
  * stop_sprinting, so the player stays in bed; leaving is action 0, `stop_sleeping`.
  */
 async function wakeUp(ctx: RoutineContext) {

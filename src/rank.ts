@@ -1,4 +1,4 @@
-// Ranking documents against query terms: one scorer for the wiki and for kit search. Each
+// Ranking documents against query terms: one scorer for the wiki and for built-in routine search. Each
 // document has weighted fields; a term scores by how often it occurs in a field (with
 // diminishing returns), the field's weight, and how few documents contain it. Each caller keeps
 // its own tokenizer and passes the tokens in.

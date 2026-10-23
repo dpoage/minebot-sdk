@@ -1,5 +1,5 @@
-// The social routines: talk to, wait for, follow, and hand items to other players — built from
-// the move, sense, and inventory primitives, with the pathfinder's follow goal for tagging along.
+// The social routines: talk to, wait for, follow, and hand items to other players — calling the
+// move and inventory primitives, with the pathfinder's follow goal for tagging along.
 import { defineRoutine, type Entity, goals, Point, type RoutineContext, z } from "minebot-sdk/routine";
 import * as move from "minebot-sdk/routines/move";
 import * as inventory from "minebot-sdk/routines/inventory";

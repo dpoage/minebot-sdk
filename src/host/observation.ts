@@ -121,8 +121,8 @@ export function brief(o: Observation & { connected: true; program: { running: bo
     ...(effects.length > 0 ? [`effects: ${effects.join(", ")}`] : []),
     `inventory: ${items}`,
     `nearby: ${near || "none"}`,
-    o.program.running ? `program running ${Math.round((o.program.elapsedMs ?? 0) / 1000)}s` : "no program running",
-    ...(o.programsWithoutChange >= 3 ? [`no change for ${o.programsWithoutChange} programs`] : []),
+    o.program.running ? `run in progress ${Math.round((o.program.elapsedMs ?? 0) / 1000)}s` : "no run in progress",
+    ...(o.programsWithoutChange >= 3 ? [`no change for ${o.programsWithoutChange} runs`] : []),
   ].join(" | ");
 }
 

@@ -1,5 +1,5 @@
-// The builder routines: build structures from blueprints — built from the move, sense, dig, place,
-// and inventory primitives. The blueprint format lives here because it is these routines' argument.
+// The builder routines: build structures from blueprints, calling the place and inventory primitives.
+// The blueprint format lives here because it is these routines' argument.
 import { defineRoutine, Point, Position, type RoutineContext, toVec3, Vec3, z } from "minebot-sdk/routine";
 import * as place from "minebot-sdk/routines/place";
 import * as inventory from "minebot-sdk/routines/inventory";

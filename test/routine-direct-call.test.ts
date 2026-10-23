@@ -1,4 +1,4 @@
-// The routine contract K1: a routine value validates every call (direct or invoked) and reports it to the
+// The routine contract: a routine value validates every call (direct or invoked) and reports it to the
 // observer its context carries; `ctx.store` namespaces; the closed export set of `minebot-sdk/routine`;
 // and the run scope's refusal of subscriptions after the run's abort (mb-jg8).
 import assert from "node:assert/strict";

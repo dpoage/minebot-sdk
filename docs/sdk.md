@@ -62,12 +62,12 @@ A run is a TypeScript or JavaScript module that the body evaluates inside the bo
 
 ## Built-in routines
 
-The kits of earlier versions are now built-in routines. Each routine is shipped by the package in a module under `src/routines/`. A module is a file with two exports that describe it, `description` and `uses` (the built-in modules it calls), and one `defineRoutine` export per routine. `minebot builtins source <module>` prints a module, such as `minebot builtins source gatherer`.
+The kits of earlier versions are now built-in routines. Each routine is shipped by the package in a module under `src/routines/`. A module is a file with two exports that describe it, `description` and `uses` (the built-in modules that a body offers together with it), and one `defineRoutine` export per routine. `minebot builtins source <module>` prints a module, such as `minebot builtins source gatherer`.
 
 ### Units
 
 - **Routine.** `defineRoutine({ name?, description?, args?, returns? }, fn)` returns a function `(ctx, args?) => Promise<result>`. `args` and `returns` are zod schemas. Every call of it validates: the arguments (an omitted argument is `{}`, and `null` is an argument), then the result. A bad call fails with the routine's name and the schema. A built-in routine declares `name` as `<module>.<routine>`.
-- **Module.** `description`, `uses` (the built-in modules it calls), and its routines. A module imports only `minebot-sdk/routine` and the modules it lists in `uses`; a test checks this.
+- **Module.** `description`, `uses` (the built-in modules offered together with it), and its routines. A module imports only `minebot-sdk/routine` and the modules it lists in `uses`; a test checks this.
 - **`ctx`.** What a routine receives: `bot`, `log`, `sleep`, `signal`, `on`, `notes`, `status`, `store`, and `wiki` when the wiki is on. A routine that calls another passes its own `ctx` on, so cancellation reaches every nested call.
 
 ### Layers
@@ -106,7 +106,7 @@ A built-in routine has the call name `<module>.<routine>`: `POST /call`, `minebo
 
 ### Offered built-ins
 
-The operator decides which built-in modules a body **offers** with `--builtins <a,b|none>`. Without the flag, every module is offered. With names, the body offers them and every module they use: `Builtins` (`src/host/routines/builtins.ts`) takes the closure over `uses`. `none` offers none, and an unknown name stops the start. A module that is not offered is absent from the list, the reference, the search, the source, and `/call`. The loader enforces the same offer: a library module or a run that imports `minebot-sdk/routines/<module>` for a module the body does not offer fails (`setOfferGate`). There is no active set.
+The operator decides which built-in modules a body **offers** with `--builtins <a,b|none>`. Without the flag, every module is offered. With names, the body offers them and every module they use: `Builtins` (`src/host/routines/builtins.ts`) takes the closure over `uses`. `none` offers none, and an unknown name stops the start. A module that is not offered is absent from the list, the reference, the search, the source, and `/call`. The loader refuses the same offer: a library module or a run that imports `minebot-sdk/routines/<module>` for a module the body does not offer fails (`setOfferGate`). The refusal is not a security boundary: an import of an encoded subpath (`minebot-sdk/routines/inv%65ntory`), or a `createRequire` anchored in the package, reaches the module. There is no active set.
 
 ### Docs, search, and statistics
 

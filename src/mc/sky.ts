@@ -1,5 +1,5 @@
 // Looking straight up: the sky view the observation reports. Neutral Mineflayer helpers,
-// used by the body's observation and by kits that care about cover.
+// used by the body's observation and by routines that care about cover.
 import type { Bot } from "mineflayer";
 import { Vec3 } from "vec3";
 

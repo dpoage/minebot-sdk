@@ -81,8 +81,8 @@ export interface TriggersDeps {
   /** Whether this body can run reflexes (it has routines). Without, every stored entry is skipped and reported, and never written. */
   reflexes: boolean;
   /**
-   * Runs one firing through the body. Calls `started` right before the program starts, and throws
-   * BusyError instead when a program is running.
+   * Runs one firing through the body. Calls `started` right before the firing's routine starts, and throws
+   * BusyError instead when the run slot is taken.
    */
   run: (reflex: StoredReflex, event: BodyEvent, started: () => void) => Promise<RunResult>;
   /**

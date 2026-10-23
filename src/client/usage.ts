@@ -56,13 +56,13 @@ export function usageFor(features: BodyFeatures | null, hasBody = HAS_BODY, oper
       : []),
     ...(caps.builtins
       ? [
-          "  builtins             List the built-in routine modules, their uses, and how often each built-in routine worked on this body.",
+          "  builtins             List the built-in routine modules, their uses, and how often each built-in routine that has run worked on this body.",
           "  builtins docs [module...]  Print the reference for built-in modules: call shapes, arguments, returns (default: every offered module).",
           "  builtins search <query>  Find built-in routines by what they do, e.g. \"collect logs\" (--limit <n>, default 5).",
           "  builtins source <module>  Print a built-in module's source file.",
         ]
       : []),
-    "  stop                 Abort the running program.",
+    "  stop                 Abort the current run.",
     "  events               Print buffered events as JSON.",
     "  wait                 Block until a matching event arrives (chat, nightfall, a death, a hostile nearby, low health...), then print it.",
     "  chat <message>       Send a chat message.",

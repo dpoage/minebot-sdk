@@ -1,4 +1,4 @@
-// Positions as kit arguments (an {x, y, z} object or a [x, y, z] tuple) and as the wire reports them.
+// Positions as routine arguments (an {x, y, z} object or a [x, y, z] tuple) and as the wire reports them.
 import { Vec3 } from "vec3";
 import { z } from "zod";
 import type { Vec } from "../protocol/index.ts";

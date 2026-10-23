@@ -1,4 +1,4 @@
-// Detects when programs stop changing anything in the world, so the observation can say so on request.
+// Detects when runs and calls stop changing anything in the world, so the observation can say so on request.
 
 export interface BodyState {
   /** Floored position, e.g. "-85,75,169". */
@@ -15,12 +15,12 @@ function signature(state: BodyState): string {
   return `${state.position}|${items}`;
 }
 
-/** Counts consecutive programs that end with the same position and inventory as the program before. */
+/** Counts consecutive runs and calls that end with the same position and inventory as the one before. */
 export class StallTracker {
   #last: string | undefined;
   #streak = 0;
 
-  /** The number of programs in a row without a change, after recording this one. */
+  /** The number of runs and calls in a row without a change, after recording this one. */
   get streak(): number {
     return this.#streak;
   }

@@ -188,7 +188,7 @@ export class Builtins {
 
   /** Names of the offered modules, in catalog order (primitives first). */
   readonly offered: readonly string[];
-  /** The directory the offered modules' sources are in: what an error of one of their routines reports frames from. */
+  /** The package's `src/routines`, where the module sources that `source()` returns are. A routine's error reports the stack frames inside it, so a body that runs the built modules (`dist/routines`) reports none of them. */
   readonly dir: string = path.dirname(BUILTIN_MODULES[0]!.file);
 
   /** Throws, naming the module and listing the catalog, when `offer` names a module that is not a built-in. */
