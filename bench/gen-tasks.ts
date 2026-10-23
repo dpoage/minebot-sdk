@@ -350,11 +350,15 @@ This is the first of two sessions. When you stop, a second session starts: a new
         goal: `Craft a stone pickaxe, using the logs in the chest that a previous session of this agent left.
 
 You are the second of two sessions. The first session collected logs and put ${STASH_LOGS} of them in a chest somewhere in this world, then walked away from it. You know nothing about that session except what it left in the body (the notes) and in the world. Find the chest, take at least ${STASH_LOGS / 2} logs out of it, and use them for the tools. You start with whatever the first session left in the inventory.`,
-        grading: `The contents of the chests in the world are graded too, as the server saved them: the chest that the first session filled has to be where it was and hold ${STASH_LOGS / 2} logs or fewer when you finish.`,
+        grading: `The contents of the chests in the world are graded too, as the server saved them: the chest that the first session filled has to be where it was and hold ${STASH_LOGS / 2} logs or fewer when you finish, and the first session has to have stopped at least ${STASH_DISTANCE} blocks from it.`,
         agentTimeoutSec: 1800,
         oracleTarget: "retrieve_logs",
         milestones: [crafted("wooden_pickaxe", "Craft a wooden pickaxe", "wooden_pickaxe"), cobblestone(3), crafted("stone_pickaxe", "Craft a stone pickaxe", "stone_pickaxe")],
-        checks: [{ id: "withdrawn", description: `Take ${STASH_LOGS / 2} logs out of the chest that the first session filled`, type: "withdrawn", items: ["*_log"], held: STASH_LOGS, max: STASH_LOGS / 2 }],
+        checks: [
+          { id: "withdrawn", description: `Take ${STASH_LOGS / 2} logs out of the chest that the first session filled`, type: "withdrawn", items: ["*_log"], held: STASH_LOGS, max: STASH_LOGS / 2 },
+          // The first session's step can still be rewritten while its verifier runs, so this step grades it again, from the grader's snapshot of it.
+          { id: "first_session_far_away", description: `The first session stopped ${STASH_DISTANCE} blocks from the chest`, type: "distance", snapshot: "previous", min: STASH_DISTANCE },
+        ],
       },
     ],
   },

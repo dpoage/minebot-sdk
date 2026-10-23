@@ -11,7 +11,7 @@ If you used an earlier version with kits, triggers, or programs, read [Migrating
 | Body | The supervisor (API transport, event log, run history) and the bot host it forks (one Mineflayer player connection, the run loader, the body's state) | Every agent, through an adapter |
 | Adapters | HTTP API, `minebot` CLI, MCP server | Harnesses |
 | Libraries | Built-in routines, saved routines, and the wiki | Agents, when the body offers them |
-| Bench | Harbor tasks, the verifier, the escape audit, launchers | People who evaluate agents |
+| Bench | Harbor tasks, the verifier, launchers | People who evaluate agents |
 
 ```mermaid
 flowchart LR
@@ -58,7 +58,7 @@ A run is a TypeScript or JavaScript module that the body evaluates inside the bo
 - **Loading.** The loader (`src/host/routines/loader.ts`) registers resolve and load hooks with `module.registerHooks`, once per process. A run is a module of its own, kept apart from the library under `<dir>/.run.ts` with a query of its own, so it never changes a library generation. Its imports resolve as a library module's do: `./<name>.ts` is the library's module of that name at the library's generation when the run starts, and any other path or `file:` URL is refused. Packages, Node built-ins, and `data:` URLs import as Node would. A body without a library has runs too. Their packages, Node built-ins, and `data:` URLs import the same way, and a relative import is refused, because no library module exists for it to name.
 - **`ctx`.** The run's context is the routine context, below.
 - **Slot.** A run, a call, and a reflex firing share one slot. One goes at a time; a second request gets HTTP 409. The default timeout is 60 seconds and the maximum is 30 minutes. A stop, a timeout, or a preemption aborts the run, and the kill deadline ends the bot host 5.5 seconds after the abort if the run has not ended, also when it blocks the host with synchronous code.
-- **History.** With `--history`, the body records each run as a JSON line: `code`, status, logs, result, duration, `escapeAttempts`, and `args` when the run got some. The history scans the source of a run with the escape audit (`src/audit.ts`) and writes a flagged run before it runs.
+- **History.** With `--history`, the body records each run as a JSON line: `code`, status, logs, result, duration, and `args` when the run got some. The body writes a run's line when the run ends; a run that never produced a result has no line.
 
 ## Built-in routines
 
@@ -144,7 +144,7 @@ A routine is a TypeScript module that an agent saves on the body, and then calls
 - **Runs.** A call and a reflex firing run through the same slot as a run, so one goes at a time and the same timeout, stop, and kill deadline apply. The body does for a call what it does for `run`: it pushes `program_finished` and starts the waiting firings. A reflex firing ends with `reflex_finished`. The reflex's routine gets `(ctx, { event })`, and the event is `{ seq, type, time, data }`. The history records a call with an empty `code` and `call: { name, routine, args }` (`{ name, args }` for a built-in), without `args` when the call had none, and a firing with `trigger`, `routine`, and `event`.
 - **Calls.** A call is a run of the action bound to the name, or of the built-in routine that the name `<module>.<routine>` gives. `POST /call` answers a name that no action holds and no offered built-in matches with HTTP 404, and a call that arrives while another run goes with HTTP 409. The default timeout is 60 seconds and the maximum is 30 minutes. A stop, a timeout, or a preemption aborts the run, and the kill deadline ends the bot host 5.5 seconds after the abort if the routine has not ended, also when it blocks the host with synchronous code.
 - **Surfaces.** HTTP: `GET /routines`, `GET /routines/source?name=`, `POST /routines/save`, `GET /routines/versions?name=`, `POST /routines/revert`, `GET /bindings`, `POST /bind`, `POST /unbind`, and `POST /call`. CLI: `minebot routines [save <file...> | source <name> | versions <name> | revert <name> <version>]`, `minebot bind action <name> <routine>`, `minebot bind reflex <name> <routine> --on <types>`, `minebot unbind <name>`, and `minebot call <name> [--args <json>] [--timeout <ms>]`. MCP: `call_routine` and `bind_routine` in the core set; `list_routines`, `routine_save`, `routine_source`, `routine_versions`, `routine_revert`, and `unbind_routine` in the full set. The MCP tools take `timeout_ms` and `cooldown_ms`; HTTP takes `timeoutMs` and `cooldownMs`. The routine tools exist on a body that offers routines, and the reflex fields of `bind_routine` and the reflex wording of the other descriptions exist on a body that also has reflexes.
-- **No audit of saved routines.** A routine is a real module with the whole Node API, so the escape audit does not scan it, and the history line of a call has an empty `escapeAttempts`. `--no-routines` removes the feature.
+- **Call history.** A routine is a real module with the whole Node API. The history line of a call has an empty `code`, because the routine's source is in the library. `--no-routines` removes the feature.
 
 The body offers routines unless it starts with `--no-routines`; `--routines <dir>` picks the directory (default `routines/` in the state directory), and `--routines ""` turns routines off. A reflex needs routines and reflexes both. A body without routines has no routine routes, tools, commands, or run-reference section, and no reflexes. Built-in routines are called by name wherever the body offers them, with or without routines.
 
@@ -157,7 +157,7 @@ A reflex is a routine that the body calls when an event arrives. It gives an age
 - **Scheduling.** A firing waits until no run is going. It waits at most once per reflex, and waiting firings run by `priority`. A reflex with `preempt: true` stops the running run instead, unless that is a reflex of equal or higher priority. The firing runs when the stopped run has ended. `cooldownMs` limits how often a reflex fires.
 - **Failure.** A failing reflex never affects the body. A reflex that errors or times out three times in a row disables itself and emits `reflex_disabled`; binding it again clears the count.
 - **State.** Reflexes persist in the state directory, written atomically, so they survive a restart. A stored entry that no longer loads as a reflex, such as a code trigger from an earlier version, is skipped, reported as a `reflex_error` event, kept in the file, and holds its name until `unbind` removes it. [Migrating from kits, triggers and programs](../README.md#migrating-from-kits-triggers-and-programs) tells an operator what to do.
-- **Audit.** The history records a bind (its `when` expression is the `code`, with the audit over it) and each firing with the reflex's name.
+- **History.** The history records a bind (its `when` expression is the `code`, in a line of status `registered`) and each firing with the reflex's name.
 
 A body started with `--no-reflexes` has no reflexes: no reflex fields in the tools, no `bind reflex`, and a run reference that does not mention them.
 

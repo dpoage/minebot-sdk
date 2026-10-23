@@ -38,11 +38,18 @@ export type WorldSnapshot = z.infer<typeof WorldSnapshot>;
 
 const CONTAINER_BLOCKS = ["chest", "trapped_chest"];
 const checkBase = { id: z.string(), description: z.string() };
+/**
+ * Which snapshot a world check grades: the one taken for this step (`current`, the default), or the one the grader took for the step before
+ * (`previous`), so a later step can re-grade a condition of an earlier one from the grader's own record of it. `previous` fails
+ * when the task has no step before.
+ */
+const snapshotChoice = z.enum(["current", "previous"]).optional();
 
 export const Check = z.discriminatedUnion("type", [
   z.object({
     ...checkBase,
     type: z.literal("stored"),
+    snapshot: snapshotChoice,
     /** Item ids without namespace; `*` matches any run of characters. */
     items: z.array(z.string()).min(1),
     /** The container blocks that count. Default: chests. */
@@ -64,13 +71,14 @@ export const Check = z.discriminatedUnion("type", [
     max: z.number().int().nonnegative(),
   }),
   /** The overworld clock has passed the end of night `nights`: it is at least `nights` days old. */
-  z.object({ ...checkBase, type: z.literal("nights"), nights: z.number().int().positive() }),
+  z.object({ ...checkBase, type: z.literal("nights"), snapshot: snapshotChoice, nights: z.number().int().positive() }),
   /** The player died at most `max` times. */
   z.object({ ...checkBase, type: z.literal("deaths"), max: z.number().int().nonnegative() }),
   /** The player stands at least `min` blocks (horizontally) from every counted container. At least one must exist. */
   z.object({
     ...checkBase,
     type: z.literal("distance"),
+    snapshot: snapshotChoice,
     containers: z.array(z.string()).min(1).default(CONTAINER_BLOCKS),
     min: z.number().positive(),
   }),
@@ -89,6 +97,14 @@ export interface CheckResult {
 }
 
 const NO_WORLD = "the snapshot has no world facts";
+const NO_PREVIOUS = "no snapshot of the step before";
+
+/** The world snapshot a check grades, or why there is none. */
+function snapshotFor(check: { snapshot?: "current" | "previous" | undefined }, world: WorldFacts | null): { at: WorldSnapshot } | { error: string } {
+  if (!world) return { error: NO_WORLD };
+  if (check.snapshot !== "previous") return { at: world };
+  return world.previous ? { at: world.previous } : { error: NO_PREVIOUS };
+}
 
 function containersOf(world: WorldSnapshot, blocks: readonly string[]): ContainerFact[] {
   return world.containers.filter((c) => blocks.includes(c.block));
@@ -106,15 +122,16 @@ function gradeCheck(check: Check, stats: PlayerStats | null, world: WorldFacts |
   switch (check.type) {
     case "stored": {
       const requirement = `>= ${check.min}`;
-      if (!world) return { id, description, met: false, obtained: 0, requirement, detail: { error: NO_WORLD } };
-      const found = containersOf(world, check.containers);
+      const seen = snapshotFor(check, world);
+      if ("error" in seen) return { id, description, met: false, obtained: 0, requirement, detail: { error: seen.error } };
+      const found = containersOf(seen.at, check.containers);
       const obtained = itemTotal(found, nameMatcher(check.items));
       return { id, description, met: obtained >= check.min, obtained, requirement, detail: { containers: found.length } };
     }
     case "withdrawn": {
       const requirement = `<= ${check.max}`;
       if (!world) return { id, description, met: false, obtained: 0, requirement, detail: { error: NO_WORLD } };
-      if (!world.previous) return { id, description, met: false, obtained: 0, requirement, detail: { error: "no snapshot of the step before" } };
+      if (!world.previous) return { id, description, met: false, obtained: 0, requirement, detail: { error: NO_PREVIOUS } };
       const matches = nameMatcher(check.items);
       const recorded = containersOf(world.previous, check.containers).filter((c) => itemTotal([c], matches) >= check.held);
       if (recorded.length === 0) return { id, description, met: false, obtained: 0, requirement, detail: { error: `no container held ${check.held} at the step before`, recorded: 0 } };
@@ -126,9 +143,10 @@ function gradeCheck(check: Check, stats: PlayerStats | null, world: WorldFacts |
     }
     case "nights": {
       const requirement = `>= ${check.nights}`;
-      if (!world) return { id, description, met: false, obtained: 0, requirement, detail: { error: NO_WORLD } };
-      const obtained = Math.floor(world.clock / DAY_TICKS);
-      return { id, description, met: obtained >= check.nights, obtained, requirement, detail: { clock: world.clock } };
+      const seen = snapshotFor(check, world);
+      if ("error" in seen) return { id, description, met: false, obtained: 0, requirement, detail: { error: seen.error } };
+      const obtained = Math.floor(seen.at.clock / DAY_TICKS);
+      return { id, description, met: obtained >= check.nights, obtained, requirement, detail: { clock: seen.at.clock } };
     }
     case "deaths": {
       // The server writes the statistic after the first death only.
@@ -137,11 +155,12 @@ function gradeCheck(check: Check, stats: PlayerStats | null, world: WorldFacts |
     }
     case "distance": {
       const requirement = `>= ${check.min}`;
-      if (!world) return { id, description, met: false, obtained: 0, requirement, detail: { error: NO_WORLD } };
-      const found = containersOf(world, check.containers);
-      if (!world.player) return { id, description, met: false, obtained: 0, requirement, detail: { error: "the player is not online", containers: found.length } };
+      const seen = snapshotFor(check, world);
+      if ("error" in seen) return { id, description, met: false, obtained: 0, requirement, detail: { error: seen.error } };
+      const found = containersOf(seen.at, check.containers);
+      if (!seen.at.player) return { id, description, met: false, obtained: 0, requirement, detail: { error: "the player is not online", containers: found.length } };
       if (found.length === 0) return { id, description, met: false, obtained: 0, requirement, detail: { error: "no container", containers: 0 } };
-      const { x, z } = world.player;
+      const { x, z } = seen.at.player;
       const obtained = Math.round(Math.min(...found.map((c) => Math.hypot(x - (c.position[0] + 0.5), z - (c.position[2] + 0.5)))));
       return { id, description, met: obtained >= check.min, obtained, requirement, detail: { containers: found.length } };
     }

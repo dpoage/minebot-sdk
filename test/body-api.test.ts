@@ -30,7 +30,6 @@ const { BUILTIN_MODULES } = await import("../src/routines/index.ts");
 const { JsonStore } = await import("../src/store.ts");
 const { Builtins } = await import("../src/host/routines/builtins.ts");
 const { KitStats } = await import("../src/host/routines/stats.ts");
-const { findEscapeAttempts } = await import("../src/audit.ts");
 
 type Features = BodyFeatures;
 
@@ -809,7 +808,7 @@ describe("body API: events and waits", () => {
 
 describe("body API: the program history file", () => {
   let body: Running;
-  const flagged = "return process.pid";
+  const usesProcess = "return process.pid";
 
   const lines = (): unknown[] =>
     readFileSync(body.dirs.history, "utf8")
@@ -826,20 +825,18 @@ describe("body API: the program history file", () => {
     assert.equal(readFileSync(body.dirs.history, "utf8"), "");
   });
 
-  it("writes nothing for an unflagged program that failed to run", async () => {
-    assert.deepStrictEqual(findEscapeAttempts("return 1"), []);
+  it("writes nothing for a program that failed to run", async () => {
     await body.call("POST", "/call", { status: 503, body: NOT_CONNECTED }, { json: { name: "act" } });
     assert.deepStrictEqual(lines(), []);
   });
 
-  it("writes a started line for a flagged program whose run failed, numbered with the seq the run consumed; /stop then answers at once", async () => {
-    assert.deepStrictEqual(findEscapeAttempts(flagged), ["process"]);
-    await body.call("POST", "/run", { status: 503, body: NOT_CONNECTED }, { json: { code: flagged } });
+  it("writes nothing for a program that names `process` and failed to run, whatever its source; /stop then answers at once", async () => {
+    await body.call("POST", "/run", { status: 503, body: NOT_CONNECTED }, { json: { code: usesProcess } });
     // A run that threw before producing a result has ended: stopping answers at once that nothing runs.
     const stopped = Date.now();
     await body.call("POST", "/stop", { body: { stopped: false } });
     assert.ok(Date.now() - stopped < 1000, "POST /stop answered within a second");
-    assert.deepStrictEqual(lines(), [{ seq: 2, startedAt: "<timestamp>", code: flagged, escapeAttempts: ["process"], status: "started" }]);
+    assert.deepStrictEqual(lines(), []);
   });
 
   it("records no program_finished event for a run that failed to start", async () => {
@@ -852,11 +849,11 @@ describe("body API: the program history file", () => {
     });
   });
 
-  it("numbers every later program too, flagged or not: an unflagged run leaves no line but takes a seq, and a reflex's `when` is registered with the next one", async () => {
+  it("numbers every later program too: a run that failed to run leaves no line but takes a seq, and a reflex's `when` is registered with the next one", async () => {
     await body.call("POST", "/call", { status: 503, body: NOT_CONNECTED }, { json: { name: "act" } });
     const reflex = { kind: "reflex", name: "plain", routine: "r1", on: ["chat"], when: "process.pid > 0" };
     await body.call("POST", "/bind", { body: { binding: { ...reflex, cooldownMs: 1000, timeoutMs: 30_000, enabled: true, preempt: false, priority: 0, updated: "<timestamp>", fired: 0, failures: 0 }, replaced: false } }, { json: reflex });
-    assert.deepStrictEqual(lines().slice(1), [{ seq: 4, startedAt: "<timestamp>", code: reflex.when, escapeAttempts: ["process"], trigger: "plain", routine: "r1", on: ["chat"], status: "registered" }]);
+    assert.deepStrictEqual(lines(), [{ seq: 4, startedAt: "<timestamp>", code: reflex.when, trigger: "plain", routine: "r1", on: ["chat"], status: "registered" }]);
   });
 
 });

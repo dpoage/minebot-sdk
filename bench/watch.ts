@@ -71,15 +71,14 @@ async function trialLines(dir: string): Promise<string[]> {
   const project = `${name.toLowerCase()}__env`;
   const history = await exec(`${project}_body_1`, "cat", "/var/log/minebot/programs.jsonl");
   if (history !== undefined) {
-    // A flagged program is also written before it runs, with status "started"; the line after it is its result.
-    const records = history.trim() ? history.trim().split("\n").map((l) => JSON.parse(l) as { seq: number; status: string; error?: string; escapeAttempts?: string[] }) : [];
-    const programs = records.filter((p) => p.status !== "started");
-    const flagged = new Set(records.filter((p) => (p.escapeAttempts ?? []).length > 0).map((p) => p.seq)).size;
+    // A reflex's `when` expression is a line of status "registered"; it is not a program that ran.
+    const records = history.trim() ? history.trim().split("\n").map((l) => JSON.parse(l) as { seq: number; status: string; error?: string }) : [];
+    const programs = records.filter((p) => p.status !== "registered");
     const failed = programs.filter((p) => p.status !== "ok");
     // Syntax errors start with a source excerpt; show the line that names the error.
     const errorLines = failed.at(-1)?.error?.split("\n") ?? [];
     const lastError = errorLines.find((l) => /\w*Error\b/.test(l)) ?? errorLines[0] ?? "";
-    lines.push(`  programs ${programs.length}, not ok ${failed.length}${flagged ? `, FLAGGED ${flagged}` : ""}${lastError ? `; last error: ${lastError.slice(0, 120)}` : ""}`);
+    lines.push(`  programs ${programs.length}, not ok ${failed.length}${lastError ? `; last error: ${lastError.slice(0, 120)}` : ""}`);
   }
   const observe = await exec(`${project}_main_1`, "minebot", "observe");
   if (observe) {
