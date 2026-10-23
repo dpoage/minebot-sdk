@@ -2,5 +2,4 @@
 # Oracle: runs the reference program through the same API the agent uses.
 # Harbor uploads this directory to /solution; the agent's image does not contain the program.
 set -eu
-{ echo 'const TARGET = "stock_chest";'; cat /solution/progression.js; } \
-  | minebot run --timeout 900000
+minebot run /solution/progression.ts --args '{"target":"stock_chest","builtins":false}' --timeout 900000
