@@ -16,11 +16,12 @@ keywords = ["minecraft","crafting","storage","memory","continuity","embodied","c
 [metadata]
 category = "minecraft"
 tier = "kits"
-# Every tier has the base body: Mineflayer plus notes, status (deaths and reconnects), the event log with blocking waits, and the one-line observation.
-kits = ["gatherer","crafter","builder","explorer","social","container"]
+# Every tier has the base body: Mineflayer plus notes, status (deaths and reconnects), the event log with blocking waits, the one-line observation,
+# and the routine library with action and reflex bindings. The tier features are below: the built-in modules the body offers (the closure of its
+# --builtins over their uses) and the wiki.
+builtins = ["move","sense","dig","place","inventory","craft","items","furnace","container","gatherer","crafter","builder","explorer","social"]
 wiki = "off"
 goals = false
-triggers = false
 difficulty_explanation = "Two Harbor steps in one world, each a new agent session. The first sets up a chest of logs and leaves it far behind; the second has to find it again, from whatever the first session wrote down or left in the body, and use it. Tests notes and handoff, not game mechanics."
 
 [[steps]]

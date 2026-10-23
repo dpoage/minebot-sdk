@@ -15,12 +15,13 @@ keywords = ["minecraft","survival","endurance","embodied","code-as-action","tier
 [metadata]
 category = "minecraft"
 tier = "raw"
-# Every tier has the base body: Mineflayer plus notes, status (deaths and reconnects), the event log with blocking waits, and the one-line observation.
-kits = []
+# Every tier has the base body: Mineflayer plus notes, status (deaths and reconnects), the event log with blocking waits, the one-line observation,
+# and the routine library with action and reflex bindings. The tier features are below: the built-in modules the body offers (the closure of its
+# --builtins over their uses) and the wiki.
+builtins = []
 wiki = "off"
 goals = false
-triggers = true
-difficulty_explanation = "Open-ended and long: about 40 minutes of real time. Nothing is crafted or collected; the agent has to find a way to be safe through the dark, keep fed, and wait cheaply. Tests reflexes (triggers), shelter, and idling without losing the connection to the task."
+difficulty_explanation = "Open-ended and long: about 40 minutes of real time. Nothing is crafted or collected; the agent has to find a way to be safe through the dark, keep fed, and wait cheaply. Tests reflexes, shelter, and idling without losing the connection to the task."
 
 [agent]
 timeout_sec = 3600.0

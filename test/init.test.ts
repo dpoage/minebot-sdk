@@ -12,6 +12,7 @@ import { promisify } from "node:util";
 import { initWorkspace } from "../src/client/init.ts";
 import { ROUTINE_COMPILER_OPTIONS } from "../src/protocol/routine-tsconfig.ts";
 import { usageFor } from "../src/client/usage.ts";
+import { BUILTIN_MODULES } from "../src/routines/index.ts";
 
 const exec = promisify(execFile);
 const CLI = [...process.execArgv, path.join(import.meta.dirname, "..", "src", "cli.ts")];
@@ -114,12 +115,12 @@ describe("initWorkspace", () => {
     assert.deepEqual(Object.keys(workspace).filter((key) => !(key in checkOptions)), ["rootDirs"]);
   });
 
-  it("writes a routine that calls a built-in by import, a run that imports it, and a test through the harness", async () => {
+  it("writes a routine that counts items with the bot, a run that imports it, and a test through the harness", async () => {
     const dir = freshDir();
     await initWorkspace(dir);
     const routine = read(dir, "routines/hello.ts");
-    assert.match(routine, /^import \{ defineRoutine, z \} from "minebot-sdk\/routine";$/m);
-    assert.match(routine, /^import \* as inventory from "minebot-sdk\/routines\/inventory";$/m);
+    assert.match(routine, /^import \{ defineRoutine, nameMatcher, z \} from "minebot-sdk\/routine";$/m);
+    assert.match(routine, /ctx\.bot\.inventory\.items\(\)/);
     assert.match(routine, /^export default defineRoutine\($/m);
     assert.match(routine, /^ {4}args: z\.object\(/m);
     assert.match(routine, /^ {4}returns: z\.object\(/m);
@@ -130,6 +131,21 @@ describe("initWorkspace", () => {
     assert.match(test, /^import \{ createHarness \} from "minebot-sdk\/testing";$/m);
     assert.match(test, /h\.run\(hello, \{ message: "hi" \}\)/);
     assert.match(test, /assert\.rejects\(h\.run\(hello, /);
+  });
+
+  it("names no built-in routine and imports no built-in module, which a tier may withhold", async () => {
+    const dir = freshDir();
+    const written = await initWorkspace(dir);
+    for (const file of written) {
+      const text = read(dir, file);
+      for (const module of BUILTIN_MODULES) {
+        assert.ok(!text.includes(`minebot-sdk/routines/${module.name}`), `${file} imports the built-in module ${module.name}`);
+        for (const routine of Object.keys(module.routines)) {
+          assert.doesNotMatch(text, new RegExp(`(?<![\\w.])${module.name}\\.${routine}\\b`), `${file} names the built-in ${module.name}.${routine}`);
+        }
+      }
+    }
+    assert.ok(BUILTIN_MODULES.length > 0 && written.includes("routines/hello.ts"));
   });
 
   it("gives no run file the file name of a routine: a run's ./x.ts must name the routine, not the run", async () => {

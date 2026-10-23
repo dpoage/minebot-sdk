@@ -9,15 +9,14 @@ import { ROUTINE_COMPILER_OPTIONS } from "../protocol/routine-tsconfig.ts";
 
 const EXAMPLE_ROUTINE = `// An example routine: copy it, rename it, and change what it does. Save it into a body's library
 // with: npx minebot routines save routines/*.ts
-import { defineRoutine, z } from "minebot-sdk/routine";
-import * as inventory from "minebot-sdk/routines/inventory";
+import { defineRoutine, nameMatcher, z } from "minebot-sdk/routine";
 
 export default defineRoutine(
   {
     description: "Say \`message\` in chat, then report where the player stands and how many \`items\` it carries.",
     args: z.object({
       message: z.string().min(1).default("hello"),
-      // An item name or glob for the inventory built-in: "oak_log" or "*_log".
+      // An item name or glob: "oak_log" or "*_log".
       items: z.string().default("*_log"),
     }),
     returns: z.object({
@@ -29,8 +28,9 @@ export default defineRoutine(
   async (ctx, { message, items }) => {
     ctx.bot.chat(message);
     const at = ctx.bot.entity.position.floored();
-    // A built-in routine is an import; calling it validates its arguments like any routine.
-    const count = await inventory.count(ctx, { items });
+    // The bot is Mineflayer's: count the inventory's items whose names match \`items\`.
+    const matches = nameMatcher(items);
+    const count = ctx.bot.inventory.items().filter((item) => matches(item.name)).reduce((n, item) => n + item.count, 0);
     return { said: message, position: { x: at.x, y: at.y, z: at.z }, count };
   },
 );

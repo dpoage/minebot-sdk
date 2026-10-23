@@ -6,6 +6,7 @@ services:
         condition: service_healthy
     networks:
       - agent
+      - api
 
   minecraft:
     image: minebot.local/minebot-server:26.1
@@ -36,7 +37,10 @@ services:
     image: minebot.local/minebot:dev
     pull_policy: never
     command:
-      - minebot
+      - sh
+      - -c
+      - "node --conditions=minebot-sdk:source /opt/minebot/bench/tier/remove.ts \"$$@\" && exec minebot \"$$@\""
+      - tier
       - body
       - --bot=agent
       - --host=minecraft
@@ -44,16 +48,13 @@ services:
       - --api-port=7070
       - --history=/var/log/minebot/programs.jsonl
       # Tier "full".
-      - --kits=gatherer,crafter,builder,explorer,social
-      - --lock-kits
-      - --no-agent-kits
+      - --builtins=gatherer,crafter,builder,explorer,social
       - --wiki=read
       - --no-milestones
-      - --no-triggers
     environment:
       MINEBOT_TOKEN: minebot-bench-body
     networks:
-      - agent
+      - api
       - game
     depends_on:
       minecraft:
@@ -88,6 +89,8 @@ services:
 
 networks:
   agent:
+  api:
+    internal: true
   game:
     internal: true
 

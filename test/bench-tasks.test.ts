@@ -1,8 +1,18 @@
 import assert from "node:assert/strict";
 import { readdir, readFile } from "node:fs/promises";
+import { stripTypeScriptTypes } from "node:module";
 import path from "node:path";
 import { describe, it } from "node:test";
+import { parseArgs } from "node:util";
 import { parse } from "yaml";
+import { BODY_FLAG_OPTIONS, builtinOffer, parseBodyFlags } from "../src/client/body-flags.ts";
+import { usageFor } from "../src/client/usage.ts";
+import { Builtins } from "../src/host/routines/builtins.ts";
+import { KitStats } from "../src/host/routines/stats.ts";
+import { MC_VERSION } from "../src/mc/version.ts";
+import type { BodyFeatures } from "../src/protocol/index.ts";
+import { BUILTIN_MODULES } from "../src/routines/index.ts";
+import { JsonStore } from "../src/store.ts";
 import { MilestoneSpec, offlineUuid } from "../bench/verify/milestones.ts";
 
 const BENCH = path.join(import.meta.dirname, "..", "bench");
@@ -16,34 +26,6 @@ describe("generated tasks", () => {
   it("has every family in every tier", async () => {
     const dirs = await readdir(TASKS);
     for (const family of NEW_FAMILIES) for (const tier of TIERS) assert.ok(dirs.includes(`${family}-${tier}`), `${family}-${tier} is missing`);
-  });
-
-  it("starts the body without triggers, except where reflexes are the task", async () => {
-    for (const tier of TIERS) {
-      assert.doesNotMatch(await read(`survive-nights-${tier}`, "environment", "docker-compose.yaml"), /--no-triggers/);
-      assert.match(await read(`survive-nights-${tier}`, "instruction.md"), /## Triggers/);
-      assert.match(await read(`survive-nights-${tier}`, "task.toml"), /triggers = true/);
-      for (const family of ["iron-tools", "stock-chest", "two-sessions", "craft-stone-pickaxe"]) {
-        assert.match(await read(`${family}-${tier}`, "environment", "docker-compose.yaml"), /--no-triggers/);
-      }
-    }
-    for (const step of ["stash", "retrieve"]) assert.doesNotMatch(await read("two-sessions-raw", "steps", step, "instruction.md"), /## Triggers/);
-  });
-
-  it("offers the kits a task needs in the kits tiers only", async () => {
-    const offer = async (task: string) => /--kits=([^\n]*)/.exec(await read(task, "environment", "docker-compose.yaml"))![1];
-    assert.equal(await offer("survive-nights-raw"), "");
-    assert.equal(await offer("survive-nights-wiki"), "");
-    for (const tier of ["kits", "full"]) {
-      assert.match((await offer(`survive-nights-${tier}`))!, /survival,combat$/);
-      assert.match((await offer(`stock-chest-${tier}`))!, /container$/);
-      assert.doesNotMatch((await offer(`iron-tools-${tier}`))!, /container|survival|combat/);
-      // The instruction names the primitives that the routine kits use, and the kits that the task adds.
-      const instruction = await read(`survive-nights-${tier}`, "instruction.md");
-      assert.match(instruction, /primitive kits move, sense, dig, place, inventory, craft, items, furnace, survival, combat and the routine kits gatherer, crafter, builder, explorer, social/);
-    }
-    // A tier without kits says nothing about them.
-    assert.doesNotMatch(await read("stock-chest-raw", "instruction.md"), /\bkit\b|container/i);
   });
 
   it("makes two-sessions a multi-step task with a verifier and a solution for each step", async () => {
@@ -105,7 +87,7 @@ describe("generated tasks", () => {
       assert.deepEqual(ids.slice(-4), ["iron_ingot", "iron_pickaxe", "diamond", "diamond_pickaxe"]);
       assert.deepEqual(spec.milestones.find((m) => m.id === "diamond")?.blocks, ["diamond_ore", "deepslate_diamond_ore"]);
       assert.deepEqual(spec.checks.map((c) => c.type), ["nights", "deaths"]);
-      assert.doesNotMatch(await read(`diamond-night-${tier}`, "environment", "docker-compose.yaml"), /--no-triggers/);
+      assert.doesNotMatch(await read(`diamond-night-${tier}`, "environment", "docker-compose.yaml"), /--no-reflexes|--no-routines/);
     }
     const solve = await read("diamond-night-raw", "solution", "solve.sh");
     assert.match(solve, /const TARGET = "diamond_pickaxe"/);
@@ -347,6 +329,276 @@ describe("the grading boundary of every generated task", () => {
       });
       const command = `node /opt/minebot/bench/verify/snapshot.ts ${bodyPlayer(await readCompose(dir), dir)}`;
       assert.deepEqual(hooks, [{ service: "grader", command }], `${dir}: the collect hooks`);
+    }
+  });
+});
+
+/** The tier table of bench/README.md: the built-in modules that the kits and full tiers name, and the ones a task adds. */
+const KITS_TIER = ["gatherer", "crafter", "builder", "explorer", "social"];
+const TASK_EXTRAS: Record<string, string[]> = {
+  "diamond-night": ["survival", "combat"],
+  "survive-nights": ["survival", "combat"],
+  "stock-chest": ["container"],
+  "two-sessions": ["container"],
+};
+
+/** The built-in modules that `names` list and everything they use, in catalog order. Computed here, not by the generator. */
+function closure(names: readonly string[]): string[] {
+  const wanted = new Set<string>();
+  const visit = (name: string): void => {
+    if (wanted.has(name)) return;
+    const module = BUILTIN_MODULES.find((candidate) => candidate.name === name);
+    assert.ok(module, `unknown built-in module ${name}`);
+    wanted.add(name);
+    module.uses.forEach(visit);
+  };
+  names.forEach(visit);
+  return BUILTIN_MODULES.map((module) => module.name).filter((name) => wanted.has(name));
+}
+
+/** Compose reads `$$` in a value as a literal `$`: the command that the container runs. */
+const interpolated = (value: string) => value.replaceAll("$$", "$");
+
+interface TaskRow {
+  dir: string;
+  task: string;
+  tier: string;
+  /** The container's command. */
+  command: string[];
+  /** The body's arguments: the command after `body`. */
+  argv: string[];
+}
+
+async function taskRows(): Promise<TaskRow[]> {
+  const rows: TaskRow[] = [];
+  for (const dir of await readdir(TASKS)) {
+    const command = ((await readCompose(dir)).services.body!.command ?? []).map(interpolated);
+    rows.push({ dir, task: dir.slice(0, dir.lastIndexOf("-")), tier: dir.slice(dir.lastIndexOf("-") + 1), command, argv: command.slice(command.indexOf("body") + 1) });
+  }
+  return rows;
+}
+
+/** The tier's row: what the body of this task and tier offers. */
+function tierRow(row: TaskRow): { names: string[]; wiki: "off" | "read" } {
+  const withBuiltins = row.tier === "kits" || row.tier === "full";
+  return { names: withBuiltins ? [...KITS_TIER, ...(TASK_EXTRAS[row.task] ?? [])] : [], wiki: row.tier === "wiki" || row.tier === "full" ? "read" : "off" };
+}
+
+describe("the body of every generated task", () => {
+  it("starts with the flags of its tier row, which the body's own parser accepts", async () => {
+    const rows = await taskRows();
+    assert.equal(rows.length, 8 * TIERS.length);
+    for (const row of rows) {
+      const { names, wiki } = tierRow(row);
+      assert.deepEqual(
+        row.argv,
+        ["--bot=agent", "--host=minecraft", "--api-host=0.0.0.0", "--api-port=7070", "--history=/var/log/minebot/programs.jsonl", `--builtins=${names.length > 0 ? names.join(",") : "none"}`, `--wiki=${wiki}`, "--no-milestones"],
+        row.dir,
+      );
+      // The same argv through the parser of `minebot body`: routines and reflexes are on (neither is turned off), milestones are off.
+      const { values } = parseArgs({ args: row.argv, options: { bot: { type: "string" }, ...BODY_FLAG_OPTIONS } });
+      const flags = parseBodyFlags(values.bot!, values);
+      assert.deepEqual([flags.noRoutines, flags.noReflexes, flags.noMilestones, flags.wiki, flags.routines], [false, false, true, wiki, undefined], row.dir);
+      assert.deepEqual(builtinOffer(flags.builtins), names, row.dir);
+    }
+  });
+
+  it("lists in task.toml the built-ins that the flags offer, the closure over what each module uses, and the wiki", async () => {
+    for (const row of await taskRows()) {
+      const { names, wiki } = tierRow(row);
+      const toml = parseToml(await read(row.dir, "task.toml"));
+      const metadata = toml.metadata as Record<string, unknown>;
+      assert.deepEqual(metadata.builtins, closure(names), row.dir);
+      assert.equal(metadata.wiki, wiki, row.dir);
+      assert.deepEqual(Object.keys(metadata).sort(), ["builtins", "category", "difficulty_explanation", "goals", "tier", "wiki"], `${row.dir}: the metadata keys`);
+    }
+    // A kits body offers every module that a named module uses: gatherer alone brings its primitives.
+    assert.deepEqual(closure(["gatherer"]), ["move", "sense", "dig", "inventory", "items", "gatherer"]);
+  });
+
+  it("lists in task.toml exactly the built-ins that the body's own service offers for its --builtins flag", async () => {
+    for (const row of await taskRows()) {
+      // The body's path from its arguments to its offer: the flag parser of `minebot body`, then the host's built-in service.
+      const { values } = parseArgs({ args: row.argv, options: { bot: { type: "string" }, ...BODY_FLAG_OPTIONS } });
+      const offer = builtinOffer(parseBodyFlags(values.bot!, values).builtins);
+      const offered = new Builtins({ offer, stats: new KitStats(JsonStore.memory()) }).offered;
+      const metadata = parseToml(await read(row.dir, "task.toml")).metadata as Record<string, unknown>;
+      assert.deepEqual(metadata.builtins, offered, row.dir);
+    }
+  });
+
+  it("runs the body behind the removal step that must succeed before the body starts", async () => {
+    const script = 'node --conditions=minebot-sdk:source /opt/minebot/bench/tier/remove.ts "$@" && exec minebot "$@"';
+    for (const row of await taskRows()) {
+      assert.deepEqual(row.command.slice(0, 5), ["sh", "-c", script, "tier", "body"], row.dir);
+      // The compose file writes each "$@" as "$$@", so that compose does not interpolate it.
+      assert.equal((await read(row.dir, "environment", "docker-compose.yaml")).split("$$@").length - 1, 2, row.dir);
+    }
+  });
+});
+
+/** The features of a generated task's body, as the flags give them. */
+function featuresOf(row: TaskRow): BodyFeatures {
+  const { names, wiki } = tierRow(row);
+  return { wiki, lessons: false, milestones: false, reflexes: true, routines: true, builtins: closure(names) };
+}
+
+/** The built-in modules that an instruction names: by import path, by call name, or in a list of modules. */
+function namedModules(text: string): string[] {
+  const named = new Set<string>();
+  for (const module of BUILTIN_MODULES) {
+    if (new RegExp(`minebot-sdk/routines/${module.name}\\b`).test(text)) named.add(module.name);
+    for (const routine of Object.keys(module.routines)) if (new RegExp(`(?<![\\w.])${module.name}\\.${routine}\\b`).test(text)) named.add(module.name);
+  }
+  const names = BUILTIN_MODULES.map((module) => module.name).join("|");
+  for (const list of text.matchAll(new RegExp(`\\b(?:${names})(?:(?:, | and |, and )(?:${names}))+\\b`, "g"))) for (const word of list[0].match(/[a-z]+/g)!) if (names.split("|").includes(word)) named.add(word);
+  return [...named].sort();
+}
+
+describe("the instruction of every generated task", () => {
+  const instructions = async (row: TaskRow) =>
+    Promise.all((await readdir(path.join(TASKS, row.dir), { recursive: true })).filter((file) => file.endsWith("instruction.md")).map(async (file) => ({ file: `${row.dir}/${file}`, text: await read(row.dir, file) })));
+
+  it("names only built-in modules that the body offers, and none in a tier that offers none", async () => {
+    for (const row of await taskRows()) {
+      const features = featuresOf(row);
+      for (const { file, text } of await instructions(row)) {
+        for (const module of namedModules(text)) assert.ok(features.builtins.includes(module), `${file} names the module ${module}, which its body does not offer`);
+      }
+    }
+  });
+
+  it("describes a capability when the body offers it, and only then", async () => {
+    const tokens = {
+      builtins: ["minebot builtins", "minebot-sdk/routines/", "minebot call <module>.<routine>"],
+      wiki: ["minebot wiki", "ctx.wiki"],
+      routines: ["minebot routines", "bind action"],
+      reflexes: ["bind reflex"],
+    };
+    for (const row of await taskRows()) {
+      const features = featuresOf(row);
+      const on = { builtins: features.builtins.length > 0, wiki: features.wiki !== "off", routines: features.routines, reflexes: features.reflexes };
+      for (const { file, text } of await instructions(row)) {
+        for (const [capability, list] of Object.entries(tokens)) {
+          for (const token of list) assert.equal(text.includes(token), on[capability as keyof typeof on], `${file}: "${token}" with ${capability} ${on[capability as keyof typeof on] ? "on" : "off"}`);
+        }
+      }
+    }
+  });
+
+  it("names only commands that the usage text of its body lists", async () => {
+    for (const row of await taskRows()) {
+      const usage = usageFor(featuresOf(row), true);
+      const commands = new Set([...usage.split("Commands:\n")[1]!.split("\nOptions:")[0]!.matchAll(/^ {2}(\S+)/gm)].map((match) => match[1]));
+      for (const { file, text } of await instructions(row)) {
+        for (const [, command, sub] of text.matchAll(/\bminebot ([a-z]+)(?: ([a-z]+)(?=[\s`'.,;:)]|$))?/g)) {
+          if (command === "command") continue; // "The `minebot` command in this terminal"
+          assert.ok(commands.has(command!), `${file}: \`minebot ${command}\` is not a command of this body`);
+          if (sub && ["routines", "bind", "builtins", "wiki", "notes"].includes(command!)) assert.match(usage, new RegExp(`\\b${command} ${sub}\\b`), `${file}: \`minebot ${command} ${sub}\``);
+        }
+      }
+    }
+  });
+
+  it("holds modules that parse once their types are stripped", async () => {
+    let blocks = 0;
+    for (const row of await taskRows()) {
+      for (const { file, text } of await instructions(row)) {
+        for (const [, code] of text.matchAll(/```ts\n([\s\S]*?)```/g)) {
+          blocks++;
+          assert.doesNotThrow(() => stripTypeScriptTypes(code!), `${file}`);
+          assert.match(code!, /export default/, `${file}: a run is a module with a default export`);
+        }
+      }
+    }
+    assert.ok(blocks >= TIERS.length * 8 * 3, `only ${blocks} module examples`);
+  });
+
+  it("says nothing of an audit or a disqualification, here or in the generator", async () => {
+    for (const row of await taskRows()) for (const { file, text } of await instructions(row)) assert.doesNotMatch(text, /audit|disqualif/i, file);
+    assert.doesNotMatch(await readFile(path.join(BENCH, "gen-tasks.ts"), "utf8"), /audit|disqualif/i);
+  });
+});
+
+describe("the compose file of every generated task", () => {
+  /** The one compose document that the generator may write, except the body's command (its own test). */
+  const expectedCompose = (command: string[]) => ({
+    services: {
+      main: { depends_on: { body: { condition: "service_healthy" } }, networks: ["agent", "api"] },
+      minecraft: {
+        image: `minebot.local/minebot-server:${MC_VERSION}`,
+        pull_policy: "never",
+        environment: {
+          EULA: "true",
+          RCON_PASSWORD: "minebot-bench",
+          LEVEL_SEED: "-1395321890861809374",
+          DIFFICULTY: "easy",
+          RESTRICT_TO_OWN_SUBNET: "true",
+          RCON_LOOPBACK_ONLY: "true",
+          WHITELIST: JSON.stringify([{ uuid: offlineUuid("agent"), name: "agent" }]),
+        },
+        cap_add: ["NET_ADMIN"],
+        volumes: ["world:/opt/minecraft/world"],
+        networks: ["game"],
+        healthcheck: {
+          test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/25575 && grep -qx white-list=true /opt/minecraft/server.properties && nft list table inet rcon_guard | grep -q 'tcp dport 25575 drop'"],
+          interval: "2s",
+          timeout: "2s",
+          retries: 90,
+          start_period: "5s",
+        },
+      },
+      body: {
+        image: "minebot.local/minebot:dev",
+        pull_policy: "never",
+        command,
+        environment: { MINEBOT_TOKEN: "minebot-bench-body" },
+        networks: ["api", "game"],
+        depends_on: { minecraft: { condition: "service_healthy" } },
+        healthcheck: {
+          test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:7070/health').then(r => r.json()).then(h => process.exit(h.connected ? 0 : 1), () => process.exit(1))"],
+          interval: "2s",
+          timeout: "5s",
+          retries: 90,
+          start_period: "5s",
+        },
+      },
+      grader: {
+        image: "minebot.local/minebot:dev",
+        pull_policy: "never",
+        network_mode: "service:minecraft",
+        command: ["node", "-e", "process.on('SIGTERM', () => process.exit(0)); setInterval(() => {}, 1 << 30)"],
+        environment: { RCON_PASSWORD: "minebot-bench" },
+        volumes: ["world:/srv/minecraft-world:ro"],
+        depends_on: { minecraft: { condition: "service_healthy" } },
+      },
+    },
+    networks: { agent: null, api: { internal: true }, game: { internal: true } },
+    volumes: { world: null },
+  });
+
+  it("has exactly the keys and values of the allowlist, in the file and in each service", async () => {
+    const dirs = await readdir(TASKS);
+    assert.ok(dirs.length >= NEW_FAMILIES.length * TIERS.length);
+    for (const dir of dirs) {
+      const compose = (await readCompose(dir)) as unknown as { services: Record<string, ComposeService & Record<string, unknown>>; networks: Record<string, { internal?: boolean } | null> };
+      const allowed: Record<string, string[]> = {
+        main: ["depends_on", "networks"],
+        minecraft: ["cap_add", "environment", "healthcheck", "image", "networks", "pull_policy", "volumes"],
+        body: ["command", "depends_on", "environment", "healthcheck", "image", "networks", "pull_policy"],
+        grader: ["command", "depends_on", "environment", "image", "network_mode", "pull_policy", "volumes"],
+      };
+      assert.deepEqual(Object.keys(compose).sort(), ["networks", "services", "volumes"], `${dir}: the top-level keys`);
+      assert.deepEqual(Object.keys(compose.services).sort(), Object.keys(allowed).sort(), `${dir}: the services`);
+      for (const [name, keys] of Object.entries(allowed)) assert.deepEqual(Object.keys(compose.services[name]!).sort(), keys, `${dir}: the keys of ${name}`);
+      // The properties that the isolation rests on, by name.
+      assert.deepEqual(compose.services.main!.networks, ["agent", "api"], `${dir}: main is on the agent and api networks only`);
+      assert.deepEqual(compose.services.body!.networks, ["api", "game"], `${dir}: body is on the api and game networks only`);
+      for (const network of compose.services.body!.networks as string[]) assert.equal(compose.networks[network]?.internal, true, `${dir}: the body's network ${network} is internal`);
+      assert.equal(compose.networks.game?.internal, true, `${dir}: the game network is internal`);
+      assert.ok(!compose.networks.agent?.internal, `${dir}: the agent network is not internal`);
+      // The whole document: every nested key and value.
+      assert.deepEqual(compose, expectedCompose(compose.services.body!.command!), dir);
     }
   });
 });

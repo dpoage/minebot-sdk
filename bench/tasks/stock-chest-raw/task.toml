@@ -15,11 +15,12 @@ keywords = ["minecraft","crafting","mining","storage","embodied","code-as-action
 [metadata]
 category = "minecraft"
 tier = "raw"
-# Every tier has the base body: Mineflayer plus notes, status (deaths and reconnects), the event log with blocking waits, and the one-line observation.
-kits = []
+# Every tier has the base body: Mineflayer plus notes, status (deaths and reconnects), the event log with blocking waits, the one-line observation,
+# and the routine library with action and reflex bindings. The tier features are below: the built-in modules the body offers (the closure of its
+# --builtins over their uses) and the wiki.
+builtins = []
 wiki = "off"
 goals = false
-triggers = false
 difficulty_explanation = "Nine dependent steps: the wooden pickaxe chain, then cobblestone mined in bulk, a chest crafted at a table, placed, and filled. Adds containers, which the server's statistics do not show: the verifier reads the chest's contents from the saved world."
 
 [agent]

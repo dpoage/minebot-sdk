@@ -15,11 +15,12 @@ keywords = ["minecraft","crafting","mining","smelting","embodied","code-as-actio
 [metadata]
 category = "minecraft"
 tier = "kits"
-# Every tier has the base body: Mineflayer plus notes, status (deaths and reconnects), the event log with blocking waits, and the one-line observation.
-kits = ["gatherer","crafter","builder","explorer","social"]
+# Every tier has the base body: Mineflayer plus notes, status (deaths and reconnects), the event log with blocking waits, the one-line observation,
+# and the routine library with action and reflex bindings. The tier features are below: the built-in modules the body offers (the closure of its
+# --builtins over their uses) and the wiki.
+builtins = ["move","sense","dig","place","inventory","craft","items","furnace","gatherer","crafter","builder","explorer","social"]
 wiki = "off"
 goals = false
-triggers = false
 difficulty_explanation = "Eleven dependent steps: the stone pickaxe chain, then iron ore found underground, a furnace, fuel, smelting, and the iron pickaxe. Adds exploration for ore, the furnace, and a crafting chain longer than the stone pickaxe's."
 
 [agent]

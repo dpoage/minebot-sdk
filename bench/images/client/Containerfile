@@ -1,5 +1,5 @@
 # The agent's image: the minebot client (CLI and MCP server) and the Mineflayer and pathfinder
-# documentation that the task instructions point to. It has no body, kits, wiki, oracle, or verifier,
+# documentation that the task instructions point to. It has no body, built-ins, wiki, oracle, or verifier,
 # and none of the libraries a body needs.
 # Build context: the repository root (see bench/build-images.sh).
 FROM docker.io/library/node:24-slim AS deps
