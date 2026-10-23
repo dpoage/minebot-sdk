@@ -49,7 +49,6 @@ export const Check = z.discriminatedUnion("type", [
   z.object({
     ...checkBase,
     type: z.literal("stored"),
-    snapshot: snapshotChoice,
     /** Item ids without namespace; `*` matches any run of characters. */
     items: z.array(z.string()).min(1),
     /** The container blocks that count. Default: chests. */
@@ -71,7 +70,7 @@ export const Check = z.discriminatedUnion("type", [
     max: z.number().int().nonnegative(),
   }),
   /** The overworld clock has passed the end of night `nights`: it is at least `nights` days old. */
-  z.object({ ...checkBase, type: z.literal("nights"), snapshot: snapshotChoice, nights: z.number().int().positive() }),
+  z.object({ ...checkBase, type: z.literal("nights"), nights: z.number().int().positive() }),
   /** The player died at most `max` times. */
   z.object({ ...checkBase, type: z.literal("deaths"), max: z.number().int().nonnegative() }),
   /** The player stands at least `min` blocks (horizontally) from every counted container. At least one must exist. */
@@ -122,9 +121,8 @@ function gradeCheck(check: Check, stats: PlayerStats | null, world: WorldFacts |
   switch (check.type) {
     case "stored": {
       const requirement = `>= ${check.min}`;
-      const seen = snapshotFor(check, world);
-      if ("error" in seen) return { id, description, met: false, obtained: 0, requirement, detail: { error: seen.error } };
-      const found = containersOf(seen.at, check.containers);
+      if (!world) return { id, description, met: false, obtained: 0, requirement, detail: { error: NO_WORLD } };
+      const found = containersOf(world, check.containers);
       const obtained = itemTotal(found, nameMatcher(check.items));
       return { id, description, met: obtained >= check.min, obtained, requirement, detail: { containers: found.length } };
     }
@@ -143,10 +141,9 @@ function gradeCheck(check: Check, stats: PlayerStats | null, world: WorldFacts |
     }
     case "nights": {
       const requirement = `>= ${check.nights}`;
-      const seen = snapshotFor(check, world);
-      if ("error" in seen) return { id, description, met: false, obtained: 0, requirement, detail: { error: seen.error } };
-      const obtained = Math.floor(seen.at.clock / DAY_TICKS);
-      return { id, description, met: obtained >= check.nights, obtained, requirement, detail: { clock: seen.at.clock } };
+      if (!world) return { id, description, met: false, obtained: 0, requirement, detail: { error: NO_WORLD } };
+      const obtained = Math.floor(world.clock / DAY_TICKS);
+      return { id, description, met: obtained >= check.nights, obtained, requirement, detail: { clock: world.clock } };
     }
     case "deaths": {
       // The server writes the statistic after the first death only.

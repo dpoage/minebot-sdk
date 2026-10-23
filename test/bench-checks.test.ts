@@ -297,28 +297,11 @@ describe("verifier from the statistics", () => {
 describe("world checks on the previous snapshot", () => {
   // `previous` is the step before's snapshot; the current one is deliberately the opposite of it in each fixture.
   const previousOf = (over: Partial<WorldFacts> = {}) => ({ clock: 0, player: { x: 0, y: 64, z: 0 }, containers: [], ...over });
-  const stored = { id: "stashed", description: "Stored", type: "stored", items: ["cobblestone"], min: 16 };
-  const night = { id: "night", description: "Live", type: "nights", nights: 1 };
   const far = { id: "far", description: "Be far", type: "distance", min: 64 };
 
-  it("grades a stored check on the previous snapshot, and fails closed without one", () => {
-    const onPrevious = { ...stored, snapshot: "previous" };
-    const passing = world({ containers: [], previous: previousOf({ containers: [chest(0, 0, { cobblestone: 16 })] }) });
-    assert.equal(grade([onPrevious], passing)[0]!.met, true);
-    assert.equal(grade([stored], passing)[0]!.met, false, "the current snapshot is the default");
-    const failing = world({ containers: [chest(0, 0, { cobblestone: 16 })], previous: previousOf({ containers: [chest(0, 0, { cobblestone: 15 })] }) });
-    assert.equal(grade([onPrevious], failing)[0]!.met, false);
-    assert.equal(grade([stored], failing)[0]!.met, true);
-    const none = grade([onPrevious], world({ containers: [chest(0, 0, { cobblestone: 16 })] }))[0]!;
-    assert.equal(none.met, false);
-    assert.match(String(none.detail.error), /no snapshot of the step before/);
-  });
-
-  it("grades a nights check on the previous snapshot, and fails closed without one", () => {
-    const onPrevious = { ...night, snapshot: "previous" };
-    assert.equal(grade([onPrevious], world({ clock: 0, previous: previousOf({ clock: DAY_TICKS }) }))[0]!.met, true);
-    assert.equal(grade([onPrevious], world({ clock: 5 * DAY_TICKS, previous: previousOf({ clock: DAY_TICKS - 1 }) }))[0]!.met, false);
-    assert.equal(grade([onPrevious], world({ clock: 5 * DAY_TICKS }))[0]!.met, false);
+  it("accepts `snapshot` on the distance check only, the one check a task grades on the previous snapshot", () => {
+    const withSnapshot = Check.options.filter((option) => "snapshot" in option.shape).map((option) => option.shape.type.value);
+    assert.deepEqual(withSnapshot, ["distance"]);
   });
 
   it("grades a distance check on the previous snapshot: the player and the chests of the step before, and fails closed without one", () => {
