@@ -89,7 +89,7 @@ export interface RunRecorder {
    * does runs no program at this moment; nothing is aborted.
    */
   preempt(): boolean;
-  /** Records a reflex's `when` expression, which the body evaluates later on each matching event, with the audit a run's code gets. */
+  /** Records a reflex's `when` expression, which the body evaluates later on each matching event, as a history line of status `registered`. */
   register(code: string, extra: object): Promise<void>;
 }
 

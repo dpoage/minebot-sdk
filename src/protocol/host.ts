@@ -157,7 +157,7 @@ export type FromHost =
    * counted, all taken in as one message.
    */
   | { kind: "run_delivered"; runId: number; finished?: TriggerFinished; disabled?: TriggerDisabled; triggerFailures?: Record<string, number> }
-  /** Code the body will run later (a reflex's `when`), for the history's audit; answered by `run_ack` like a run. */
+  /** Code the body will run later (a reflex's `when`), for the program history; answered by `run_ack` like a run. */
   | { kind: "register"; runId: number; code: string; extra: object }
   /**
    * The reflexes' failures after a change no run's delivery carries: the counts a host starts with

@@ -97,7 +97,7 @@ export interface TriggersDeps {
    * Absent, such a firing's events are pushed.
    */
   counts?: (failures: Record<string, number>, ended?: { finished?: TriggerFinished; disabled?: TriggerDisabled }) => void;
-  /** Records the source a reflex being bound will run (its `when` expression; the routine's source is the library's), so the audit covers it before it ever runs. */
+  /** Records the source a reflex being bound will run (its `when` expression; the routine's source is the library's) in the program history before it ever runs. */
   register: (reflex: StoredReflex) => Promise<void>;
   /** Each reflex's run of failures that the host this one replaces had counted. */
   failures?: Record<string, number>;

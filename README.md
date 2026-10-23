@@ -586,7 +586,7 @@ All commands take `--bot <name>`. The default is `$MINEBOT_BOT`, or `bot` if tha
 
 To reach a body in another container, set `MINEBOT_URL` and `MINEBOT_TOKEN`. Clients then ignore `--bot`. For `body`, `MINEBOT_TOKEN` sets the API token. A body refuses to serve on a non-loopback `--api-host` without a token.
 
-`--history <file>` appends one JSON line per run: the code, status, logs, result, duration, and `escapeAttempts`. A run that got `--args` carries `args`. A routine call or reflex firing has an empty `code` and carries `call`, or `trigger`, `routine`, and `event`, instead. See [Security](#security).
+`--history <file>` appends one JSON line per run when the run ends: the code, status, logs, result, and duration. A run that got `--args` carries `args`. A routine call or reflex firing has an empty `code` and carries `call`, or `trigger`, `routine`, and `event`, instead. A reflex's `when` expression has a line of status `registered` when the reflex is bound. A run that never produced a result has no line.
 
 `--auth` defaults to `offline`, which joins servers in offline mode as `--username`. An online-mode server kicks such a player with `multiplayer.disconnect.unverified_username`; use `--auth microsoft` for it. On the first start, the body prints a Microsoft device code to its terminal (`[minebot] Microsoft sign-in: open <url> and enter code <code>`). Sign in with an account that owns Minecraft: Java Edition. The body caches the tokens in `<state>/auth`, so later starts and reconnects sign in without a code. The in-game name is the account's profile name; `--username` only keys the cache.
 
@@ -608,9 +608,9 @@ The bot host waits 100 ms after each inventory click. Mineflayer 4.39 sends clic
 
 A run, a routine, and a reflex are modules in the bot host process, with the whole Node API: `process`, `fs`, and network access. There is no sandbox. The bearer token is the only barrier, and anyone who has the token can run code as your user. Keep the API on loopback, and keep `.minebot/` private.
 
-The body does not try to prevent what a module does. It audits the source of every run instead: `src/audit.ts` scans it for `constructor.constructor` (also as `["constructor"]`), `process`, `getBuiltinModule`, `require(`, `import(`, `globalThis.constructor`, and `Function(`. A run that matches has the pattern names in `escapeAttempts` on its history line. The body writes that line before it runs a flagged run, so a run that kills the body is still recorded, and the benchmark verifier fails the trial. The agent is not told mid-run; the audit record is what counts. The scan is an audit, not a security boundary: code that builds the names at run time passes it, and a comment that contains `process` is flagged. Anything that relies on `--no-milestones` for more than fair play needs a real boundary, such as a separate container for the agent, as in the benchmark.
+The body does not try to prevent what a module does, and it does not scan a module's source. The history records the source of each run; nothing flags or blocks a run. Anything that relies on `--no-milestones` for more than fair play needs a real boundary, such as a separate container for the agent, as in the benchmark.
 
-The audit does not scan a saved routine: the history line of a call has an empty `code` and an empty `escapeAttempts`. Start a body with `--no-routines` when the audit must see everything that the agent runs.
+The history line of a call has an empty `code`: the source of a saved routine is in the library, not in the history.
 
 ## Migrating from kits, triggers and programs
 
@@ -693,7 +693,7 @@ npm run typecheck
 npm test
 ```
 
-The tests cover the run loader, the routine contract, the built-in routines, reflexes, the wiki, the capability table, the package boundaries, what each kind of body shows an agent, the escape audit, and the benchmark grading. They do not need a Minecraft server.
+The tests cover the run loader, the routine contract, the built-in routines, reflexes, the wiki, the capability table, the package boundaries, what each kind of body shows an agent, and the benchmark grading. They do not need a Minecraft server.
 
 A checkout runs from source. The `minebot-sdk/...` entry points in `package.json` have a `minebot-sdk:source` condition (package-scoped, so a consumer that turns on a generic `source` condition does not load files the package does not ship) that points at `src/`, and the npm scripts, the type checker (`customConditions` in `tsconfig.json`), and the benchmark images pass it (`node --conditions=minebot-sdk:source`). Built-in routines import `minebot-sdk/routine` and each other as `minebot-sdk/routines/<module>`, and the condition makes those imports resolve to `src/routine/public.ts` and `src/routines/<module>.ts` here and to `dist/` in an installed package. Run a script that loads routines as `node --conditions=minebot-sdk:source <file>`.
 

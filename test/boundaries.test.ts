@@ -92,7 +92,7 @@ describe("package boundaries", () => {
   it("keeps the verifier entry inside the grading modules", () => {
     const files = closure(path.join(ROOT, "bench/verify/check.ts"));
     const allowed = (file: string) =>
-      file.startsWith("bench/verify/") || file === "src/audit.ts" || file.startsWith("src/milestones/") || file === "src/mc/names.ts";
+      file.startsWith("bench/verify/") || file.startsWith("src/milestones/") || file === "src/mc/names.ts";
     const outside = files.filter((file) => !allowed(file));
     assert.deepEqual(outside, [], "the verifier image would miss modules the check needs");
   });

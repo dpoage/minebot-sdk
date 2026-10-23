@@ -62,7 +62,7 @@ describe("generated tasks", () => {
     assert.match(toml, /name = "stash"\nmin_reward = 1\.0/);
     assert.doesNotMatch(toml, /name = "retrieve"\nmin_reward/);
     const retrieve = MilestoneSpec.parse(JSON.parse(await read("two-sessions-kits", "steps", "retrieve", "tests", "milestones.json")));
-    assert.deepEqual(retrieve.checks.map((c) => c.type), ["withdrawn"]);
+    assert.deepEqual(retrieve.checks.map((c) => c.type), ["withdrawn", "distance"]);
     // The chest is left outside the chunks that the body loads around the player (view distance 8: under 144 blocks).
     const stash = MilestoneSpec.parse(JSON.parse(await read("two-sessions-kits", "steps", "stash", "tests", "milestones.json")));
     const far = stash.checks.find((c) => c.type === "distance");

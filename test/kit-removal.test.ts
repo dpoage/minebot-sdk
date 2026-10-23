@@ -1,9 +1,8 @@
 // What the body no longer has once the kits are gone, checked on the surfaces that stay: the context
-// of a run loses `kit` and `kits` and nothing else, and the lines of the program history carry no kit field and still parse as the benchmark's verifier reads them.
+// of a run loses `kit` and `kits` and nothing else, and the lines of the program history carry no kit field and no active set.
 import assert from "node:assert/strict";
 import { after, describe, it } from "node:test";
 import type { Bot } from "mineflayer";
-import { HistoryRecord } from "../bench/verify/history.ts";
 import { routineContext, type GlobalsDeps } from "../src/host/globals.ts";
 import { Notes } from "../src/notes.ts";
 import type { BodyFeatures } from "../src/protocol/index.ts";
@@ -41,7 +40,7 @@ describe("the context of a routine", () => {
 });
 
 describe("the program history of a body", () => {
-  it("has lines the benchmark's verifier parses, which carry no kits and no active set", async () => {
+  it("has lines that carry no kits and no active set", async () => {
     const body = await startFakeBody();
     try {
       body.writeRoutines({ act: "export default () => 1;\n" });
@@ -58,12 +57,11 @@ describe("the program history of a body", () => {
       // The registration of the reflex's `when`, the call's start, and its end; then the run's.
       assert.deepEqual(lines.map((line) => line.status), ["registered", "ok", "ok"]);
       for (const line of lines) {
-        const record = HistoryRecord.parse(line);
-        assert.equal(typeof record.code, "string");
+        assert.equal(typeof line.code, "string");
         assert.deepEqual(Object.keys(line).filter((key) => /kit|active/i.test(key)), [], JSON.stringify(line));
       }
-      assert.equal(HistoryRecord.parse(lines[0]).code, "event.data.message.length > 0");
-      assert.equal(HistoryRecord.parse(lines[2]).code, source);
+      assert.equal(lines[0]!.code, "event.data.message.length > 0");
+      assert.equal(lines[2]!.code, source);
     } finally {
       await body.close();
     }

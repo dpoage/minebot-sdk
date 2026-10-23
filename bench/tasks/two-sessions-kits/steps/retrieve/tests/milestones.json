@@ -43,6 +43,13 @@
       ],
       "held": 8,
       "max": 4
+    },
+    {
+      "id": "first_session_far_away",
+      "description": "The first session stopped 200 blocks from the chest",
+      "type": "distance",
+      "snapshot": "previous",
+      "min": 200
     }
   ]
 }

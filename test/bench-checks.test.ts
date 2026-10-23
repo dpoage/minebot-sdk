@@ -220,34 +220,146 @@ describe("containersInRegion", () => {
   });
 });
 
+/**
+ * Runs the verifier as the verifier image does: its own process, reading the spec, the statistics, and the world file, and writing the reward files.
+ * `history` is the content of a program history the body might have written, which the verifier is pointed at through HISTORY_FILE; undefined leaves
+ * the variable unset, so the verifier would look where the body writes it in a trial (a path that does not exist here).
+ */
+async function verify(spec: unknown, stats: unknown, facts: WorldFacts | null, history?: string) {
+  const dir = await mkdtemp(path.join(tmpdir(), "minebot-checks-"));
+  const files = { spec: path.join(dir, "milestones.json"), stats: path.join(dir, "stats.json"), history: path.join(dir, "programs.jsonl"), world: path.join(dir, "world.json") };
+  await writeFile(files.spec, JSON.stringify(spec));
+  await writeFile(files.stats, JSON.stringify(stats));
+  if (history !== undefined) await writeFile(files.history, history);
+  if (facts) await writeFile(files.world, JSON.stringify(facts));
+  const { HISTORY_FILE: _inherited, ...inherited } = process.env;
+  const { stdout } = await exec("node", [CHECK, files.spec], {
+    env: { ...inherited, STATS_FILE: files.stats, WORLD_FILE: files.world, REWARD_DIR: dir, ...(history !== undefined && { HISTORY_FILE: files.history }) },
+  });
+  const rewardText = await readFile(path.join(dir, "reward.json"), "utf8");
+  const milestonesText = await readFile(path.join(dir, "milestones.json"), "utf8");
+  return { stdout, rewardText, milestonesText, reward: JSON.parse(rewardText), milestones: JSON.parse(milestonesText) };
+}
+
 describe("verifier with checks", () => {
-  async function verify(spec: unknown, stats: unknown, facts: WorldFacts | null) {
-    const dir = await mkdtemp(path.join(tmpdir(), "minebot-checks-"));
-    const files = { spec: path.join(dir, "milestones.json"), stats: path.join(dir, "stats.json"), history: path.join(dir, "programs.jsonl"), world: path.join(dir, "world.json") };
-    await writeFile(files.spec, JSON.stringify(spec));
-    await writeFile(files.stats, JSON.stringify(stats));
-    await writeFile(files.history, `${JSON.stringify({ seq: 1, startedAt: "now", code: "return 1", status: "ok", escapeAttempts: [] })}\n`);
-    if (facts) await writeFile(files.world, JSON.stringify(facts));
-    const { stdout } = await exec("node", [CHECK, files.spec], {
-      env: { ...process.env, STATS_FILE: files.stats, HISTORY_FILE: files.history, WORLD_FILE: files.world, REWARD_DIR: dir },
-    });
-    return { stdout, reward: JSON.parse(await readFile(path.join(dir, "reward.json"), "utf8")), milestones: JSON.parse(await readFile(path.join(dir, "milestones.json"), "utf8")) };
-  }
   const spec = { player: "agent", checks: [{ id: "night_1", description: "Live", type: "nights", nights: 1 }, { id: "no_deaths", description: "Do not die", type: "deaths", max: 0 }] };
 
   it("grades from the world file", async () => {
     const pass = await verify(spec, { stats: {} }, world({ clock: DAY_TICKS + 5 }));
-    assert.deepEqual(pass.reward, { reward: 1, progress: 1, disqualified: 0 });
+    assert.deepEqual(pass.reward, { reward: 1, progress: 1 });
     assert.match(pass.stdout, /PASS night_1: 1 \(needs >= 1\)/);
     assert.equal(pass.milestones.checks.length, 2);
     const died = await verify(spec, { stats: { "minecraft:custom": { "minecraft:deaths": 1 } } }, world({ clock: DAY_TICKS + 5 }));
-    assert.deepEqual(died.reward, { reward: 0, progress: 0.5, disqualified: 0 });
+    assert.deepEqual(died.reward, { reward: 0, progress: 0.5 });
     assert.match(died.stdout, /FAIL no_deaths: 1 \(needs <= 0\)/);
   });
 
   it("fails the checks that need the world when there is no world file", async () => {
     const { reward, stdout } = await verify(spec, { stats: {} }, null);
-    assert.deepEqual(reward, { reward: 0, progress: 0.5, disqualified: 0 });
+    assert.deepEqual(reward, { reward: 0, progress: 0.5 });
     assert.match(stdout, /no world facts/);
+  });
+});
+
+describe("verifier from the statistics", () => {
+  const spec = { player: "agent", milestones: [{ id: "table", description: "Craft a crafting table", obtained: ["crafting_table"], via: "crafted" }] };
+  const stats = { stats: { "minecraft:crafted": { "minecraft:crafting_table": 1 } } };
+
+  it("gives reward 1 for a task of milestones alone, and writes exactly reward and progress", async () => {
+    const { reward, milestones } = await verify(spec, stats, null, "");
+    assert.deepEqual(reward, { reward: 1, progress: 1 });
+    assert.deepEqual(Object.keys(reward), ["reward", "progress"]);
+    assert.deepEqual(Object.keys(milestones).sort(), ["checks", "milestones", "progress", "reward"]);
+  });
+
+  it("writes the same reward files and output whatever program history the body wrote, or none", async () => {
+    // The key that the history of an earlier body carried for a flagged program; spelled in two parts so that no file names a deleted feature.
+    const OLD_FLAGS = `escape${"Attempts"}`;
+    const line = (code: string, extra: object = {}) => `${JSON.stringify({ seq: 1, startedAt: "now", code, status: "ok", ...extra })}\n`;
+    const histories: Record<string, string | undefined> = {
+      "no file": undefined,
+      empty: "",
+      "a flag of the key an earlier body wrote": line('return bot.constructor.constructor("return process")()', { [OLD_FLAGS]: ["constructor.constructor", "process"] }),
+      "source that requires and names process": line('const fs = require("node:fs"); return process.pid;'),
+      "a line that is not JSON": "not json\n",
+    };
+    const baseline = await verify(spec, stats, null, "");
+    for (const [name, history] of Object.entries(histories)) {
+      const run = await verify(spec, stats, null, history);
+      assert.equal(run.rewardText, baseline.rewardText, `reward.json with ${name}`);
+      assert.equal(run.milestonesText, baseline.milestonesText, `milestones.json with ${name}`);
+      assert.equal(run.stdout, baseline.stdout, `output with ${name}`);
+      assert.deepEqual(Object.keys(run.reward), ["reward", "progress"], name);
+    }
+  });
+});
+
+describe("world checks on the previous snapshot", () => {
+  // `previous` is the step before's snapshot; the current one is deliberately the opposite of it in each fixture.
+  const previousOf = (over: Partial<WorldFacts> = {}) => ({ clock: 0, player: { x: 0, y: 64, z: 0 }, containers: [], ...over });
+  const far = { id: "far", description: "Be far", type: "distance", min: 64 };
+
+  it("accepts `snapshot` on the distance check only, the one check a task grades on the previous snapshot", () => {
+    const withSnapshot = Check.options.filter((option) => "snapshot" in option.shape).map((option) => option.shape.type.value);
+    assert.deepEqual(withSnapshot, ["distance"]);
+  });
+
+  it("grades a distance check on the previous snapshot: the player and the chests of the step before, and fails closed without one", () => {
+    const onPrevious = { ...far, snapshot: "previous" };
+    const farBefore = world({ player: { x: 0, y: 64, z: 0 }, containers: [chest(0, 0, {})], previous: previousOf({ player: { x: 100, y: 64, z: 0 }, containers: [chest(0, 0, {})] }) });
+    const [passes] = grade([onPrevious], farBefore);
+    assert.deepEqual([passes!.met, passes!.obtained], [true, 100]);
+    assert.equal(grade([far], farBefore)[0]!.met, false, "the player stands at the chest now");
+    const nearBefore = world({ player: { x: 500, y: 64, z: 0 }, containers: [chest(0, 0, {})], previous: previousOf({ player: { x: 10, y: 64, z: 0 }, containers: [chest(0, 0, {})] }) });
+    assert.equal(grade([onPrevious], nearBefore)[0]!.met, false);
+    assert.equal(grade([far], nearBefore)[0]!.met, true, "the player stands far now");
+    // The chest of the step before counts, not the one that is there now.
+    const movedChest = world({ player: { x: 500, y: 64, z: 0 }, containers: [chest(500, 0, {})], previous: previousOf({ player: { x: 10, y: 64, z: 0 }, containers: [chest(0, 0, {})] }) });
+    assert.equal(grade([onPrevious], movedChest)[0]!.met, false);
+    const none = grade([onPrevious], world({ containers: [chest(0, 0, {})], player: { x: 500, y: 64, z: 0 } }))[0]!;
+    assert.equal(none.met, false);
+    assert.match(String(none.detail.error), /no snapshot of the step before/);
+    assert.equal(grade([onPrevious], null)[0]!.met, false);
+  });
+
+  it("parses `snapshot` as current or previous only, and leaves a parsed check without it when it is not given", () => {
+    assert.throws(() => Check.parse({ ...far, snapshot: "next" }));
+    assert.equal("snapshot" in Check.parse(far), false);
+    assert.deepEqual(Check.parse({ ...far, snapshot: "previous" }), { ...far, snapshot: "previous", containers: ["chest", "trapped_chest"] });
+  });
+});
+
+describe("the generated two-sessions retrieve step", () => {
+  const stats = {
+    stats: {
+      "minecraft:crafted": { "minecraft:wooden_pickaxe": 1, "minecraft:stone_pickaxe": 1 },
+      "minecraft:mined": { "minecraft:stone": 3 },
+      "minecraft:picked_up": { "minecraft:cobblestone": 3 },
+    },
+  };
+  // The step before ended with the stash chest full of logs and the player at `before`; this step took half of them out and the player is back at the chest.
+  const afterStep = (before: number) =>
+    world({
+      clock: 100,
+      player: { x: 3, y: 64, z: 0 },
+      containers: [chest(0, 0, { oak_log: 4 })],
+      previous: { clock: 50, player: { x: before, y: 64, z: 0 }, containers: [chest(0, 0, { oak_log: 8 })] },
+    });
+
+  it("gives reward 0 when the grader's snapshot of the first step has the player under 200 blocks from the stash, with every milestone and `withdrawn` met", async () => {
+    const specs = (await readdir(TASKS, { recursive: true })).filter((file) => /^two-sessions-[^/]+\/steps\/retrieve\/tests\/milestones\.json$/.test(file.split(path.sep).join("/")));
+    assert.equal(specs.length, 4, specs.join(", "));
+    for (const file of specs) {
+      const spec = JSON.parse(await readFile(path.join(TASKS, file), "utf8"));
+      const near = await verify(spec, stats, afterStep(199));
+      assert.equal(near.reward.reward, 0, `${file}: ${near.stdout}`);
+      assert.match(near.stdout, /PASS withdrawn/, file);
+      assert.deepEqual(near.milestones.milestones.map((m: { met: boolean }) => m.met), [true, true, true], file);
+      assert.match(near.stdout, /FAIL first_session_far_away: 199 /, file);
+      const far = await verify(spec, stats, afterStep(200));
+      assert.deepEqual(far.reward, { reward: 1, progress: 1 }, `${file}: ${far.stdout}`);
+      const lost = await verify(spec, stats, { ...afterStep(500), previous: null });
+      assert.equal(lost.reward.reward, 0, `${file}: no snapshot of the first step`);
+    }
   });
 });

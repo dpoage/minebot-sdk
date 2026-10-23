@@ -37,6 +37,6 @@ The body keeps notes that outlast your session: `minebot notes` lists them, `min
 
 ## Grading
 
-The server's record of what the player dug, picked up, and crafted is graded after you finish. Picking an item up again after you dropped it does not count twice. The contents of the chests in the world are graded too, as the server saved them: the chest that the first session filled has to be where it was and hold 4 logs or fewer when you finish. You cannot run server commands.
+The server's record of what the player dug, picked up, and crafted is graded after you finish. Picking an item up again after you dropped it does not count twice. The contents of the chests in the world are graded too, as the server saved them: the chest that the first session filled has to be where it was and hold 4 logs or fewer when you finish, and the first session has to have stopped at least 200 blocks from it. You cannot run server commands.
 
 Every program you run is recorded and audited. A program that reaches outside the program environment fails the trial with reward 0. The audit flags these names wherever they appear in a program, comments and strings included: `process`, `require(`, `import(`, `getBuiltinModule`, `Function(`, `constructor.constructor`, and `globalThis.constructor`.
