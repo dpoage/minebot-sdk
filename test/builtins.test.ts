@@ -13,7 +13,7 @@ import { BODY_FLAG_OPTIONS, builtinOffer, parseBodyFlags } from "../src/client/b
 import { Builtins } from "../src/host/routines/builtins.ts";
 import { KitStats } from "../src/host/routines/stats.ts";
 import { defineRoutine, metaOf, observerOf, withObserver, type Routine } from "../src/routine/define.ts";
-import { BUILTIN_MODULES } from "../src/routines/index.ts";
+import { BUILTIN_MODULES, type BuiltinModule } from "../src/routines/index.ts";
 import { JsonStore } from "../src/store.ts";
 
 const ROOT = path.join(import.meta.dirname, "..");
@@ -150,18 +150,65 @@ describe("search", () => {
 
   const builtins = new Builtins({ stats: memoryStats() });
 
-  /** What the kit search at 5218f99 ranked for each query and limit of the corpus, recorded once and committed: (module, routine) hits with score and text. */
-  const KIT_SEARCH = JSON.parse(readFileSync(path.join(ROOT, "test", "fixtures", "catalog", "kit-search-5218f99.json"), "utf8")) as { query: string; limit: number; hits: unknown[] }[];
+  /** What the kit search at 5218f99 returned for each query and limit of the corpus, recorded once and committed: whole hits (module, routine, score, text) in order. */
+  const KIT_SEARCH = JSON.parse(readFileSync(path.join(ROOT, "test", "fixtures", "catalog", "kit-search-5218f99.json"), "utf8")) as { query: string; limit: number; hits: { module: string; routine?: string; score: number; text: string }[] }[];
 
-  it("ranks the (module, routine) sequence the kit search ranked for the same (kit, action) catalog, for every query and limit", () => {
-    assert.deepEqual(KIT_SEARCH.map(({ query, limit }) => [query, limit]), CORPUS.flatMap((query) => [1, 5, 20].map((limit) => [query, limit])), "the committed table covers the corpus");
-    let nonEmpty = 0;
-    for (const { query, limit, hits } of KIT_SEARCH) {
-      const actual = builtins.search(query, limit).map(({ stats: _stats, ...hit }) => hit);
-      assert.deepEqual(actual, hits, `${JSON.stringify(query)} limit ${limit}`);
-      if (hits.length > 0) nonEmpty++;
+  /** The kits the built-in routines replaced at 5218f99, as the catalog fixture stores them: `args` is an action's JSON Schema, null when it declared none. */
+  const BASE = JSON.parse(readFileSync(path.join(ROOT, "test", "fixtures", "catalog", "base-5218f99.json"), "utf8")) as {
+    name: string;
+    description: string;
+    uses: string[];
+    actions: { name: string; doc: string; args: { properties?: Record<string, unknown> } | null }[];
+  }[];
+
+  /** A routine that carries a base action's texts: its doc, and its argument names as the keys of an object schema. */
+  function baseRoutine(module: string, action: { name: string; doc: string; args: { properties?: Record<string, unknown> } | null }): Routine {
+    const names = Object.keys(action.args?.properties ?? {});
+    return defineRoutine({ name: `${module}.${action.name}`, description: action.doc, ...(names.length > 0 && { args: z.object(Object.fromEntries(names.map((name) => [name, z.unknown()]))) }) }, async () => undefined);
+  }
+
+  /**
+   * Runs `body` with the catalog as the kits were at 5218f99: every base module's description and uses, and its
+   * routines as the kit declared them (base docs and argument names, in the kit's order). Modules and routines
+   * the kits did not have stay out, so adding or rewording one cannot move the ranking this freezes. The
+   * catalog's fields are readonly in type only: they are replaced in place and restored afterwards.
+   */
+  function withBaseCatalog<T>(body: () => T): T {
+    const patched: { module: BuiltinModule; description: string; uses: readonly string[]; routines: Record<string, Routine> }[] = [];
+    try {
+      for (const module of BUILTIN_MODULES) {
+        const kit = BASE.find((candidate) => candidate.name === module.name);
+        if (kit === undefined) continue;
+        patched.push({ module, description: module.description, uses: module.uses, routines: { ...module.routines } });
+        module.description = kit.description;
+        module.uses = kit.uses;
+        const routines = module.routines as Record<string, Routine>;
+        for (const name of Object.keys(routines)) delete routines[name];
+        for (const action of kit.actions) routines[action.name] = baseRoutine(module.name, action);
+      }
+      return body();
+    } finally {
+      for (const { module, description, uses, routines } of patched) {
+        module.description = description;
+        module.uses = uses;
+        const live = module.routines as Record<string, Routine>;
+        for (const name of Object.keys(live)) delete live[name];
+        Object.assign(live, routines);
+      }
     }
-    assert.ok(nonEmpty >= 60, "the corpus must find things");
+  }
+
+  it("ranks the base routines, over their 5218f99 texts, exactly as the kit search ranked them — module, routine, score, and text of every hit — for every query and limit", () => {
+    assert.deepEqual(KIT_SEARCH.map(({ query, limit }) => [query, limit]), CORPUS.flatMap((query) => [1, 5, 20].map((limit) => [query, limit])), "the committed table covers the corpus");
+    withBaseCatalog(() => {
+      const base = new Builtins({ offer: BASE.map((kit) => kit.name), stats: memoryStats() });
+      let nonEmpty = 0;
+      for (const { query, limit, hits } of KIT_SEARCH) {
+        assert.deepEqual(base.search(query, limit).map(({ stats: _stats, ...hit }) => hit), hits, `${JSON.stringify(query)} limit ${limit}`);
+        if (hits.length > 0) nonEmpty++;
+      }
+      assert.ok(nonEmpty >= 60, "the corpus must find things");
+    });
   });
 
   it("keeps routines in the order their module declares them when scores tie", () => {
