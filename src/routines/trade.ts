@@ -232,7 +232,7 @@ export const offers = defineRoutine(
   {
     name: "trade.offers",
     description:
-      "Walk to within 2 blocks of the nearest villager or wandering trader within `radius` (default 8), read its offers, and close the window. Returns [{ index, give: [{ item, count }], get: { item, count }, uses, maxUses, disabled }]: `give` is one or two inputs, with the count the merchant charges you now (demand and reputation included), `get` is what you receive, and `disabled` is true when the offer is sold out. Fails when there is no merchant within `radius`, or the nearest opens no window (a nitwit, a baby, or a villager without a profession).",
+      "Walk to within 2 blocks of the nearest villager or wandering trader within `radius` (default 8), read its offers, and close the window. Returns [{ index, give: [{ item, count }], get: { item, count }, uses, maxUses, disabled }]: `give` is one or two inputs, with the count the merchant charges you now (demand and reputation included), `get` is what you receive, and `disabled` is true when the offer is sold out or switched off by the merchant. Fails when there is no merchant within `radius`, or the nearest opens no window (a nitwit, a baby, or a villager without a profession).",
     args: z.object({ radius: z.number().positive().default(8) }),
     returns: z.array(Offer),
   },
