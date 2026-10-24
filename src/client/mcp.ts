@@ -1,11 +1,13 @@
 // Serves one body's API as MCP tools over stdio. The body endpoint is re-read per call, so body restarts are fine.
 //
 // The default `core` tool set is what an agent needs to drive a body through runs: observe,
-// run, stop, wait, events, and the references. Everything else (notes, status, chat, wiki
-// management) is a ctx member, so `core` leaves those tools out; `full` serves them
-// as tools too. Tools for optional features exist only while the body offers the feature, so an
-// agent does not learn about features its body lacks. `toolPlan` derives the gated tool set from
-// the capability table; the same function is what the capability test turns against every feature.
+// run, stop, wait, events, chat, and the references. Chat is core even though a run's ctx has
+// bot.chat: that member needs a run, a run needs the slot, and speech must not wait — send_chat
+// speaks while another run holds the slot. Everything else (notes, status, wiki management) is
+// a ctx member, so `core` leaves those tools out; `full` serves them as tools too. Tools for
+// optional features exist only while the body offers the feature, so an agent does not learn
+// about features its body lacks. `toolPlan` derives the gated tool set from the capability
+// table; the same function is what the capability test turns against every feature.
 import { McpServer, type RegisteredTool } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
@@ -259,13 +261,31 @@ export async function serveMcp(bodyName: string, toolSet: ToolSet): Promise<void
     ({ since }) => call(async (c) => json(await c.events(since))),
   );
 
-  const sendChat = server.registerTool(
+  server.registerTool(
     "send_chat",
     {
-      description: "Send a public chat message (or a command such as /msg) as the player.",
-      inputSchema: { message: ChatInput.shape.message },
+      description:
+        "Speak as the player: a public chat `message`, or a whisper to one player by passing `to`. Works while a run is in progress: unlike run_program and call_routine, it never waits for the run slot. A `message` that starts with / is sent as a command. Whispering a player who is not online still answers sent; the server's 'No player was found' reply arrives as a system event (see get_events, wait_for).",
+      inputSchema: {
+        message: ChatInput.shape.message.describe("What to say, 1-256 characters. A leading / sends it as a command, e.g. /time set day."),
+        to: z.string().optional().describe("A player's name (1-16 of letters, digits, and _): whisper so only that player sees the message, sent as /msg. Omit to speak publicly."),
+      },
     },
-    ({ message }) => call(async (c) => json(await c.chat(message))),
+    ({ message, to }) =>
+      call(async (c) => {
+        if (to === undefined) return json(await c.chat(message));
+        // The whisper is composed here, on the client side: the body's POST /chat and ChatInput stay as they are.
+        if (!/^[A-Za-z0-9_]{1,16}$/.test(to)) {
+          throw new Error(`to must be a Minecraft player name: 1-16 of letters, digits, and _, e.g. "ana_1" (got ${JSON.stringify(to)})`);
+        }
+        const prefix = `/msg ${to} `;
+        if (prefix.length + message.length > 256) {
+          throw new Error(
+            `"${prefix}" is ${prefix.length} characters, so with Minecraft's 256-character chat limit the longest message you can whisper to ${to} is ${256 - prefix.length} characters; this message is ${message.length}. Nothing was sent.`,
+          );
+        }
+        return json(await c.chat(prefix + message));
+      }),
   );
 
   server.registerTool(
@@ -477,8 +497,10 @@ export async function serveMcp(bodyName: string, toolSet: ToolSet): Promise<void
   }
 
   for (const tool of [listBuiltins, builtinDocs, builtinSearch, builtinSource, wikiSearch, wikiRead, wikiList, addLesson, callRoutine, bindRoutine, listRoutines, routineSave, routineSource, routineVersions, routineRevert, unbindRoutine]) tool.disable();
-  // Ungated tools outside the core set: a run's context has notes, status(), and bot.chat.
-  if (toolSet !== "full") for (const tool of [status, notesList, notesSet, notesDelete, sendChat]) tool.disable();
+  // Ungated tools outside the core set: a run's context has notes and status(). Chat is core even
+  // though ctx has bot.chat: that member needs the run slot, and send_chat is the one way to speak
+  // while another run holds it (POST /chat bypasses the slot, so speech never waits).
+  if (toolSet !== "full") for (const tool of [status, notesList, notesSet, notesDelete]) tool.disable();
   await sync();
   await server.connect(new StdioServerTransport());
 }
