@@ -261,13 +261,19 @@ export async function serveMcp(bodyName: string, toolSet: ToolSet): Promise<void
     ({ since }) => call(async (c) => json(await c.events(since))),
   );
 
+  // send_chat's length limit is read from the schema the body itself validates chat with (ChatInput,
+  // POST /chat), so the whisper check, its error text, and the descriptions below cannot drift from it.
+  const CHAT_LIMIT = ChatInput.shape.message.maxLength!;
+
   server.registerTool(
     "send_chat",
     {
       description:
-        "Speak as the player: a public chat `message`, or a whisper to one player by passing `to`. Works while a run is in progress: unlike run_program and call_routine, it never waits for the run slot. A `message` that starts with / is sent as a command. Whispering a player who is not online still answers sent; the server's 'No player was found' reply arrives as a system event (see get_events, wait_for).",
+        "Speak as the player: a public chat `message`, or a whisper to one player by passing `to`. Works while a run is in progress: unlike run_program and call_routine, it never waits for the run slot. Without `to` a `message` that starts with / is sent as a command; with `to` the whisper is `/msg <to> <message>`, so a leading / is whispered literally and runs no command. Whispering a player who is not online still answers sent; the server's 'No player was found' reply arrives as a system event (see get_events, wait_for).",
       inputSchema: {
-        message: ChatInput.shape.message.describe("What to say, 1-256 characters. A leading / sends it as a command, e.g. /time set day."),
+        message: ChatInput.shape.message.describe(
+          `What to say: 1-${CHAT_LIMIT} characters without \`to\`, and a leading / sends it as a command, e.g. /time set day. With \`to\` the text is whispered as-is — a leading / stays text and runs no command — and must leave room for \`/msg <to> \`: at most ${CHAT_LIMIT} minus that prefix's length, e.g. ${CHAT_LIMIT - 12} characters for a 6-character name.`,
+        ),
         to: z.string().optional().describe("A player's name (1-16 of letters, digits, and _): whisper so only that player sees the message, sent as /msg. Omit to speak publicly."),
       },
     },
@@ -279,9 +285,9 @@ export async function serveMcp(bodyName: string, toolSet: ToolSet): Promise<void
           throw new Error(`to must be a Minecraft player name: 1-16 of letters, digits, and _, e.g. "ana_1" (got ${JSON.stringify(to)})`);
         }
         const prefix = `/msg ${to} `;
-        if (prefix.length + message.length > 256) {
+        if (prefix.length + message.length > CHAT_LIMIT) {
           throw new Error(
-            `"${prefix}" is ${prefix.length} characters, so with Minecraft's 256-character chat limit the longest message you can whisper to ${to} is ${256 - prefix.length} characters; this message is ${message.length}. Nothing was sent.`,
+            `"${prefix}" is ${prefix.length} characters, so with Minecraft's ${CHAT_LIMIT}-character chat limit the longest message you can whisper to ${to} is ${CHAT_LIMIT - prefix.length} characters; this message is ${message.length}. Nothing was sent.`,
           );
         }
         return json(await c.chat(prefix + message));
