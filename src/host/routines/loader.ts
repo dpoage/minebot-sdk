@@ -296,6 +296,7 @@ function explainReturn(err: unknown, url: string): unknown {
 /**
  * What `RoutineLoader.run` says of a source with a static `import` declaration inside a function or
  * block, which only the module's top level may hold. The same scope rule as `explainReturn`: only the
+ * run's own parse error, whose stack Node opens with the run's URL. The parser blames an `export`
  * inside a function with the same message, so the line it names is read before anything is explained:
  * only a line that, past its leading whitespace, begins the `import` declaration itself (the keyword,
  * then whitespace, `{`, `*`, or a quote — not `import(` or `import.meta`) is explained; an `import`
