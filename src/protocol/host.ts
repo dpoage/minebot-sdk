@@ -50,16 +50,55 @@ export function restartedError(cause: string): string {
 /** The part of a reflex run's logs kept in its `reflex_finished` event, whether the host or the supervisor pushes it. */
 export const MAX_EVENT_LOGS = 2000;
 
+/** How long the error and result previews of a `program_finished` event are: a longer text is cut to this many characters, a cut marked with a trailing '…'. */
+export const PREVIEW_CHARS = 200;
+
+/** `text` cut to PREVIEW_CHARS characters, a cut marked with a trailing '…' (so a preview is at most PREVIEW_CHARS + 1 characters). */
+export function cutPreview(text: string): string {
+  return text.length <= PREVIEW_CHARS ? text : `${text.slice(0, PREVIEW_CHARS)}…`;
+}
+
+/** The first line of what a thrown error says — an Error's `message`, the value itself otherwise — cut to a preview. */
+export function errorPreview(err: unknown): string {
+  const message = err instanceof Error ? err.message : String(err);
+  return cutPreview(message.split("\n", 1)[0] ?? "");
+}
+
+/** What the host adds to its report of a run's end for the `program_finished` event: the first line of the thrown error's message — not of its formatted error, whose first line can be a source location — and its result as JSON, each cut to a preview. */
+export interface RunPreview {
+  errorLine?: string;
+  resultPreview?: string;
+}
+
+/** The previews of a run's end, from the error the program threw (`thrown`, kept before the runner formatted it) and the result it returned. */
+export function previewOf(end: { status: RunStatus; result?: unknown }, thrown?: unknown): RunPreview {
+  return {
+    ...(end.status === "error" && thrown !== undefined && { errorLine: errorPreview(thrown) }),
+    ...(end.status === "ok" && end.result !== undefined && { resultPreview: cutPreview(JSON.stringify(end.result)) }),
+  };
+}
+
 /** How a program's run or a reflex's firing ended, as far as its finished event tells. */
 export type FinishedEnd = { status: RunStatus; error?: string; logs?: string; durationMs: number };
 
-export type ProgramFinished = { status: RunStatus; durationMs: number };
+export type ProgramFinished = { status: RunStatus; durationMs: number; run: number; call?: string; error?: string; result?: string };
 export type TriggerFinished = { name: string; status: RunStatus; durationMs: number; error?: string; logs?: string };
 export type TriggerDisabled = { name: string; failures: number; reason: string };
 
-/** The data of a `program_finished` event, built by the host that ran the program and by the supervisor that ends it for a dead host. */
-export function programFinished(end: FinishedEnd): ProgramFinished {
-  return { status: end.status, durationMs: end.durationMs };
+/**
+ * The data of a `program_finished` event, built by the supervisor as it records the run's end: how the run ended, its seq
+ * (the id `get_run` takes), and previews of its error and result. `view`'s previews are what the host reported of them;
+ * without them the end's own error string stands in (the ends a dead host or a refused write leave the supervisor with).
+ */
+export function programFinished(end: FinishedEnd, run: number, view: { call?: string } & RunPreview = {}): ProgramFinished {
+  return {
+    status: end.status,
+    durationMs: end.durationMs,
+    run,
+    ...(view.call !== undefined && { call: view.call }),
+    ...(end.error !== undefined && { error: view.errorLine ?? errorPreview(end.error) }),
+    ...(end.status === "ok" && view.resultPreview !== undefined && { result: view.resultPreview }),
+  };
 }
 
 /** The data of a `reflex_finished` event, built by the host that ran the firing and by the supervisor that ends it for a dead host. */
@@ -134,15 +173,18 @@ export type FromHost =
   /**
    * A program is about to run; user code starts only after the matching `run_ack`. `requestId` is
    * the forwarded request the run answers (/run, /call); `trigger` is the definition a reflex's run fires, which has no request.
+   * `call` names the call the run is (an action's or a built-in's name), for the event and record of its end.
    */
-  | { kind: "run_started"; runId: number; code: string; timeoutMs: number; extra: object; requestId?: number; trigger?: FiringOf }
+  | { kind: "run_started"; runId: number; code: string; timeoutMs: number; extra: object; requestId?: number; trigger?: FiringOf; call?: string }
   /**
    * The run ended; the run settles once the matching `run_ack` arrives. `result: null` means it threw
    * before producing one (not connected, busy): the run is over and leaves no final history line.
    * `hung` means the program was aborted and has not settled within the grace: `result` holds what
    * the run had, the supervisor kills the host and restarts it, and no `run_ack` is sent.
+   * The `RunPreview` fields are what the `program_finished` event says of the error the program
+   * threw and the result it returned; the supervisor holds only the run's formatted error itself.
    */
-  | { kind: "run_finished"; runId: number; result: RunResult | null; hung?: true }
+  | ({ kind: "run_finished"; runId: number; result: RunResult | null; hung?: true } & RunPreview)
   /**
    * A preempting reflex firing is waiting on the run `runId` (recorded, with its code executing)
    * and the host is about to abort it; sent, and written, before the abort. The supervisor handles

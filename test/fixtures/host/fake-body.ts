@@ -1,11 +1,15 @@
 // A whole body for tests that need a player but no Minecraft server: the supervisor's HostProcess
 // (with its event log and program history, and a short kill grace) forking fake-bot-host.ts, the
-// real bot host over a fake player. Requests go through `forward`, as the HTTP transport's do.
+// real bot host over a fake player. Requests go through `forward`, as the HTTP transport's do, and
+// the body's own API is served over real HTTP (the daemon's own routes and everything else forwarded
+// to the host), so clients — the CLI, the MCP server — can be pointed at `url` with `token`.
 // The module's own scratch directory holds everything a body writes; `removeScratch` deletes it.
 import assert from "node:assert/strict";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import type { AddressInfo } from "node:net";
+import type { Server } from "node:http";
 import type { EventLog } from "../../../src/body/events.ts";
 import type { HostProcess } from "../../../src/body/host-process.ts";
 import type { HostInit } from "../../../src/protocol/host.ts";
@@ -20,6 +24,8 @@ process.env.TMPDIR = ROOT;
 const { EventLog: Events } = await import("../../../src/body/events.ts");
 const { HostProcess: Host } = await import("../../../src/body/host-process.ts");
 const { ProgramHistory } = await import("../../../src/body/history.ts");
+const { supervisorRoutes } = await import("../../../src/body/daemon.ts");
+const { serveBodyApi } = await import("../../../src/body/http.ts");
 
 /** The kill grace of every fake body's supervisor: a program that does not settle this long after its abort ends with its host. */
 export const GRACE_MS = 500;
@@ -34,6 +40,8 @@ export interface FakeBodyOptions {
   init?: Partial<HostInit>;
   /** Event types whose echo from the event log never reaches the host's triggers. */
   dropEchoes?: string[];
+  /** Whether the body writes a program history file (default: yes). Runs are numbered and kept for get_run either way. */
+  history?: boolean;
 }
 
 export class FakeBody {
@@ -41,12 +49,19 @@ export class FakeBody {
   readonly events: EventLog;
   readonly stateDir: string;
   readonly historyFile: string;
+  /** The body's API over HTTP, as a client reaches it. */
+  readonly url: string;
+  readonly token: string;
+  readonly #server: Server;
 
-  constructor(host: HostProcess, events: EventLog, stateDir: string, historyFile: string) {
+  constructor(host: HostProcess, events: EventLog, stateDir: string, historyFile: string, url: string, token: string, server: Server) {
     this.host = host;
     this.events = events;
     this.stateDir = stateDir;
     this.historyFile = historyFile;
+    this.url = url;
+    this.token = token;
+    this.#server = server;
   }
 
   get routinesDir(): string {
@@ -63,6 +78,12 @@ export class FakeBody {
     const answer = await this.request(method, url, json);
     assert.equal(answer.status, 200, `${method} ${url} answered ${answer.status} ${JSON.stringify(answer.body)}`);
     return answer.body;
+  }
+
+  /** One request over HTTP, as a client sends it: the supervisor's routes answer, the rest is forwarded to the host. */
+  async http(method: string, url: string): Promise<{ status: number; body: unknown }> {
+    const response = await fetch(`${this.url}${url}`, { method, headers: { authorization: `Bearer ${this.token}` } });
+    return { status: response.status, body: await response.json() };
   }
 
   /** Writes routine modules straight into the library directory, without a save. */
@@ -94,6 +115,10 @@ export class FakeBody {
 
   async close(): Promise<void> {
     await this.host.close();
+    this.#server.closeAllConnections();
+    const closed = Promise.withResolvers<void>();
+    this.#server.close(() => closed.resolve());
+    await closed.promise;
   }
 }
 
@@ -127,12 +152,32 @@ export async function startFakeBody(options: FakeBodyOptions = {}): Promise<Fake
     applyMilestones: true,
     ...(options.dropEchoes && { dropEchoes: options.dropEchoes }),
   } as HostInit;
-  const history = new ProgramHistory({ file: historyFile });
+  const history = new ProgramHistory(options.history === false ? {} : { file: historyFile });
   const host = new Host({ init, events, history, entry: ENTRY, graceMs: GRACE_MS });
-  await host.start();
-  await history.start();
+  const token = `${name}-token`;
+  const server = serveBodyApi({
+    token,
+    routes: supervisorRoutes({ events, host }),
+    forward: (request) => host.forward(request),
+    health: () => ({ name, connected: host.connected }),
+  });
+  // Programs hold their request open for their whole duration.
+  server.requestTimeout = 0;
+  const listening = Promise.withResolvers<void>();
+  server.once("error", listening.reject);
+  server.listen(0, "127.0.0.1", listening.resolve);
+  try {
+    await listening.promise;
+    await host.start();
+    await history.start();
+  } catch (err) {
+    host.close().catch(() => {});
+    server.close();
+    throw err;
+  }
   host.join();
-  const body = new FakeBody(host, events, stateDir, historyFile);
+  const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  const body = new FakeBody(host, events, stateDir, historyFile, url, token, server);
   await body.waitFor("connected");
   return body;
 }

@@ -3,7 +3,7 @@
 // seq, the reporter that holds the host's one run slot and has the supervisor record each program
 // run before its code starts, and the runner view through which the reflex scheduler sees that slot.
 import { DEFAULT_TIMEOUT_MS, type BodyEvent, type RunResult } from "../protocol/index.ts";
-import type { EventSink, FiringOf, FromHost, TriggerDisabled, TriggerFinished } from "../protocol/host.ts";
+import type { EventSink, FiringOf, FromHost, RunPreview, TriggerDisabled, TriggerFinished } from "../protocol/host.ts";
 import { BusyError, type RunOutcome } from "../program/runner.ts";
 import type { RunRecorder } from "./body.ts";
 
@@ -157,7 +157,7 @@ export class RunReporter implements RunRecorder {
     }
   }
 
-  async record(run: { code: string; timeoutMs?: number; extra?: object; requestId?: number; trigger?: FiringOf }, execute: () => Promise<RunOutcome>): Promise<RunResult> {
+  async record(run: { code: string; timeoutMs?: number; extra?: object; requestId?: number; trigger?: FiringOf; call?: string }, execute: () => Promise<RunOutcome & RunPreview>): Promise<RunResult> {
     // Its arrival: the run takes the slot, or is refused before the supervisor hears of it.
     if (this.#slot.state !== "idle") throw new BusyError();
     const runId = this.#nextId++;
@@ -172,6 +172,7 @@ export class RunReporter implements RunRecorder {
         extra: run.extra ?? {},
         ...(run.requestId !== undefined && { requestId: run.requestId }),
         ...(run.trigger && { trigger: run.trigger }),
+        ...(run.call !== undefined && { call: run.call }),
       });
     } catch (err) {
       // The history refused its start: its code never starts, and what was pending for it goes with it.
@@ -241,8 +242,8 @@ export class RunReporter implements RunRecorder {
    * Either way the supervisor now holds the end, and `owes` is told what the run returned or threw.
    * A hung run is reported as such and never settles: the supervisor kills this host instead of acking.
    */
-  async #finish(runId: number, running: Promise<RunOutcome>, owes: (end: object) => void): Promise<RunResult> {
-    let outcome: RunOutcome;
+  async #finish(runId: number, running: Promise<RunOutcome & RunPreview>, owes: (end: object) => void): Promise<RunResult> {
+    let outcome: RunOutcome & RunPreview;
     try {
       outcome = await running;
     } catch (err) {
@@ -251,13 +252,13 @@ export class RunReporter implements RunRecorder {
       await this.#acked(runId, { kind: "run_finished", runId, result: null });
       throw err;
     }
-    const { hung, ...result } = outcome;
+    const { hung, errorLine, resultPreview, ...result } = outcome;
     // The end of its grace with the program unsettled (hung): the runner is free, but the supervisor kills this host on the report
     // below, so no waiting firing is woken; a run that arrives meanwhile has its start reach the supervisor behind that report.
     if (hung) this.#slot = IDLE;
     else this.#release();
     try {
-      await this.#acked(runId, { kind: "run_finished", runId, result, ...(hung && { hung }) });
+      await this.#acked(runId, { kind: "run_finished", runId, result, ...(hung && { hung }), ...(errorLine !== undefined && { errorLine }), ...(resultPreview !== undefined && { resultPreview }) });
     } catch (err) {
       owes(err as object);
       throw err;

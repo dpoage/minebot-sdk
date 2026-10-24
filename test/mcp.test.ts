@@ -12,7 +12,7 @@ import type { BodyFeatures } from "../src/protocol/index.ts";
 const EVERYTHING: BodyFeatures = { wiki: "write", lessons: true, milestones: true, reflexes: true, routines: true, builtins: ["move"] };
 const CLI = [...process.execArgv, path.join(import.meta.dirname, "..", "src", "cli.ts")];
 
-const CORE = ["api_reference", "bind_routine", "builtin_docs", "call_routine", "get_events", "observe", "run_program", "stop_program", "wait_for"];
+const CORE = ["api_reference", "bind_routine", "builtin_docs", "call_routine", "get_events", "get_run", "observe", "run_program", "stop_program", "wait_for"];
 const ROUTINE_TOOLS = ["bind_routine", "call_routine", "list_routines", "routine_revert", "routine_save", "routine_source", "routine_versions", "unbind_routine"];
 const BUILTIN_TOOLS = ["builtin_docs", "builtin_search", "builtin_source", "list_builtins"];
 const FULL = [
@@ -81,6 +81,32 @@ describe("minebot mcp tool sets", () => {
       for (const args of [[], ["--tools", "full"]]) {
         assert.deepEqual((await tools(none, ...args)).filter((name) => BUILTIN_TOOLS.includes(name)), [], `no built-ins, ${args.join(" ")}`);
         assert.deepEqual((await tools(url, ...args)).filter((name) => BUILTIN_TOOLS.includes(name)), args.length === 0 ? ["builtin_docs"] : BUILTIN_TOOLS, `built-ins, ${args.join(" ")}`);
+      }
+    } finally {
+      server.close();
+    }
+  });
+
+  it("answers get_run with the finished run's record, rendered as a run's answer is", async () => {
+    // A body that serves one finished run under seq 3: an error run, as a detached caller reads it.
+    const record = { seq: 3, startedAt: "t", status: "error", durationMs: 12, error: "Error: nope\n<frames>", logs: "working", call: { name: "act", args: {} } };
+    const server = createServer((req, res) => {
+      res.setHeader("content-type", "application/json");
+      res.end(JSON.stringify(req.url === "/features" ? EVERYTHING : req.url === "/runs/3" ? record : { doc: "the program reference" }));
+    });
+    const { promise, resolve } = Promise.withResolvers<void>();
+    server.listen(0, "127.0.0.1", resolve);
+    await promise;
+    const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    try {
+      const transport = new StdioClientTransport({ command: process.execPath, args: [...CLI, "mcp"], env: { ...process.env, MINEBOT_URL: url } as Record<string, string>, stderr: "ignore" });
+      const client = new Client({ name: "test", version: "0" });
+      await client.connect(transport);
+      try {
+        const answer = await client.callTool({ name: "get_run", arguments: { seq: 3 } });
+        assert.deepEqual(answer.content, [{ type: "text", text: `status: error (12 ms)\n\nlogs:\nworking\n\nerror:\nError: nope\n<frames>` }]);
+      } finally {
+        await client.close();
       }
     } finally {
       server.close();

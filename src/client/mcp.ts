@@ -18,6 +18,7 @@ import {
   CallInput,
   ChatInput,
   DEFAULT_TIMEOUT_MS,
+  KEPT_RUNS,
   type BodyFeatures,
   LessonInput,
   MAX_TIMEOUT_MS,
@@ -45,7 +46,7 @@ export const TOOL_SETS = ["core", "full"] as const;
 export type ToolSet = (typeof TOOL_SETS)[number];
 
 /** The tools of the core set. A run reaches everything else through its context (`ctx`). */
-const CORE_TOOLS: Readonly<Record<string, true>> = { observe: true, run_program: true, stop_program: true, wait_for: true, get_events: true, api_reference: true, builtin_docs: true, call_routine: true, bind_routine: true };
+const CORE_TOOLS: Readonly<Record<string, true>> = { observe: true, run_program: true, stop_program: true, wait_for: true, get_events: true, get_run: true, api_reference: true, builtin_docs: true, call_routine: true, bind_routine: true };
 
 /** Which kinds of name a call takes: an action's (the body has routines) and a built-in's (it has built-ins). */
 export type CallKinds = Pick<Record<Capability, boolean>, "routines" | "builtins">;
@@ -257,6 +258,17 @@ export async function serveMcp(bodyName: string, toolSet: ToolSet): Promise<void
       },
     },
     ({ since }) => call(async (c) => json(await c.events(since))),
+  );
+
+  server.registerTool(
+    "get_run",
+    {
+      description: `What a run ended with — status, logs, and error or result — after the fact: the run whose program_finished event carried this seq, or the most recent finished run without one. Answers like run_program. The body keeps the last ${KEPT_RUNS} finished runs; a detached caller (a timeout, a killed CLI) reads its run's outcome here instead of re-running it.`,
+      inputSchema: {
+        seq: z.number().int().positive().optional().describe("The run's seq, from its program_finished event or a minebot runs listing. Omit for the most recent finished run."),
+      },
+    },
+    ({ seq }) => call(async (c) => formatRun(await c.runs(seq))),
   );
 
   const sendChat = server.registerTool(
