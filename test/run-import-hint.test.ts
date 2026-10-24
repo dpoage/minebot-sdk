@@ -2,9 +2,11 @@
 // function body — is explained where the loader explains a top-level `return` (explainImport, beside
 // explainReturn). The message names the parser's line, says to move the import above `export default`,
 // and shows `const <name> = await import("<specifier>")` as an example for inside an async function —
-// an example, not a drop-in: a callback that is not async cannot hold `await`. Only the run's own
-// parse error: a library module's parse error, a SyntaxError the run throws, and an `export` inside a
-// function (the parser blames it with the same message) are left as the parser said them.
+// an example, not a drop-in: a callback that is not async cannot hold `await`. Only a line that,
+// past its leading whitespace, begins the import declaration itself is explained — an `import` that
+// follows other code on its line, and every other parse error (a library module's, a SyntaxError
+// the run throws, an `export` inside a function, which the parser blames the same way) is left as
+// the parser said it.
 import assert from "node:assert/strict";
 import { after, describe, it } from "node:test";
 import type { RunResult } from "../src/protocol/index.ts";
@@ -44,6 +46,8 @@ describe("a run with a static import inside a function", () => {
         [inside('import "node:os";'), /line 2[\s\S]*const mod = await import\("node:os"\)/],
         // a named list that runs over lines still gives up its specifier
         ["export default async (ctx) => {\n  import {\n    a,\n    b as c,\n  } from \"vec3\";\n  return 1;\n};\n", /line 2[\s\S]*const mod = await import\("vec3"\)/],
+        // the keyword glued to its clause, no whitespace anywhere, still gives up its specifier
+        [inside('import{Vec3}from"vec3";'), /line 2[\s\S]*const mod = await import\("vec3"\)/],
       ] as const;
       for (const [code, example] of cases) {
         const answer = runOf(await run(body, code));
@@ -67,6 +71,14 @@ describe("a run with a static import inside a function", () => {
       body.writeRoutines({ badlib: "const f = () => {\n  import * as x from 'vec3';\n};\nexport default f;\n" });
       const cases = {
         "an export statement inside a function": ["export default () => {\n  export const x = 1;\n  return x;\n};\n", /SyntaxError: 'import', and 'export' cannot be used outside of module code/],
+        "an export whose string only says import": ["export default async (ctx) => {\n  export const msg = \"time to import supplies\";\n  return 1;\n};\n", /SyntaxError: 'import', and 'export' cannot be used outside of module code/],
+        "an export whose comment only says import": ["export default async (ctx) => {\n  export const x = 1; // import later\n  return 1;\n};\n", /SyntaxError: 'import', and 'export' cannot be used outside of module code/],
+        "an export beside a dynamic import call": ["export default async (ctx) => {\n  export const m = await import (\"vec3\");\n  return 1;\n};\n", /SyntaxError: 'import', and 'export' cannot be used outside of module code/],
+        "an export whose string only holds an import": ["export default async (ctx) => {\n  export const s = \"import x from 'y'\";\n  return 1;\n};\n", /SyntaxError: 'import', and 'export' cannot be used outside of module code/],
+        "an export whose comment says import, with from only on a later line": [
+          "export default async (ctx) => {\n  export const x = 1; // import the rest\n  const y = 2; // from \"vec3\"\n  return 1;\n};\n",
+          /SyntaxError: 'import', and 'export' cannot be used outside of module code/,
+        ],
         "a different syntax error": ["export default (;", /SyntaxError: Expression expected/],
         "a SyntaxError the run throws, with the parser's message": [
           "throw new SyntaxError(\"'import', and 'export' cannot be used outside of module code\");\n",
