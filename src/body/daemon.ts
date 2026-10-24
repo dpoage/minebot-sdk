@@ -11,7 +11,7 @@ import type { ServerAuth } from "../host/connection.ts";
 import type { MilestoneSet } from "../milestones/milestones.ts";
 import { MC_VERSION } from "../mc/version.ts";
 import { endpointFile, EventsQuery, RUNTIME_DIR, WaitInput, type Endpoint, type WikiMode } from "../protocol/index.ts";
-import { parse } from "../protocol/request.ts";
+import { HttpError, parse } from "../protocol/request.ts";
 import { EventLog } from "./events.ts";
 import { HostProcess } from "./host-process.ts";
 import { ProgramHistory } from "./history.ts";
@@ -92,42 +92,14 @@ export async function startDaemon(options: DaemonOptions): Promise<{ endpoint: E
   }
 
   const token = given ?? randomBytes(32).toString("hex");
-  const routes: Route[] = [
-    {
-      method: "GET",
-      path: "/events",
-      handler: async ({ url }) => {
-        const query = parse(EventsQuery, Object.fromEntries(url.searchParams));
-        return events.since(query.since, query.limit);
-      },
-    },
-    {
-      method: "POST",
-      path: "/wait",
-      handler: async ({ read, res }) => {
-        const query = parse(WaitInput, await read());
-        // A client that hangs up must not hold a waiter for the rest of the timeout.
-        const abandoned = new AbortController();
-        res.once("close", () => abandoned.abort());
-        return events.wait({
-          types: query.types,
-          from: query.from,
-          match: query.match === undefined ? undefined : new RegExp(query.match, "i"),
-          since: query.since,
-          timeoutMs: query.timeoutMs,
-          signal: abandoned.signal,
-        });
-      },
-    },
-    { method: "POST", path: "/stop", handler: () => host.stop() },
-  ];
 
   const server = serveBodyApi({
     token,
-    routes,
+    routes: supervisorRoutes({ events, host }),
     forward: (request) => host.forward(request),
     health: () => ({ name: options.name, connected: host.connected }),
   });
+
   // Programs and waits hold the request open for their whole duration.
   server.requestTimeout = 0;
 
@@ -169,4 +141,54 @@ export async function startDaemon(options: DaemonOptions): Promise<{ endpoint: E
       await rm(file, { force: true });
     },
   };
+}
+
+/**
+ * The routes the supervisor answers itself, over its event log and its kept finished runs: the event
+ * log, waits, stop, and a finished run's record. Every other request the host answers.
+ */
+export function supervisorRoutes({ events, host }: { events: EventLog; host: HostProcess }): Route[] {
+  return [
+    {
+      method: "GET",
+      path: "/events",
+      handler: async ({ url }) => {
+        const query = parse(EventsQuery, Object.fromEntries(url.searchParams));
+        return events.since(query.since, query.limit);
+      },
+    },
+    {
+      method: "POST",
+      path: "/wait",
+      handler: async ({ read, res }) => {
+        const query = parse(WaitInput, await read());
+        // A client that hangs up must not hold a waiter for the rest of the timeout.
+        const abandoned = new AbortController();
+        res.once("close", () => abandoned.abort());
+        return events.wait({
+          types: query.types,
+          from: query.from,
+          match: query.match === undefined ? undefined : new RegExp(query.match, "i"),
+          since: query.since,
+          timeoutMs: query.timeoutMs,
+          signal: abandoned.signal,
+        });
+      },
+    },
+    { method: "POST", path: "/stop", handler: () => host.stop() },
+    {
+      // A finished run's record: the one <seq> names (the run field of its program_finished event), or the most recent without one.
+      method: "GET",
+      path: "/runs",
+      pattern: /^\/runs(?:\/.*)?$/,
+      handler: ({ url }) => {
+        const which = url.pathname.slice("/runs".length + 1);
+        try {
+          return host.keptRun(which === "" ? undefined : Number(which));
+        } catch (err) {
+          throw new HttpError(404, err instanceof Error ? err.message : String(err));
+        }
+      },
+    },
+  ];
 }

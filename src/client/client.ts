@@ -19,6 +19,7 @@ import {
   type Observation,
   type PageSummary,
   type RevertRoutineResponse,
+  type RunRecord,
   type RoutinesResponse,
   type RoutineSourceResponse,
   type RoutineVersionsResponse,
@@ -117,6 +118,16 @@ export class BodyClient {
 
   events(since = 0, limit = 200): Promise<EventsResponse> {
     return this.#request("GET", `/events?since=${since}&limit=${limit}`);
+  }
+
+  /**
+   * A finished run's record (its seq and, for a call, its name and args; then status, logs, error or
+   * result): the one `seq` names — the `run` field of its `program_finished` event, not the event's
+   * own seq — or the most recent finished run when `seq` is omitted. The body keeps the last
+   * `KEPT_RUNS` finished runs.
+   */
+  runs(seq?: number): Promise<RunRecord> {
+    return this.#request("GET", `/runs${seq === undefined ? "" : `/${seq}`}`);
   }
 
   /** Blocks until a matching event arrives or the wait times out. */

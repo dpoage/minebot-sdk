@@ -7,7 +7,7 @@ import { ProgramRunner, type RunOutcome } from "../program/runner.ts";
 import type { Wiki } from "../wiki/wiki.ts";
 import { WikiAccess, wikiView } from "../wiki/access.ts";
 import { Connection, type ServerAuth } from "./connection.ts";
-import { programFinished, type EventSink, type FiringOf, type LostFiring, type TriggerDisabled, type TriggerFinished } from "../protocol/host.ts";
+import { previewOf, type EventSink, type FiringOf, type LostFiring, type RunPreview, type TriggerDisabled, type TriggerFinished } from "../protocol/host.ts";
 import { invokeRoutine } from "../routine/invoke.ts";
 import type { RoutineContext } from "../routine/public.ts";
 import { routineContext, type GlobalsDeps } from "./globals.ts";
@@ -60,12 +60,13 @@ export interface BodyOptions {
 export interface RunRecorder {
   /**
    * Records the start of `execute`, runs it once the history has it, and records its end. A run that
-   * throws leaves no end; a start or end the history cannot write fails the run. `requestId` is the
-   * API request the run answers and `trigger` the definition it fires, so the supervisor can end the run if this host is killed.
+   * throws leaves no end; a start or end the history cannot write fails the run. `requestId` is
+   * the API request the run answers and `trigger` the definition it fires, so the supervisor can end the run if this host is killed.
+   * A call's name rides its `extra.call`, the same field its history line holds.
    * The run takes the body's one run slot at this call and holds it until its end: a run recorded while the slot is taken
    * (another run's start not yet acked, its code running, or its abort's grace) is refused with `BusyError` at once, and is never reported.
    */
-  record(run: { code: string; timeoutMs?: number; extra?: object; requestId?: number; trigger?: FiringOf }, execute: () => Promise<RunOutcome>): Promise<RunResult>;
+  record(run: { code: string; timeoutMs?: number; extra?: object; requestId?: number; trigger?: FiringOf }, execute: () => Promise<RunOutcome & RunPreview>): Promise<RunResult>;
   /** Whether a run holds the slot: `record` would refuse a run now. */
   readonly busy: boolean;
   /** Calls `listener` each time the slot frees: a run's end, or a start the history refused. */
@@ -212,25 +213,41 @@ export class Body {
   }
 
   /** One call as a run: `invoke` runs inside it with the context of the run, and an error reports the frames inside `sourceDir`. */
-  async #called(invoke: (ctx: RoutineContext) => Promise<unknown>, sourceDir: string, timeoutMs?: number): Promise<RunOutcome> {
+  async #called(invoke: (ctx: RoutineContext) => Promise<unknown>, sourceDir: string, timeoutMs?: number): Promise<RunOutcome & RunPreview> {
     const environment = this.#environment();
     // Not connected answers as a program does, not as a run that failed.
     this.#connection.requireBot();
-    const result = await this.runner.call(async (scope) => invoke(routineContext(scope, environment)), { timeoutMs, sourceDir });
-    return this.#ended(result);
+    // The error the program threw, kept before the runner formats it: its message's first line is what the run's finished event previews.
+    let thrown: unknown;
+    const result = await this.runner.call(
+      async (scope) => {
+        try {
+          return await invoke(routineContext(scope, environment));
+        } catch (err) {
+          thrown ??= err;
+          throw err;
+        }
+      },
+      { timeoutMs, sourceDir },
+    );
+    return this.#ended(result, thrown);
   }
 
-  /** What a program's or a call's end does for the body: the event, the stall record. The reflexes waiting for the run slot hear of its end from the recorder. */
-  #ended(result: RunOutcome): RunOutcome {
+  /**
+   * What a program's or a call's end does for the body: the previews its event carries, and the stall record. The
+   * reflexes waiting for the run slot hear of its end from the recorder; the `program_finished` event is the
+   * supervisor's to push, as it records the end.
+   */
+  #ended(result: RunOutcome, thrown?: unknown): RunOutcome & RunPreview {
     // A hung run ends with its host: the supervisor, which kills it, logs the end of the program.
     if (result.hung) return result;
-    this.events.push("program_finished", programFinished(result));
     const bot = this.#connection.bot;
-    if (!bot || !this.#connection.spawned) return result;
-    const inventory: Record<string, number> = {};
-    for (const item of bot.inventory.items()) inventory[item.name] = (inventory[item.name] ?? 0) + item.count;
-    this.#stall.record({ position: bot.entity.position.floored().toString(), inventory });
-    return result;
+    if (bot && this.#connection.spawned) {
+      const inventory: Record<string, number> = {};
+      for (const item of bot.inventory.items()) inventory[item.name] = (inventory[item.name] ?? 0) + item.count;
+      this.#stall.record({ position: bot.entity.position.floored().toString(), inventory });
+    }
+    return { ...result, ...previewOf(result, thrown) };
   }
 
   /** Records what a reflex being bound will run: its `when` expression (the routine's source is the library's). */

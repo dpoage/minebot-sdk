@@ -265,6 +265,12 @@ async function main(): Promise<number> {
     case "events":
       print(await (await BodyClient.connect(opts.bot)).events(Number(opts.since ?? 0)));
       return 0;
+    case "runs": {
+      const [which] = rest;
+      if (which !== undefined && !/^\d+$/.test(which)) throw new Error(`runs takes a run's seq (a number), not "${which}"`);
+      const client = await BodyClient.connect(opts.bot);
+      return printRun(await client.runs(which === undefined ? undefined : Number(which)));
+    }
     case "wait": {
       const client = await BodyClient.connect(opts.bot);
       const waited = await client.wait({

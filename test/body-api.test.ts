@@ -131,6 +131,8 @@ const ROUTES = [
   "PUT /notes/:key",
   "DELETE /notes/:key",
   "GET /events",
+  "GET /runs",
+  "GET /runs/:seq",
   "POST /run",
   "POST /wait",
   "POST /stop",
@@ -161,7 +163,8 @@ const reached = new Set<string>();
 
 function routeKey(method: string, url: string): string {
   const pathname = new URL(url, "http://localhost").pathname;
-  return `${method} ${pathname.startsWith("/notes/") ? "/notes/:key" : pathname}`;
+  const keyed = pathname.startsWith("/notes/") ? "/notes/:key" : pathname.startsWith("/runs/") ? "/runs/:seq" : pathname;
+  return `${method} ${keyed}`;
 }
 
 interface Call {
@@ -965,6 +968,20 @@ describe("body API: routine calls on a body that is not connected", () => {
     await body.call("GET", "/bindings", { body: { bindings: [{ kind: "action", name: "act", routine: "act" }] } });
     await body.call("POST", "/call", { status: 503, body: NOT_CONNECTED }, { json: { name: "act", args: { a: 1 } } });
     await body.call("POST", "/run", { status: 503, body: NOT_CONNECTED }, { json: { code: "export default 1;" } });
+  });
+});
+
+describe("body API: finished runs", () => {
+  let body: Running;
+
+  before(async () => {
+    body = await startBody();
+  });
+  after(() => body.close());
+
+  it("answers GET /runs and GET /runs/<seq> with the 404 that says no run has finished yet, before any run finished", async () => {
+    await body.call("GET", "/runs", { status: 404, body: { error: "no run has finished yet" } });
+    await body.call("GET", "/runs/1", { status: 404, body: { error: "no run has finished yet" } });
   });
 });
 

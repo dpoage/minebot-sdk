@@ -5,7 +5,7 @@
 import { fork, type ChildProcess } from "node:child_process";
 import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
-import { MAX_TIMEOUT_MS, type RunResult, type RunStatus } from "../protocol/index.ts";
+import { KEPT_RUNS, MAX_TIMEOUT_MS, type RunRecord, type RunResult, type RunStatus } from "../protocol/index.ts";
 import {
   crashDetail,
   hostArguments,
@@ -22,11 +22,12 @@ import {
   type HostInit,
   type FiringOf,
   type LostFiring,
+  type RunPreview,
   type ToHost,
 } from "../protocol/host.ts";
 import type { EventLog } from "./events.ts";
 import type { ForwardedRequest } from "./http.ts";
-import type { ProgramHistory, RunEnd } from "./history.ts";
+import type { ProgramHistory, RunStart } from "./history.ts";
 
 /** How long the host gets to run its shutdown before it is killed. */
 const SHUTDOWN_GRACE_MS = 5_000;
@@ -64,7 +65,8 @@ const LATE_CAUSE = "the program ended just as its deadline to stop ran out";
  */
 interface Run {
   id: number;
-  end: RunEnd;
+  /** The run as the history has its start: its seq, its record, and the write of its end. */
+  recorded: RunStart;
   /** Resolves when the run is no longer in flight: its end reported, or ended with its host. */
   finished: PromiseWithResolvers<void>;
   /** When the supervisor acked it: the program's own clock starts here. */
@@ -75,6 +77,8 @@ interface Run {
   requestId?: number;
   /** The reflex definition the run fires, absent for a program. */
   trigger?: FiringOf;
+  /** The name of the call the run is (an action's or a built-in's), when it was one, for its finished event. */
+  call?: string;
   state: InFlight | Reported;
 }
 
@@ -130,6 +134,8 @@ export class HostProcess {
   /** Requests that arrived while no host was ready; the next host answers them. */
   #queued: { request: ForwardedRequest; answer: Answer }[] = [];
   readonly #runs = new Map<number, Run>();
+  /** The finished foreground runs `get_run` serves, keyed by run seq, oldest first, the last KEPT_RUNS of them. */
+  readonly #keptRuns = new Map<number, RunRecord>();
   #attempt: Attempt | undefined;
   #nextRequest = 0;
   #connected = false;
@@ -169,6 +175,24 @@ export class HostProcess {
   /** Runs held: in flight, or ended with their delivery pending. Test-facing. */
   get openRuns(): number {
     return this.#runs.size;
+  }
+
+  /**
+   * The record of a finished foreground run: the one `seq` names, or the most recent when `seq` is
+   * omitted. Throws when no run has finished yet, or when `seq` is none of the kept runs (evicted,
+   * never taken, or a reflex firing's or registration's seq): the message names the kept seqs.
+   */
+  keptRun(seq: number | undefined): RunRecord {
+    if (this.#keptRuns.size === 0) throw new Error("no run has finished yet");
+    const record = seq === undefined ? [...this.#keptRuns.values()].at(-1) : this.#keptRuns.get(seq);
+    if (record !== undefined) return record;
+    throw new Error(`run ${seq} is not a kept run; kept: ${[...this.#keptRuns.keys()].join(", ")}`);
+  }
+
+  /** Keeps a finished foreground run for `keptRun`, dropping the oldest past the window. */
+  #keep(record: RunRecord): void {
+    this.#keptRuns.set(record.seq, record);
+    while (this.#keptRuns.size > KEPT_RUNS) this.#keptRuns.delete(this.#keptRuns.keys().next().value!);
   }
 
   /** Forks the first host and resolves once it has built its world; rejects with the reason it could not. A host that dies later is replaced, not reported here. */
@@ -379,17 +403,20 @@ export class HostProcess {
         return;
       case "run_started":
         try {
-          const end = await this.#history.begin(message.code, message.extra);
+          const recorded = await this.#history.begin(message.code, message.extra);
           const now = Date.now();
           const flight: InFlight = { kind: "in-flight" };
+          // The call the run is rides its extra — the same `call` its history line holds — not a field of its own.
+          const call = callNameOf(message.extra);
           const run: Run = {
             id: message.runId,
-            end,
+            recorded,
             finished: Promise.withResolvers<void>(),
             startedAt: now,
             timeoutAt: now + Math.min(Math.max(message.timeoutMs, 0), MAX_TIMEOUT_MS),
             requestId: message.requestId,
             trigger: message.trigger,
+            ...(call !== undefined && { call }),
             state: flight,
           };
           this.#runs.set(message.runId, run);
@@ -426,18 +453,35 @@ export class HostProcess {
           if (flight.overdue) attempt.cause = LATE_CAUSE;
         }
         let owed: Reported | undefined;
+        let end: RunResult | undefined;
+        // What the event says of the end beyond its own fields: the host's previews while its report
+        // stands. A supervisor-substituted end (a refused write) keeps only the call name, so the event
+        // previews that end's own error — the one its record holds.
+        let view: { call?: string } & RunPreview = {};
         try {
           if (run && flight && message.result) {
             const result = message.result;
+            end = result;
             owed = { kind: "reported", answer: { status: 200, body: result }, end: result };
-            await run.end(result);
+            view = { call: run.call, errorLine: message.errorLine, resultPreview: message.resultPreview };
+            await run.recorded.end(result);
           }
           this.#sendIfOpen(attempt, { kind: "run_ack", runId: message.runId });
         } catch (err) {
           // The run fails as it did when the history was written in-process: its request answers 500, its firing ends in error.
           const error = errorText(err);
-          if (owed && run) owed = { kind: "reported", answer: { status: 500, body: { error } }, end: { status: "error", error, durationMs: Date.now() - run.startedAt } };
+          if (owed && run) {
+            end = { status: "error", error, logs: "", durationMs: Date.now() - run.startedAt };
+            owed = { kind: "reported", answer: { status: 500, body: { error } }, end };
+            view = { call: run.call };
+          }
           this.#sendIfOpen(attempt, { kind: "run_ack", runId: message.runId, error });
+        }
+        // The run is kept and its finish said in one step, kept first: a client that wakes on the
+        // event — or asks after the answer it was waiting for — already finds the run's record.
+        if (run && end !== undefined && run.trigger === undefined) {
+          this.#keep(run.recorded.record(end));
+          this.#events.push("program_finished", programFinished(end, run.recorded.seq, view));
         }
         if (!run || !flight) return;
         // The host delivers the end after the ack (its request's answer, its reflex_finished); until it has, its death delivers it.
@@ -496,11 +540,14 @@ export class HostProcess {
         clearTimeout(state.deadline);
         const result = state.hung ?? lostRun(run, state, cause);
         try {
-          await run.end(result);
+          await run.recorded.end(result);
         } catch (err) {
           console.error("[minebot] could not write the history line of a program its host did not finish:", err);
         }
-        if (run.trigger === undefined) this.#events.push("program_finished", programFinished(result));
+        if (run.trigger === undefined) {
+          this.#keep(run.recorded.record(result));
+          this.#events.push("program_finished", programFinished(result, run.recorded.seq, run.call !== undefined ? { call: run.call } : {}));
+        }
         end = result;
         answer = { status: 200, body: result };
       } else {
@@ -527,6 +574,13 @@ export class HostProcess {
     this.#requests.clear();
     this.#schedule(Date.now() - attempt.readyAt);
   }
+}
+
+/** The name of the call a run is, from the `call` its extra carries — the same data its history line holds; a module run has none. */
+function callNameOf(extra: object): string | undefined {
+  const call = "call" in extra ? extra.call : undefined;
+  const name = call !== null && typeof call === "object" && "name" in call ? call.name : undefined;
+  return typeof name === "string" ? name : undefined;
 }
 
 /** How a run ended that its host could not report: stopped or timed out when it was aborted, else failed with the host. */

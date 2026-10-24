@@ -1,14 +1,15 @@
 // A bot host for host-process.test.ts: the real RunReporter over the real channel, with no world.
-// After `start` it records two runs, one that produces a result and one that throws before it
-// does, and reports how each ended as a `recorded` event.
-import type { FromHost, ToHost } from "../../../src/protocol/host.ts";
+// After `start` it records three runs — one that produces a result, one that throws before it does,
+// and one that ends in an error whose report carries the event's previews — and reports how each
+// ended as a `recorded` event.
+import { previewOf, type FromHost, type RunPreview, type ToHost } from "../../../src/protocol/host.ts";
 import type { RunResult } from "../../../src/protocol/index.ts";
 import { RunReporter } from "../../../src/host/channel.ts";
 
 const send = (message: FromHost) => process.send!(message);
 const reporter = new RunReporter({ send, stop: () => false, running: () => false });
 
-async function record(name: string, execute: () => Promise<RunResult>): Promise<void> {
+async function record(name: string, execute: () => Promise<RunResult & RunPreview>): Promise<void> {
   try {
     const result = await reporter.record({ code: "return 1;" }, execute);
     send({ kind: "event", type: "recorded", data: { name, status: result.status } });
@@ -26,6 +27,11 @@ process.on("message", async (message: ToHost) => {
       await record("result", async () => ({ status: "ok", result: 1, logs: "", durationMs: 0 }));
       await record("thrown", async () => {
         throw new Error("the body is not connected");
+      });
+      await record("boom", async () => {
+        const thrown = new Error("the program boomed");
+        const end = { status: "error" as const, error: `Error: ${thrown.message}\n    at .run.ts:2:9`, logs: "", durationMs: 1 };
+        return { ...end, ...previewOf(end, thrown) };
       });
       return;
     case "run_ack":

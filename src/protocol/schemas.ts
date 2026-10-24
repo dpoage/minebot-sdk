@@ -212,3 +212,6 @@ export const CallInput = z.object({
   args: RunArgs.optional(),
   timeoutMs: RunInput.shape.timeoutMs,
 });
+
+/** How many finished foreground runs the body keeps for `GET /runs` and the `get_run` tool. */
+export const KEPT_RUNS = 20;

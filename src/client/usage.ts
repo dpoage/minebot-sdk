@@ -1,7 +1,7 @@
 // The usage text of the `minebot` command, built from what the body offers: the capability
 // table decides which commands and options an agent reads about.
 import { existsSync } from "node:fs";
-import { CAPABILITY_GATES, type BodyFeatures } from "../protocol/index.ts";
+import { CAPABILITY_GATES, KEPT_RUNS, type BodyFeatures } from "../protocol/index.ts";
 
 /** A client-only install leaves out the body modules, and with it the `body` command. Looks for the daemon with this file's own extension: `.ts` from source, `.js` from a build. */
 export const HAS_BODY = existsSync(new URL(`../body/daemon${import.meta.url.slice(import.meta.url.lastIndexOf("."))}`, import.meta.url));
@@ -64,6 +64,8 @@ export function usageFor(features: BodyFeatures | null, hasBody = HAS_BODY, oper
       : []),
     "  stop                 Abort the current run.",
     "  events               Print buffered events as JSON.",
+    "  runs [seq]           A finished run's record: its seq and, for a call, its name, then status, logs, error or",
+    `                       result; the seq is the run field of its program_finished event, or the most recent finished run without one (the last ${KEPT_RUNS} are kept).`,
     "  wait                 Block until a matching event arrives (chat, nightfall, a death, a hostile nearby, low health...), then print it.",
     "  chat <message>       Send a chat message.",
     ...(caps.wiki

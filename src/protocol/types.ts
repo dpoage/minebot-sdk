@@ -26,6 +26,26 @@ export interface RunResult {
   durationMs: number;
 }
 
+/**
+ * A finished foreground run (a module run or a call; a reflex firing is not one) as `GET /runs` and
+ * the `get_run` tool serve it: the run's history line without its code. The body keeps the last
+ * `KEPT_RUNS` of them, so an agent can read a run's outcome after it detached.
+ */
+export interface RunRecord {
+  /** The run's seq: the `run` field of its `program_finished` event, and what `get_run` takes. */
+  seq: number;
+  startedAt: string;
+  status: RunStatus;
+  durationMs: number;
+  result?: unknown;
+  error?: string;
+  logs: string;
+  /** The call the run was: its name, the routine it is bound to when it is an action, and the args it was given. */
+  call?: { name: string; routine?: string; args: unknown };
+  /** The args a module run was given. */
+  args?: unknown;
+}
+
 export interface BodyEvent {
   seq: number;
   time: number;

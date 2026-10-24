@@ -1,12 +1,17 @@
 // Renderers for agent-facing output: runs, status, notes, wiki hits and pages, routines and their bindings.
 // The CLI and the MCP server share them, so an agent sees the same text through both.
-import type { ActionStats, BindingInfo, BindResponse, BuiltinInfo, BuiltinSearchHit, Note, ReflexBindingInfo, RoutineInfo, RoutineVersion, RunResult, SaveRoutineResponse, SearchHit, StatusResponse, TypeCheck } from "../protocol/index.ts";
+import type { ActionStats, BindingInfo, BindResponse, BuiltinInfo, BuiltinSearchHit, Note, ReflexBindingInfo, RoutineInfo, RoutineVersion, RunRecord, RunResult, SaveRoutineResponse, SearchHit, StatusResponse, TypeCheck } from "../protocol/index.ts";
 
 const json = (value: unknown) => JSON.stringify(value, null, 2);
 
-/** Renders a run (a module run or a call) for an agent: status line, then logs, then error or result. */
-export function formatRun(run: RunResult): string {
-  const parts = [`status: ${run.status} (${run.durationMs} ms)`];
+/**
+ * Renders a run (a module run or a call) for an agent: status line, then logs, then error or result. A finished
+ * run's record is named on the status line — its seq and, for a call, its name — so a run read after the fact is
+ * never mistaken for another.
+ */
+export function formatRun(run: RunResult | RunRecord): string {
+  const named = "seq" in run ? `run ${run.seq}${run.call === undefined ? "" : ` (call ${run.call.name})`}: ` : "";
+  const parts = [`${named}status: ${run.status} (${run.durationMs} ms)`];
   if (run.logs) parts.push(`logs:\n${run.logs}`);
   if (run.error) parts.push(`error:\n${run.error}`);
   if (run.result !== undefined) parts.push(`result:\n${typeof run.result === "string" ? run.result : json(run.result)}`);
