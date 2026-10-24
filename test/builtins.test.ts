@@ -150,8 +150,8 @@ describe("search", () => {
 
   const builtins = new Builtins({ stats: memoryStats() });
 
-  /** What the kit search at 5218f99 ranked for each query and limit of the corpus, recorded once and committed: (module, routine) hits in order. */
-  const KIT_SEARCH = JSON.parse(readFileSync(path.join(ROOT, "test", "fixtures", "catalog", "kit-search-5218f99.json"), "utf8")) as { query: string; limit: number; hits: { module: string; routine?: string }[] }[];
+  /** What the kit search at 5218f99 returned for each query and limit of the corpus, recorded once and committed: whole hits (module, routine, score, text) in order. */
+  const KIT_SEARCH = JSON.parse(readFileSync(path.join(ROOT, "test", "fixtures", "catalog", "kit-search-5218f99.json"), "utf8")) as { query: string; limit: number; hits: { module: string; routine?: string; score: number; text: string }[] }[];
 
   /** The kits the built-in routines replaced at 5218f99, as the catalog fixture stores them: `args` is an action's JSON Schema, null when it declared none. */
   const BASE = JSON.parse(readFileSync(path.join(ROOT, "test", "fixtures", "catalog", "base-5218f99.json"), "utf8")) as {
@@ -198,13 +198,13 @@ describe("search", () => {
     }
   }
 
-  it("ranks the base routines, over their 5218f99 texts, in the order the kit search ranked them, for every query and limit", () => {
+  it("ranks the base routines, over their 5218f99 texts, exactly as the kit search ranked them — module, routine, score, and text of every hit — for every query and limit", () => {
     assert.deepEqual(KIT_SEARCH.map(({ query, limit }) => [query, limit]), CORPUS.flatMap((query) => [1, 5, 20].map((limit) => [query, limit])), "the committed table covers the corpus");
     withBaseCatalog(() => {
       const base = new Builtins({ offer: BASE.map((kit) => kit.name), stats: memoryStats() });
       let nonEmpty = 0;
       for (const { query, limit, hits } of KIT_SEARCH) {
-        assert.deepEqual(base.search(query, limit).map((hit) => [hit.module, hit.routine ?? null]), hits.map((hit) => [hit.module, hit.routine ?? null]), `${JSON.stringify(query)} limit ${limit}`);
+        assert.deepEqual(base.search(query, limit).map(({ stats: _stats, ...hit }) => hit), hits, `${JSON.stringify(query)} limit ${limit}`);
         if (hits.length > 0) nonEmpty++;
       }
       assert.ok(nonEmpty >= 60, "the corpus must find things");
