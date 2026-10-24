@@ -293,6 +293,82 @@ function explainReturn(err: unknown, url: string): unknown {
   return err;
 }
 
+/**
+ * What `RoutineLoader.run` says of a source with a static `import` declaration inside a function or
+ * block, which only the module's top level may hold. The same scope rule as `explainReturn`: only the
+ * run's own parse error, whose stack Node opens with the run's URL. The parser blames an `export`
+ * inside a function with the same message, so the statement the frame points at (its line in the
+ * header, its column under the caret) is read before anything is explained: what is not an import
+ * declaration, and a clause that does not rewrite into a dynamic import, are left as the parser said
+ * them, rather than given a hint that may be wrong.
+ */
+function explainImport(err: unknown, url: string, source: string): unknown {
+  if (!(err instanceof SyntaxError) || !err.stack?.startsWith(`${url}:`) || !/cannot be used outside of module code/i.test(err.message)) return err;
+  const line = Number(/^:(\d+)/.exec(err.stack.slice(url.length))?.[1]);
+  const frames = err.stack.split("\n");
+  const caret = frames.findIndex((frame) => /^\s*\^/.test(frame));
+  // The declaration may run over lines; this is its text, from where the parser points.
+  const statement = source.split("\n").slice(line - 1).join("\n").slice(caret === -1 ? 0 : (frames[caret]?.indexOf("^") ?? 0));
+  if (/^import\s+type\b/.test(statement)) {
+    err.message = `a run's import declarations go at the top of its module, above \`export default\`: line ${line} has \`import type\` inside a function; a type-only import runs no code, so delete it or move it above \`export default\` (${err.message})`;
+    return err;
+  }
+  const from = /^import\s+([\s\S]*?)\s*\bfrom\s*(['"])([^'"\n]*)\2/.exec(statement);
+  const bare = from === null ? /^import\s*(['"])([^'"\n]*)\1/.exec(statement) : undefined;
+  if (from === null && bare === null) return err;
+  const binding = from === null ? "" : dynamicBinding(from[1] ?? "");
+  if (binding === undefined) return err;
+  const specifier = from?.[3] ?? bare![2];
+  const dynamic = binding === "" ? `await import(${JSON.stringify(specifier)})` : `const ${binding} = await import(${JSON.stringify(specifier)})`;
+  err.message = `a run's import declarations go at the top of its module, above \`export default\`: line ${line} has one inside a function; inside the function write \`${dynamic}\` instead (${err.message})`;
+  return err;
+}
+
+/**
+ * The left side of the dynamic import that binds what a static clause binds: `* as m` is `m`, a
+ * default binding is `{ default: d }`, a named list rewrites `a as b` to `a: b`. `""` means the clause
+ * binds nothing at runtime; undefined means it does not rewrite.
+ */
+function dynamicBinding(clause: string): string | undefined {
+  const pieces: string[] = [];
+  let depth = 0;
+  let piece = "";
+  for (const ch of clause.replace(/\s+/g, " ").trim()) {
+    if (ch === "{") depth++;
+    else if (ch === "}") depth--;
+    if (ch === "," && depth === 0) {
+      pieces.push(piece.trim());
+      piece = "";
+      continue;
+    }
+    piece += ch;
+  }
+  pieces.push(piece.trim());
+  // The names a named list binds, without its braces; `""` when it binds nothing (a `type` element).
+  const named = (braces: string): string | "" | undefined => {
+    const bound: string[] = [];
+    for (const element of braces.slice(1, -1).split(",")) {
+      const each = /^(?:(type) )?([A-Za-z_$][\w$]*)(?: as ([A-Za-z_$][\w$]*))?$/.exec(element.trim());
+      if (!each) return undefined;
+      if (each[1] !== undefined) continue;
+      bound.push(each[3] !== undefined ? `${each[2]}: ${each[3]}` : each[2]!);
+    }
+    return bound.length > 0 ? bound.join(", ") : "";
+  };
+  const namespace = /^\* as ([A-Za-z_$][\w$]*)$/.exec(pieces[0] ?? "");
+  const identifier = /^[A-Za-z_$][\w$]*$/.test(pieces[0] ?? "");
+  if (pieces.length === 1) {
+    if (namespace !== null) return namespace[1];
+    if (identifier) return `{ default: ${pieces[0]} }`;
+    const inner = pieces[0]?.startsWith("{") ? named(pieces[0]) : undefined;
+    return inner === undefined ? undefined : (inner === "" ? "" : `{ ${inner} }`);
+  }
+  const secondNamespace = pieces.length === 2 && identifier ? /^\* as ([A-Za-z_$][\w$]*)$/.exec(pieces[1] ?? "") : null;
+  if (secondNamespace !== null) return `{ default: ${pieces[0]}, ...${secondNamespace[1]} }`;
+  const inner = pieces.length === 2 && identifier && pieces[1]?.startsWith("{") ? named(pieces[1]) : undefined;
+  return inner === undefined || inner === "" ? `{ default: ${pieces[0]} }` : `{ default: ${pieces[0]}, ${inner} }`;
+}
+
 /** A scan of the library's bytes: the generation they make and the text each module has in it. */
 interface Scan {
   generation: string;
@@ -341,7 +417,7 @@ export class RoutineLoader {
    * made for this call alone, whatever bytes it has. Its imports resolve as a library module's do, with
    * `./<name>.ts` the library's module of that name as of the library's bytes now (the generation
    * `load` would use); this changes no generation, so a later `load` returns what an earlier one did.
-   * A source with a top-level `return` rejects with an error that names `export default`.
+   * A source with a top-level `return`, or a static `import` inside a function, rejects with an error that names `export default`.
    */
   async run(source: string): Promise<unknown> {
     const library = this.#library;
@@ -357,7 +433,7 @@ export class RoutineLoader {
     try {
       return await import(url.href);
     } catch (err) {
-      throw explainReturn(err, url.href);
+      throw explainReturn(explainImport(err, url.href, source), url.href);
     }
   }
 
