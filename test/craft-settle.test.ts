@@ -46,6 +46,17 @@ describe("craft.craft on a server whose result arrives late", () => {
     assert.equal(h.count("oak_planks"), 8);
   });
 
+  it("restarts the wait at every inventory update: the 1500 ms are without one", async () => {
+    const h = createHarness({ inventory: { oak_planks: 4 }, craftResultDelay: 40 });
+    const start = h.bot.time.age;
+    const run = h.run(craft.craft, { item: "crafting_table" });
+    // An unrelated pickup 25 ticks in: the wait restarts, so the result at tick 40 is still in time (a 1500 ms wait from the start would have ended at tick 30).
+    while (h.bot.time.age < start + 25) await new Promise<void>((resolve) => setImmediate(resolve));
+    h.give("dirt");
+    assert.equal(await run, 1);
+    assert.equal(h.count("crafting_table"), 1);
+  });
+
   it("waits no longer than 1500 ms without an inventory update, and then fails as the craft that made nothing", async () => {
     const lagging = createHarness({ inventory: { oak_planks: 4 }, craftResultDelay: 29 });
     assert.equal(await lagging.run(craft.craft, { item: "crafting_table" }), 1, "29 ticks is 1450 ms");
