@@ -40,7 +40,7 @@ const ROUTINES = BUILTIN_MODULES.flatMap((module) => Object.entries(module.routi
 
 describe("the offered set", () => {
   it("is every built-in module by default, none for an empty list, and the closure of the names over `uses` otherwise", () => {
-    assert.equal(ALL.length, 18);
+    assert.equal(ALL.length, 19);
     assert.deepEqual(new Builtins({ stats: memoryStats() }).offered, ALL);
     assert.deepEqual(new Builtins({ offer: [], stats: memoryStats() }).offered, []);
     // The closure of one module, each module alone: what the module uses is offered with it, and nothing else.
@@ -499,7 +499,7 @@ const { KitStats } = await load("host/routines/stats.js");
 const { JsonStore } = await load("store.js");
 assert.match(import.meta.resolve("minebot-sdk/routines/move"), /\\/node_modules\\/minebot-sdk\\/dist\\/routines\\/move\\.js$/);
 const builtins = new Builtins({ stats: new KitStats(JsonStore.memory()) });
-assert.equal(builtins.offered.length, 18);
+assert.equal(builtins.offered.length, 19);
 assert.equal(builtins.routine("move.to"), move.to, "the catalog's routine is the one the package exports");
 for (const name of builtins.offered) {
   const shipped = readFileSync(installed + "/src/routines/" + name + ".ts", "utf8");
