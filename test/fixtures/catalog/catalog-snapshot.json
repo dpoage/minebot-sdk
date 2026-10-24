@@ -6,7 +6,7 @@
     "routines": [
       {
         "name": "to",
-        "description": "Walk within `range` blocks of `position` ({x,y,z} or [x,y,z]) and stop. Gives up (and stops pathfinding) after `timeoutMs`. Returns where the player then stands.",
+        "description": "Walk within `range` blocks of `position` ({x,y,z} or [x,y,z]) and stop. Throws, after stopping pathfinding, when `timeoutMs` passes, when 12 s go by with no progress (no movement, digging, or nearby block change: 'stuck at ...'), or when the walk ends farther than `range` ('could not reach ...'). Returns where the player then stands.",
         "args": {
           "$schema": "https://json-schema.org/draft/2020-12/schema",
           "type": "object",
@@ -2114,7 +2114,7 @@
       },
       {
         "name": "collectDrops",
-        "description": "Walk over dropped items within `radius` (default 8) to pick them up. Returns how many drops it tried to reach.",
+        "description": "Walk over each dropped item within `radius` (default 8) once to pick it up. Returns { reached, unreachable }: how many drops it reached and the positions it could not reach.",
         "args": {
           "$schema": "https://json-schema.org/draft/2020-12/schema",
           "type": "object",
@@ -2128,7 +2128,40 @@
         },
         "returns": {
           "$schema": "https://json-schema.org/draft/2020-12/schema",
-          "type": "number"
+          "type": "object",
+          "properties": {
+            "reached": {
+              "type": "number"
+            },
+            "unreachable": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "x": {
+                    "type": "number"
+                  },
+                  "y": {
+                    "type": "number"
+                  },
+                  "z": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "x",
+                  "y",
+                  "z"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": [
+            "reached",
+            "unreachable"
+          ],
+          "additionalProperties": false
         }
       }
     ]

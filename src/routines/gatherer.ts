@@ -1,6 +1,6 @@
 // The gatherer routines: collect resources by walking, digging, and picking up the drops —
 // built from the move, sense, dig, inventory, and items primitives.
-import { defineRoutine, NamePattern, type RoutineContext, Vec3, z } from "minebot-sdk/routine";
+import { defineRoutine, NamePattern, Point, type RoutineContext, Vec3, z } from "minebot-sdk/routine";
 import * as move from "minebot-sdk/routines/move";
 import * as sense from "minebot-sdk/routines/sense";
 import * as dig from "minebot-sdk/routines/dig";
@@ -19,19 +19,30 @@ interface GatherResult {
 
 const MAX_FAILURES = 12;
 
-/** Walks over item drops within `radius`. Returns how many drops it tried to reach. */
-async function pickUpDrops(ctx: RoutineContext, radius = 8): Promise<number> {
+/**
+ * Walks over each distinct drop within `radius`, once. `failed` holds the floored positions (`x,y,z`)
+ * a walk already failed on; those are not tried again, and new failures are added. Returns how many
+ * drops it reached and which it could not.
+ */
+async function pickUpDrops(ctx: RoutineContext, failed: Set<string>, radius = 8): Promise<{ reached: number; unreachable: Point[] }> {
   await ctx.sleep(400);
-  const drops = await items.drops(ctx, { radius });
-  for (const p of drops) {
+  const targets = new Map<string, Point>();
+  for (const p of await items.drops(ctx, { radius })) targets.set(`${p.x},${p.y},${p.z}`, p);
+  let reached = 0;
+  const unreachable: Point[] = [];
+  for (const [key, p] of targets) {
+    if (failed.has(key)) continue;
     try {
       await move.to(ctx, { position: p, range: 0, timeoutMs: 10_000 });
+      reached++;
     } catch (err) {
+      failed.add(key);
+      unreachable.push(p);
       ctx.log(`collectDrops: could not reach drop at ${new Vec3(p.x, p.y, p.z)}: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
   await ctx.sleep(300);
-  return drops.length;
+  return { reached, unreachable };
 }
 
 /**
@@ -42,6 +53,7 @@ async function gatherBlocks(ctx: RoutineContext, pattern: NamePattern, count: nu
   const { bot } = ctx;
   const before = await inventory.list(ctx, {});
   const skipped = new Set<string>();
+  const failedDrops = new Set<string>();
   let dug = 0;
   while (dug < count) {
     if (ctx.signal.aborted) throw ctx.signal.reason;
@@ -59,7 +71,7 @@ async function gatherBlocks(ctx: RoutineContext, pattern: NamePattern, count: nu
       await move.to(ctx, { position: target, range: 3, timeoutMs: 45_000 });
       await dig.dig(ctx, { at: target });
       dug++;
-      await pickUpDrops(ctx);
+      await pickUpDrops(ctx, failedDrops);
     } catch (err) {
       skipped.add(target.toString());
       const message = err instanceof Error ? err.message : String(err);
@@ -94,9 +106,9 @@ export const gather = defineRoutine(
 export const collectDrops = defineRoutine(
   {
     name: "gatherer.collectDrops",
-    description: "Walk over dropped items within `radius` (default 8) to pick them up. Returns how many drops it tried to reach.",
+    description: "Walk over each dropped item within `radius` (default 8) once to pick it up. Returns { reached, unreachable }: how many drops it reached and the positions it could not reach.",
     args: z.object({ radius: z.number().positive().default(8) }),
-    returns: z.number(),
+    returns: z.object({ reached: z.number(), unreachable: z.array(Point) }),
   },
-  (ctx, { radius }) => pickUpDrops(ctx, radius),
+  (ctx, { radius }) => pickUpDrops(ctx, new Set(), radius),
 );
