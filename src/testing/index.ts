@@ -41,6 +41,8 @@ export interface HarnessOptions {
   health?: number;
   food?: number;
   username?: string;
+  /** Game ticks (20 per second; `ctx.sleep(ms)` passes `ms / 50`) between `bot.craft` resolving and the crafted item reaching the inventory, as when the table window's result arrives late on a slow server. Default 0: at once. The inventory emits `updateSlot` when the item lands. */
+  craftResultDelay?: number;
 }
 
 /** One call of a routine value declared with a `module.routine` name (every built-in routine, and any other routine that declares one), as the call observer saw it: nested calls included. `kit` is the module part of the name and `action` the routine part. A routine value without such a name is not recorded. */
@@ -146,6 +148,7 @@ export function createHarness(options: HarnessOptions = {}): Harness {
     health: options.health ?? 20,
     food: options.food ?? 20,
     username: options.username ?? "harness",
+    craftResultDelay: options.craftResultDelay ?? 0,
   });
   const { bot } = handle;
 

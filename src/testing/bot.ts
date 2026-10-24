@@ -58,6 +58,8 @@ export interface FakeBotOptions {
   health: number;
   food: number;
   username: string;
+  /** Game ticks between `bot.craft` resolving and the crafted item reaching the inventory: the table window's result arriving late, as on a laggy server. 0 is at once. */
+  craftResultDelay: number;
 }
 
 /** The goal shape the pathfinder's goals share. */
@@ -118,6 +120,8 @@ export function createFakeBot(options: FakeBotOptions): BotHandle {
   const entities: Record<number, Entity> = {};
   const furnaces = new Map<string, FurnaceEntry>();
   let nextEntityId = 2;
+  /** Crafted items on their way to the inventory: the clock age they arrive at. */
+  const arriving: { due: number; type: number; count: number }[] = [];
   let nextWindowId = 1;
 
   const self = new Entity(1);
@@ -324,9 +328,22 @@ export function createFakeBot(options: FakeBotOptions): BotHandle {
     world.setBlock(entry.pos, block.name, { ...block.getProperties(), lit });
   }
 
+  /** Crafted items whose time has come go into the inventory; one that does not fit drops at the bot's feet, as the game does. */
+  function deliverArrivals(): void {
+    for (const result of arriving.splice(0)) {
+      if (result.due > time.age) {
+        arriving.push(result);
+        continue;
+      }
+      const left = inventory.add(result.type, result.count);
+      if (left > 0) dropItem(itemName(result.type), left, self.position);
+    }
+  }
+
   function advance(ticks: number): void {
     time.age += ticks;
     time.timeOfDay = (time.timeOfDay + ticks) % 24000;
+    deliverArrivals();
     for (const entry of furnaces.values()) {
       const { state } = entry;
       const active = state.input !== null || state.burnLeft > 0;
@@ -429,7 +446,9 @@ export function createFakeBot(options: FakeBotOptions): BotHandle {
         if (!recipe.delta.every((d) => inventory.count(d.id) + d.count >= 0)) throw new Error("missing ingredient");
         for (const d of recipe.delta) if (d.count < 0) inventory.remove(d.id, -d.count);
         for (const d of recipe.delta) {
-          if (d.count > 0 && inventory.add(d.id, d.count) > 0) throw new Error("the inventory is full");
+          if (d.count <= 0) continue;
+          if (options.craftResultDelay > 0) arriving.push({ due: time.age + options.craftResultDelay, type: d.id, count: d.count });
+          else if (inventory.add(d.id, d.count) > 0) throw new Error("the inventory is full");
         }
       }
     },
