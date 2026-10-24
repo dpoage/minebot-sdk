@@ -297,238 +297,28 @@ function explainReturn(err: unknown, url: string): unknown {
  * What `RoutineLoader.run` says of a source with a static `import` declaration inside a function or
  * block, which only the module's top level may hold. The same scope rule as `explainReturn`: only the
  * run's own parse error, whose stack Node opens with the run's URL. The parser blames an `export`
- * inside a function with the same message, so the statement the frame points at is read before
- * anything is explained, and the hint is a drop-in: written where the declaration is, the source
- * parses and binds every name the declaration bound, the declaration's import attributes carried
- * into the dynamic form. What is not an import declaration, or does not so rewrite, is left as the
- * parser said it, rather than given a hint that may be wrong.
+ * inside a function with the same message, so the line it names is read before anything is explained:
+ * a line no import declaration begins on is left as the parser said it. The dynamic import shown is
+ * an example — it names the module — not a promise that pasting it parses wherever the declaration
+ * sat, which only an async function's body can hold.
  */
 function explainImport(err: unknown, url: string, source: string): unknown {
   if (!(err instanceof SyntaxError) || !err.stack?.startsWith(`${url}:`) || !/cannot be used outside of module code/i.test(err.message)) return err;
   const line = Number(/^:(\d+)/.exec(err.stack.slice(url.length))?.[1]);
   const lines = source.split("\n");
-  const frames = err.stack.split("\n");
-  const caret = frames.findIndex((frame) => /^\s*\^/.test(frame));
-  const column = caret === -1 ? 0 : sourceColumn(lines[line - 1] ?? "", frames[caret] ?? "");
-  if (column === -1) return err;
-  // The declaration may run over lines; this is its text, from where the parser points, with comments
-  // blanked (strings respected) so text the parser never saw cannot be read for a clause, a specifier, or an attribute.
-  const statement = withoutComments(lines.slice(line - 1).join("\n").slice(column));
-  if (/^import\s+type\b/.test(statement)) {
-    err.message = `a run's import declarations go at the top of its module, above \`export default\`: line ${line} has \`import type\` inside a function; a type-only import runs no code, so delete it or move it above \`export default\` (${err.message})`;
+  // The declaration may run over lines; this is its text, from the `import` the parser's line holds.
+  const at = (lines[line - 1] ?? "").search(/(?<![\w$.])import(?=\s)/);
+  if (at === -1) return err;
+  const statement = lines.slice(line - 1).join("\n").slice(at);
+  const move = `a run's import declarations go at the top of its module, above \`export default\`: line ${line} has one inside a function`;
+  const specifier = /^import\s+(?:[\s\S]*?\bfrom\b\s*)?(['"])([^'"\n]*)\1/.exec(statement)?.[2];
+  if (specifier === undefined) {
+    err.message = `${move} (${err.message})`;
     return err;
   }
-  const from = /^import\s+([\s\S]*?)\s*\bfrom\s*(['"])([^'"\n]*)\2([\s\S]*)/.exec(statement);
-  const bare = from === null ? /^import\s*(['"])([^'"\n]*)\1([\s\S]*)/.exec(statement) : undefined;
-  if (from === null && bare === null) return err;
-  const binding = from === null ? "" : dynamicBinding(from[1] ?? "");
-  if (binding === undefined) return err;
-  const attributes = importAttributes((from?.[4] ?? bare?.[3]) ?? "");
-  if (attributes === undefined) return err;
-  const call = `await import(${JSON.stringify(from?.[3] ?? bare![2])}${attributes === "" ? "" : `, ${attributes}`})`;
-  const dynamic = binding === "" ? call : `const ${binding} = ${call}`;
-  err.message = `a run's import declarations go at the top of its module, above \`export default\`: line ${line} has one inside a function; inside the function write \`${dynamic}\` instead (${err.message})`;
+  const name = /^import\s+\*\s+as\s+([_$\p{ID_Start}][_$\p{ID_Continue}\u200C\u200D]*)/u.exec(statement)?.[1] ?? "mod";
+  err.message = `${move}; inside an async function, \`const ${name} = await import(${JSON.stringify(specifier)})\` loads it at run time (${err.message})`;
   return err;
-}
-
-/**
- * The column the parser's caret points at on the line it names. Its index in the code frame's caret
- * line is a display column — the frame draws a tab as spaces up to the next fourth column, and an
- * East Asian wide code point two columns wide — so the line is walked with those widths back onto
- * its own columns. -1 when the caret points where the line does not reach: the frame was drawn
- * crooked, and nothing is explained from it.
- */
-function sourceColumn(line: string, caret: string): number {
-  const target = caret.indexOf("^");
-  let index = 0;
-  let width = 0;
-  while (width < target && index < line.length) {
-    const code = line.codePointAt(index) ?? 0;
-    if (line[index] === "\t") width = Math.ceil((width + 1) / 4) * 4;
-    else width += isWide(code) ? 2 : 1;
-    index += code > 0xffff ? 2 : 1;
-  }
-  return width === target ? index : -1;
-}
-
-/** Whether the code frame draws `code`, a code point, two columns wide: the East Asian wide and fullwidth blocks, emoji, and the CJK extension planes. */
-function isWide(code: number): boolean {
-  return (
-    (code >= 0x1100 && code <= 0x115f) || (code >= 0x2e80 && code <= 0x303e) || (code >= 0x3041 && code <= 0x33ff) ||
-    (code >= 0x3400 && code <= 0x4dbf) || (code >= 0x4e00 && code <= 0x9fff) || (code >= 0xa000 && code <= 0xa4cf) ||
-    (code >= 0xa960 && code <= 0xa97f) || (code >= 0xac00 && code <= 0xd7a3) || (code >= 0xf900 && code <= 0xfaff) ||
-    (code >= 0xfe10 && code <= 0xfe19) || (code >= 0xfe30 && code <= 0xfe6b) || (code >= 0xff00 && code <= 0xff60) ||
-    (code >= 0xffe0 && code <= 0xffe6) || (code >= 0x1f300 && code <= 0x1f9ff) || (code >= 0x20000 && code <= 0x3fffd)
-  );
-}
-
-/**
- * `statement` with every comment outside a string replaced by a space: the declaration's own syntax
- * is untouched (an import's strings hold names and specifiers, never comments, so quotes alone are
- * tracked), while a comment can no longer be read for a clause, a specifier, or an attribute, nor
- * cut the declaration short of its `from`.
- */
-function withoutComments(statement: string): string {
-  let out = "";
-  let quote = "";
-  for (let index = 0; index < statement.length; index++) {
-    const ch = statement[index]!;
-    if (quote !== "") {
-      out += ch;
-      if (ch === "\\") out += statement[++index] ?? "";
-      else if (ch === quote) quote = "";
-      continue;
-    }
-    if (ch === "'" || ch === '"') {
-      quote = ch;
-      out += ch;
-    } else if (ch === "/" && statement[index + 1] === "*") {
-      const end = statement.indexOf("*/", index + 2);
-      index = (end === -1 ? statement.length : end + 2) - 1;
-      out += " ";
-    } else if (ch === "/" && statement[index + 1] === "/") {
-      const end = statement.indexOf("\n", index + 2);
-      index = (end === -1 ? statement.length : end) - 1;
-      out += " ";
-    } else out += ch;
-  }
-  return out;
-}
-
-/**
- * The second argument that carries the declaration's import attributes into its dynamic form: the
- * `with` clause's entries, verbatim — `with { type: "json" }` becomes `{ with: { type: "json" } }`.
- * "" when the declaration has none. undefined when it cannot be carried: an `assert` clause (a
- * dynamic import takes none), entries that are not a plain `name: "value"` list, or a `__proto__`
- * key (an object literal writes it to the prototype, not a property, so nothing would be carried).
- */
-function importAttributes(rest: string): string | undefined {
-  const head = /^\s*(with|assert)\s*/.exec(rest);
-  if (head === null) return "";
-  const tail = rest.slice(head[0].length);
-  if (!tail.startsWith("{")) return head[1] === "assert" ? "" : undefined;
-  if (head[1] === "assert") return undefined;
-  const block = bracedBlock(tail);
-  if (block === undefined) return undefined;
-  const entries: string[] = [];
-  for (const entry of splitCommas(block.slice(1, -1))) {
-    const each = attributeEntry.exec(entry.trim());
-    if (each === null) return undefined;
-    if (each[1] === "__proto__" || each[1] === '"__proto__"' || each[1] === "'__proto__'") return undefined;
-    entries.push(`${each[1]}: ${each[2]}`);
-  }
-  return entries.length === 0 ? undefined : `{ with: { ${entries.join(", ")} } }`;
-}
-
-/** The brace block from its `{` to the `}` that closes it, strings respected; undefined when it never closes. */
-function bracedBlock(fromOpen: string): string | undefined {
-  let quote = "";
-  let depth = 0;
-  for (let index = 0; index < fromOpen.length; index++) {
-    const ch = fromOpen[index]!;
-    if (quote !== "") {
-      if (ch === "\\") index++;
-      else if (ch === quote) quote = "";
-      continue;
-    }
-    if (ch === "'" || ch === '"') quote = ch;
-    else if (ch === "{") depth++;
-    else if (ch === "}" && --depth === 0) return fromOpen.slice(0, index + 1);
-  }
-  return undefined;
-}
-
-/** One entry of import attributes as the grammar allows — a name or string key, a string value — whose text the dynamic form carries verbatim. */
-const attributeEntry = /^([_$\p{ID_Start}][_$\p{ID_Continue}\u200C\u200D]*|"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*')\s*:\s*("(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*')$/u;
-
-/**
- * `list` split on the commas outside its strings and braces: the entries of an import clause (a
- * comma inside braces belongs to the named list) and of an attributes block (one inside a quoted
- * key or value belongs to the string).
- */
-function splitCommas(list: string): string[] {
-  const pieces: string[] = [];
-  let piece = "";
-  let quote = "";
-  let depth = 0;
-  for (let index = 0; index < list.length; index++) {
-    const ch = list[index]!;
-    if (quote !== "") {
-      piece += ch;
-      if (ch === "\\") piece += list[++index] ?? "";
-      else if (ch === quote) quote = "";
-      continue;
-    }
-    if (ch === "'" || ch === '"') quote = ch;
-    else if (ch === "{") depth++;
-    else if (ch === "}") depth--;
-    else if (ch === "," && depth === 0) {
-      pieces.push(piece);
-      piece = "";
-      continue;
-    }
-    piece += ch;
-  }
-  pieces.push(piece);
-  return pieces;
-}
-
-/** A binding name as the grammar allows it (a unicode letter, `$` or `_` first): text a static clause binds that the dynamic form can declare verbatim. */
-const bindableName = /^[_$\p{ID_Start}][_$\p{ID_Continue}\u200C\u200D]*$/u;
-/** One element of a named list that renames: `a as b`, or a string name, which the grammar only lets rename (`"a-b" as b`). */
-const aliasedName = /^([_$\p{ID_Start}][_$\p{ID_Continue}\u200C\u200D]*|"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*')\s+as\s+([_$\p{ID_Start}][_$\p{ID_Continue}\u200C\u200D]*)$/u;
-/** One element of a named list that TypeScript drops at runtime: `type a`, renamed or not (`type a as b`). */
-const elidedName = /^type\s+[_$\p{ID_Start}][_$\p{ID_Continue}\u200C\u200D]*(?:\s+as\s+[_$\p{ID_Start}][_$\p{ID_Continue}\u200C\u200D]*)?$/u;
-/** A namespace clause: `* as m`. */
-const namespaceName = /^\* as ([_$\p{ID_Start}][_$\p{ID_Continue}\u200C\u200D]*)$/u;
-/** The words no binding may take (the reserved words, and those a module's strictness reserves): a clause that names one is left unexplained rather than hinted into a broken declaration. */
-const noBinding: Record<string, true> = {
-  await: true, break: true, case: true, catch: true, class: true, const: true, continue: true, debugger: true, default: true,
-  delete: true, do: true, else: true, enum: true, export: true, extends: true, false: true, finally: true, for: true,
-  function: true, if: true, import: true, in: true, instanceof: true, new: true, null: true, return: true, super: true,
-  switch: true, this: true, throw: true, true: true, try: true, typeof: true, var: true, void: true, while: true, with: true,
-  yield: true, let: true, static: true, implements: true, interface: true, package: true, private: true, protected: true, public: true,
-};
-
-/** Whether `name` is a binding the dynamic form may declare: an identifier the grammar allows that no reserved word spells. */
-const isBindable = (name: string): boolean => bindableName.test(name) && !Object.hasOwn(noBinding, name);
-
-/**
- * The left side of the dynamic import that binds what a static clause binds: `* as m` is `m`, a
- * default binding is `{ default: d }`, a named list rewrites `a as b` to `a: b` and `"a-b" as b` to
- * `"a-b": b`, and a default binding with a named list or a namespace joins them (`{ default: d, a: b }`,
- * `{ default: d, ...m }`). `""` means the clause binds nothing at runtime (a bare `type` element);
- * undefined means some name does not rewrite, so no hint is printed rather than one that binds fewer
- * names than the declaration did. Comments are already blanked; a list's trailing comma binds nothing.
- */
-function dynamicBinding(clause: string): string | undefined {
-  const pieces = splitCommas(clause).map((piece) => piece.trim());
-  if (pieces.some((piece) => piece === "")) return undefined;
-  // The names a named list binds, without its braces; `""` when it binds nothing.
-  const named = (braces: string): string | "" | undefined => {
-    const elements = splitCommas(braces.slice(1, -1)).map((element) => element.trim());
-    if (elements.length > 1 && elements[elements.length - 1] === "") elements.pop();
-    const bound: string[] = [];
-    for (const element of elements) {
-      const renaming = aliasedName.exec(element);
-      if (elidedName.test(element)) continue;
-      if (renaming !== null && isBindable(renaming[2] ?? "")) bound.push(`${renaming[1]}: ${renaming[2]}`);
-      else if (isBindable(element)) bound.push(element);
-      else return undefined;
-    }
-    return bound.length > 0 ? bound.join(", ") : "";
-  };
-  const namespace = namespaceName.exec(pieces[0] ?? "");
-  if (pieces.length === 1) {
-    if (namespace !== null && isBindable(namespace[1] ?? "")) return namespace[1];
-    if (isBindable(pieces[0] ?? "")) return `{ default: ${pieces[0]} }`;
-    const inner = pieces[0]?.startsWith("{") ? named(pieces[0]) : undefined;
-    return inner === undefined ? undefined : inner === "" ? "" : `{ ${inner} }`;
-  }
-  const secondNamespace = pieces.length === 2 && isBindable(pieces[0] ?? "") ? namespaceName.exec(pieces[1] ?? "") : null;
-  if (secondNamespace !== null && isBindable(secondNamespace[1] ?? "")) return `{ default: ${pieces[0]}, ...${secondNamespace[1]} }`;
-  const inner = pieces.length === 2 && isBindable(pieces[0] ?? "") && pieces[1]?.startsWith("{") ? named(pieces[1] ?? "") : undefined;
-  return inner === undefined ? undefined : inner === "" ? `{ default: ${pieces[0]} }` : `{ default: ${pieces[0]}, ${inner} }`;
 }
 
 /** A scan of the library's bytes: the generation they make and the text each module has in it. */
