@@ -3247,7 +3247,7 @@
   },
   {
     "name": "social",
-    "description": "Talk to, wait for, follow, and hand items to other players.",
+    "description": "Talk to, wait for, follow, and hand items to other players, and gesture at them (look, nod, shake, wave, crouch, jump, hold an item out).",
     "uses": [
       "move",
       "sense",
@@ -3434,6 +3434,67 @@
         },
         "returns": {
           "$schema": "https://json-schema.org/draft/2020-12/schema"
+        }
+      },
+      {
+        "name": "gesture",
+        "description": "Body language toward a player; takes about a second or two, and the controls are released afterwards. `kind`: look (turn to face `toward` and hold their gaze), nod (the head dips three times: yes), shake (the head turns side to side: no), wave (the right arm swings three times), crouch (sneak for a moment, then stand), jump (one hop), present (hold `item` out in the main hand, taken from anywhere in the inventory, and it stays held; without `item`, show what is already in hand). `toward`: a username in view; the head turns to face that player first (required for look).",
+        "args": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "look",
+                "nod",
+                "shake",
+                "wave",
+                "crouch",
+                "jump",
+                "present"
+              ]
+            },
+            "toward": {
+              "type": "string",
+              "minLength": 1
+            },
+            "item": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        "returns": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "look",
+                "nod",
+                "shake",
+                "wave",
+                "crouch",
+                "jump",
+                "present"
+              ]
+            },
+            "toward": {
+              "type": "string"
+            },
+            "item": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "additionalProperties": false
         }
       }
     ]
