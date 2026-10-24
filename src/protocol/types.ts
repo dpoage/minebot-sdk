@@ -32,7 +32,7 @@ export interface RunResult {
  * `KEPT_RUNS` of them, so an agent can read a run's outcome after it detached.
  */
 export interface RunRecord {
-  /** The run's seq: what its `program_finished` event carries and `get_run` takes. */
+  /** The run's seq: the `run` field of its `program_finished` event, and what `get_run` takes. */
   seq: number;
   startedAt: string;
   status: RunStatus;

@@ -157,7 +157,7 @@ export class RunReporter implements RunRecorder {
     }
   }
 
-  async record(run: { code: string; timeoutMs?: number; extra?: object; requestId?: number; trigger?: FiringOf; call?: string }, execute: () => Promise<RunOutcome & RunPreview>): Promise<RunResult> {
+  async record(run: { code: string; timeoutMs?: number; extra?: object; requestId?: number; trigger?: FiringOf }, execute: () => Promise<RunOutcome & RunPreview>): Promise<RunResult> {
     // Its arrival: the run takes the slot, or is refused before the supervisor hears of it.
     if (this.#slot.state !== "idle") throw new BusyError();
     const runId = this.#nextId++;
@@ -172,7 +172,6 @@ export class RunReporter implements RunRecorder {
         extra: run.extra ?? {},
         ...(run.requestId !== undefined && { requestId: run.requestId }),
         ...(run.trigger && { trigger: run.trigger }),
-        ...(run.call !== undefined && { call: run.call }),
       });
     } catch (err) {
       // The history refused its start: its code never starts, and what was pending for it goes with it.

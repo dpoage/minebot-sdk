@@ -60,13 +60,13 @@ export interface BodyOptions {
 export interface RunRecorder {
   /**
    * Records the start of `execute`, runs it once the history has it, and records its end. A run that
-   * throws leaves no end; a start or end the history cannot write fails the run. `requestId` is the
-   * API request the run answers and `trigger` the definition it fires, so the supervisor can end the run if this host is killed;
-   * `call` names the call the run is (an action's or a built-in's), for the event and record of its end.
+   * throws leaves no end; a start or end the history cannot write fails the run. `requestId` is
+   * the API request the run answers and `trigger` the definition it fires, so the supervisor can end the run if this host is killed.
+   * A call's name rides its `extra.call`, the same field its history line holds.
    * The run takes the body's one run slot at this call and holds it until its end: a run recorded while the slot is taken
    * (another run's start not yet acked, its code running, or its abort's grace) is refused with `BusyError` at once, and is never reported.
    */
-  record(run: { code: string; timeoutMs?: number; extra?: object; requestId?: number; trigger?: FiringOf; call?: string }, execute: () => Promise<RunOutcome & RunPreview>): Promise<RunResult>;
+  record(run: { code: string; timeoutMs?: number; extra?: object; requestId?: number; trigger?: FiringOf }, execute: () => Promise<RunOutcome & RunPreview>): Promise<RunResult>;
   /** Whether a run holds the slot: `record` would refuse a run now. */
   readonly busy: boolean;
   /** Calls `listener` each time the slot frees: a run's end, or a start the history refused. */

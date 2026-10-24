@@ -64,8 +64,8 @@ export function usageFor(features: BodyFeatures | null, hasBody = HAS_BODY, oper
       : []),
     "  stop                 Abort the current run.",
     "  events               Print buffered events as JSON.",
-    "  runs [seq]           A finished run's record: status, logs, error or result; the seq is the one its",
-    `                       program_finished event carries, or the most recent finished run without one (the last ${KEPT_RUNS} are kept).`,
+    "  runs [seq]           A finished run's record: its seq and, for a call, its name, then status, logs, error or",
+    `                       result; the seq is the run field of its program_finished event, or the most recent finished run without one (the last ${KEPT_RUNS} are kept).`,
     "  wait                 Block until a matching event arrives (chat, nightfall, a death, a hostile nearby, low health...), then print it.",
     "  chat <message>       Send a chat message.",
     ...(caps.wiki

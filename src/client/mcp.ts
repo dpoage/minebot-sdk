@@ -263,9 +263,9 @@ export async function serveMcp(bodyName: string, toolSet: ToolSet): Promise<void
   server.registerTool(
     "get_run",
     {
-      description: `What a run ended with — status, logs, and error or result — after the fact: the run whose program_finished event carried this seq, or the most recent finished run without one. Answers like run_program. The body keeps the last ${KEPT_RUNS} finished runs; a detached caller (a timeout, a killed CLI) reads its run's outcome here instead of re-running it.`,
+      description: `What a run ended with — status, logs, and error or result — after the fact, named by its seq and, for a call, its name: the run whose program_finished event carries this seq in its run field, or the most recent finished run without one. Answers like run_program. The body keeps the last ${KEPT_RUNS} finished runs; a detached caller (a timeout, a killed CLI) reads its run's outcome here instead of re-running it.`,
       inputSchema: {
-        seq: z.number().int().positive().optional().describe("The run's seq, from its program_finished event or a minebot runs listing. Omit for the most recent finished run."),
+        seq: z.number().int().positive().optional().describe("The run's seq: the run field of its program_finished event (the event's own seq is not it). Omit for the most recent finished run."),
       },
     },
     ({ seq }) => call(async (c) => formatRun(await c.runs(seq))),

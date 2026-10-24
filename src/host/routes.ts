@@ -291,12 +291,12 @@ export function bodyRoutes({ body, builtins, recorder, routines }: RouteDeps): R
         // A name with a dot is a built-in's; it is never a binding.
         if (name.includes(".")) {
           if (builtins.routine(name) === undefined) throw new HttpError(404, `no built-in routine "${name}"`);
-          return recorder.record({ code: "", timeoutMs, requestId, call: name, extra: { call: { name, args } } }, () => body.callBuiltin(name, args, timeoutMs));
+          return recorder.record({ code: "", timeoutMs, requestId, extra: { call: { name, args } } }, () => body.callBuiltin(name, args, timeoutMs));
         }
         if (!routines) throw new HttpError(404, `no action named "${name}": this body has no routine library; built-in routines are called as <module>.<routine>`);
         const binding = routines.bindings.action(name);
         if (!binding) throw new HttpError(404, `no action bound to "${name}"`);
-        return recorder.record({ code: "", timeoutMs, requestId, call: name, extra: { call: { name, routine: binding.routine, args } } }, () => body.call(binding.routine, args, timeoutMs));
+        return recorder.record({ code: "", timeoutMs, requestId, extra: { call: { name, routine: binding.routine, args } } }, () => body.call(binding.routine, args, timeoutMs));
       },
     },
     {

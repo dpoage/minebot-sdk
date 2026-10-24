@@ -177,7 +177,7 @@ export function supervisorRoutes({ events, host }: { events: EventLog; host: Hos
     },
     { method: "POST", path: "/stop", handler: () => host.stop() },
     {
-      // A finished run's record: the one <seq> names (the seq its program_finished event carries), or the most recent without one.
+      // A finished run's record: the one <seq> names (the run field of its program_finished event), or the most recent without one.
       method: "GET",
       path: "/runs",
       pattern: /^\/runs(?:\/.*)?$/,

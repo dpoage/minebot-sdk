@@ -99,6 +99,11 @@ describe("a run's program_finished event", () => {
       if (typeof error !== "string") assert.fail("the error preview is a string");
       assert.equal(error.length, 201);
       assert.ok(error.endsWith("…"));
+      // An exactly-200-char value is at the limit, not past it: no ellipsis. A result's preview is its JSON, so a 198-char string is exactly 200.
+      runOf(await run(body, "export default (() => 'z'.repeat(198))();"));
+      assert.equal(finishOf(body).result, JSON.stringify("z".repeat(198)), "a 200-char result preview carries no ellipsis");
+      runOf(await run(body, "throw new Error('w'.repeat(200));"));
+      assert.equal(finishOf(body).error, "w".repeat(200), "a 200-char error line carries no ellipsis");
     });
   });
 
@@ -112,10 +117,15 @@ describe("a run's program_finished event", () => {
       body.writeRoutines({ blocker: "export default (): never => {\n  for (;;) {}\n};\n" });
       await body.ok("POST", "/bind", { kind: "action", name: "blocker", routine: "blocker" });
       const since = body.events.since(0, 1000).next;
-      const killed = body.request("POST", "/call", { name: "blocker", timeoutMs: 200 });
+      const killed = body.request("POST", "/call", { name: "blocker", args: {}, timeoutMs: 200 });
       assert.equal(runOf(await killed).status, "timeout");
       await body.waitFor("connected", since);
       assert.deepEqual(finishOf(body), { status: "timeout", durationMs: "<ms>", run: 2, call: "blocker", error: restartedError(hungCause(GRACE_MS)) });
+      // A call killed with its host is kept like any finished run; its record still names its call.
+      const line = body.history().find((recorded) => recorded.seq === 2)!;
+      const { code: _, ...record } = line;
+      assert.deepEqual(body.host.keptRun(2), record, "the run killed with its host is kept");
+      assert.deepEqual(record.call, { name: "blocker", routine: "blocker", args: {} }, "its record names its call");
     });
   });
 });
@@ -263,15 +273,15 @@ describe("minebot runs prints a finished run's record", () => {
 
       const good = await cli(body, "runs", String(okSeq));
       assert.equal(good.code, 0, good.err);
-      assert.equal(good.out, `status: ok (${ok.durationMs} ms)\n\nlogs:\nworking\n\nresult:\n42\n`);
+      assert.equal(good.out, `run ${okSeq}: status: ok (${ok.durationMs} ms)\n\nlogs:\nworking\n\nresult:\n42\n`);
 
       const bad = await cli(body, "runs", String(errorSeq));
       assert.equal(bad.code, 2, bad.err);
-      assert.match(bad.out, /^status: error \(\d+ ms\)\n\nerror:\nError: nope\n/, "the record's error is the run's own, whole formatted error");
+      assert.match(bad.out, new RegExp(`^run ${errorSeq}: status: error \\(\\d+ ms\\)\\n\\nerror:\\nError: nope\\n`), "the record's error is the run's own, whole formatted error");
 
       const latest = await cli(body, "runs");
       assert.equal(latest.code, 2, latest.err);
-      assert.match(latest.out, /^status: error /, "no seq is the most recent finished run");
+      assert.match(latest.out, new RegExp(`^run ${errorSeq}: status: error `), "no seq is the most recent finished run, named as the run it is");
 
       const refused = await cli(body, "runs", String(okSeq + 100));
       assert.equal(refused.code, 1, refused.err);

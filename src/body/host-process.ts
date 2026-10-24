@@ -22,6 +22,7 @@ import {
   type HostInit,
   type FiringOf,
   type LostFiring,
+  type RunPreview,
   type ToHost,
 } from "../protocol/host.ts";
 import type { EventLog } from "./events.ts";
@@ -405,6 +406,8 @@ export class HostProcess {
           const recorded = await this.#history.begin(message.code, message.extra);
           const now = Date.now();
           const flight: InFlight = { kind: "in-flight" };
+          // The call the run is rides its extra — the same `call` its history line holds — not a field of its own.
+          const call = callNameOf(message.extra);
           const run: Run = {
             id: message.runId,
             recorded,
@@ -413,7 +416,7 @@ export class HostProcess {
             timeoutAt: now + Math.min(Math.max(message.timeoutMs, 0), MAX_TIMEOUT_MS),
             requestId: message.requestId,
             trigger: message.trigger,
-            ...(message.call !== undefined && { call: message.call }),
+            ...(call !== undefined && { call }),
             state: flight,
           };
           this.#runs.set(message.runId, run);
@@ -451,11 +454,16 @@ export class HostProcess {
         }
         let owed: Reported | undefined;
         let end: RunResult | undefined;
+        // What the event says of the end beyond its own fields: the host's previews while its report
+        // stands. A supervisor-substituted end (a refused write) keeps only the call name, so the event
+        // previews that end's own error — the one its record holds.
+        let view: { call?: string } & RunPreview = {};
         try {
           if (run && flight && message.result) {
             const result = message.result;
             end = result;
             owed = { kind: "reported", answer: { status: 200, body: result }, end: result };
+            view = { call: run.call, errorLine: message.errorLine, resultPreview: message.resultPreview };
             await run.recorded.end(result);
           }
           this.#sendIfOpen(attempt, { kind: "run_ack", runId: message.runId });
@@ -465,6 +473,7 @@ export class HostProcess {
           if (owed && run) {
             end = { status: "error", error, logs: "", durationMs: Date.now() - run.startedAt };
             owed = { kind: "reported", answer: { status: 500, body: { error } }, end };
+            view = { call: run.call };
           }
           this.#sendIfOpen(attempt, { kind: "run_ack", runId: message.runId, error });
         }
@@ -472,10 +481,7 @@ export class HostProcess {
         // event — or asks after the answer it was waiting for — already finds the run's record.
         if (run && end !== undefined && run.trigger === undefined) {
           this.#keep(run.recorded.record(end));
-          this.#events.push(
-            "program_finished",
-            programFinished(end, run.recorded.seq, { ...(run.call !== undefined && { call: run.call }), ...message }),
-          );
+          this.#events.push("program_finished", programFinished(end, run.recorded.seq, view));
         }
         if (!run || !flight) return;
         // The host delivers the end after the ack (its request's answer, its reflex_finished); until it has, its death delivers it.
@@ -568,6 +574,13 @@ export class HostProcess {
     this.#requests.clear();
     this.#schedule(Date.now() - attempt.readyAt);
   }
+}
+
+/** The name of the call a run is, from the `call` its extra carries — the same data its history line holds; a module run has none. */
+function callNameOf(extra: object): string | undefined {
+  const call = "call" in extra ? extra.call : undefined;
+  const name = call !== null && typeof call === "object" && "name" in call ? call.name : undefined;
+  return typeof name === "string" ? name : undefined;
 }
 
 /** How a run ended that its host could not report: stopped or timed out when it was aborted, else failed with the host. */

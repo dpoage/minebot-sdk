@@ -87,12 +87,13 @@ describe("minebot mcp tool sets", () => {
     }
   });
 
-  it("answers get_run with the finished run's record, rendered as a run's answer is", async () => {
-    // A body that serves one finished run under seq 3: an error run, as a detached caller reads it.
-    const record = { seq: 3, startedAt: "t", status: "error", durationMs: 12, error: "Error: nope\n<frames>", logs: "working", call: { name: "act", args: {} } };
+  it("answers get_run with the finished run's record, rendered as a run's answer is and named by the run it describes", async () => {
+    // A body that serves a finished call under seq 3 and a finished module run under seq 7, as a detached caller reads them.
+    const call = { seq: 3, startedAt: "t", status: "error", durationMs: 12, error: "Error: nope\n<frames>", logs: "working", call: { name: "act", args: {} } };
+    const plain = { seq: 7, startedAt: "t", status: "ok", durationMs: 4, result: 42, logs: "" };
     const server = createServer((req, res) => {
       res.setHeader("content-type", "application/json");
-      res.end(JSON.stringify(req.url === "/features" ? EVERYTHING : req.url === "/runs/3" ? record : { doc: "the program reference" }));
+      res.end(JSON.stringify(req.url === "/features" ? EVERYTHING : req.url === "/runs/3" ? call : req.url === "/runs/7" ? plain : { doc: "the program reference" }));
     });
     const { promise, resolve } = Promise.withResolvers<void>();
     server.listen(0, "127.0.0.1", resolve);
@@ -104,7 +105,10 @@ describe("minebot mcp tool sets", () => {
       await client.connect(transport);
       try {
         const answer = await client.callTool({ name: "get_run", arguments: { seq: 3 } });
-        assert.deepEqual(answer.content, [{ type: "text", text: `status: error (12 ms)\n\nlogs:\nworking\n\nerror:\nError: nope\n<frames>` }]);
+        assert.deepEqual(answer.content, [{ type: "text", text: `run 3 (call act): status: error (12 ms)\n\nlogs:\nworking\n\nerror:\nError: nope\n<frames>` }]);
+        // A module run is named by its seq alone: it has no call.
+        const moduleRun = await client.callTool({ name: "get_run", arguments: { seq: 7 } });
+        assert.deepEqual(moduleRun.content, [{ type: "text", text: "run 7: status: ok (4 ms)\n\nresult:\n42" }]);
       } finally {
         await client.close();
       }

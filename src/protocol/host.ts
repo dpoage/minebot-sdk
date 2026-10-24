@@ -173,9 +173,9 @@ export type FromHost =
   /**
    * A program is about to run; user code starts only after the matching `run_ack`. `requestId` is
    * the forwarded request the run answers (/run, /call); `trigger` is the definition a reflex's run fires, which has no request.
-   * `call` names the call the run is (an action's or a built-in's name), for the event and record of its end.
+   * A call's name rides `extra.call.name`, the same field its history line holds.
    */
-  | { kind: "run_started"; runId: number; code: string; timeoutMs: number; extra: object; requestId?: number; trigger?: FiringOf; call?: string }
+  | { kind: "run_started"; runId: number; code: string; timeoutMs: number; extra: object; requestId?: number; trigger?: FiringOf }
   /**
    * The run ended; the run settles once the matching `run_ack` arrives. `result: null` means it threw
    * before producing one (not connected, busy): the run is over and leaves no final history line.

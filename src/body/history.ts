@@ -10,9 +10,8 @@ export interface HistoryOptions {
 
 /** A run's start as the history has it: its seq, its line, and the write of its end. */
 export interface RunStart {
-  /** The run's seq: what its `program_finished` event carries and `get_run` takes, with or without a file to write the line to. */
+  /** The run's seq: the `run` field of its `program_finished` event, and what `get_run` takes, with or without a file to write the line to. */
   seq: number;
-  startedAt: string;
   /**
    * The run's record — its history line without the code — for the end it got: what `get_run`
    * serves. Pure: the record stands even when the line cannot be written.
@@ -49,7 +48,6 @@ export class ProgramHistory {
     const line = (end: RunResult) => ({ ...base, ...end });
     return {
       seq: base.seq,
-      startedAt: base.startedAt,
       record: (end) => {
         const { code: _, ...record } = line(end);
         return record;
