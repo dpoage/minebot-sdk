@@ -331,9 +331,9 @@ function signToEdit(ctx: RoutineContext, pos: Vec3): Block {
   return block;
 }
 
-/** Whether right-clicking a sign with `item` in the main hand acts on the sign instead of opening its editor: honeycomb waxes it for good, dyes and ink sacs recolor or glow its text, and a hanging sign item on a hanging sign tries to hang another sign there. An empty hand or any other item opens the editor. */
+/** Whether right-clicking a sign with `item` in the main hand acts on the sign instead of opening its editor: honeycomb waxes it for good, dyes and ink sacs recolor or glow its text, and a hanging sign item on a wall hanging sign tries to hang another sign there. A ceiling hanging sign opens its editor for the same click a bot sends, and an empty hand or any other item opens every sign's editor. */
 function actsOnSign(item: string | undefined, block: string): boolean {
-  return item !== undefined && (item === "honeycomb" || item === "ink_sac" || item === "glow_ink_sac" || /_dye$/.test(item) || (/_hanging_sign$/.test(item) && /_hanging_sign$/.test(block)));
+  return item !== undefined && (item === "honeycomb" || item === "ink_sac" || item === "glow_ink_sac" || /_dye$/.test(item) || (/_hanging_sign$/.test(item) && /_wall_hanging_sign$/.test(block)));
 }
 
 /**
@@ -394,7 +394,7 @@ export const sign = defineRoutine(
   {
     name: "social.sign",
     description:
-      "Write `lines` (1 to 4 strings, each at most 45 characters as the server counts them — an emoji counts as 2; about 15 characters show per line, so keep lines short) on the existing sign at `at` ({x,y,z} or [x,y,z]). `side`: \"front\" (default) or \"back\". The sign must already stand there (place it with place.place, e.g. item \"oak_sign\") and be within 4.5 blocks of the bot; walk closer first with move.to. A waxed sign cannot be written. Lines you leave out end up empty. The write uses a main hand the server will open the editor for: an ordinary held item or an empty hand is used as it is, while honeycomb, a dye, an ink sac, or a hanging sign item on a hanging sign — each of which would act on the sign instead of opening its editor — is set aside for the write and the hotbar is put back exactly as it was, so the sign is never waxed or recolored. It throws only when every hotbar stack is one of those and no inventory slot is free, naming the stacks. Returns { at, side, lines } with the four lines read back from the sign, and throws if the sign does not show what was written.",
+      "Write `lines` (1 to 4 strings, each at most 45 characters as the server counts them — an emoji counts as 2; about 15 characters show per line, so keep lines short) on the existing sign at `at` ({x,y,z} or [x,y,z]). `side`: \"front\" (default) or \"back\". The sign must already stand there (place it with place.place, e.g. item \"oak_sign\") and be within 4.5 blocks of the bot; walk closer first with move.to. A waxed sign cannot be written. Lines you leave out end up empty. The write uses a main hand the server will open the editor for: an ordinary held item or an empty hand is used as it is, while honeycomb, a dye, an ink sac, or a hanging sign item on a wall hanging sign — each of which would act on the sign instead of opening its editor — is set aside for the write and the hotbar is put back exactly as it was, so the sign is never waxed or recolored. It throws only when every hotbar stack is one of those and no inventory slot is free, naming the stacks. Returns { at, side, lines } with the four lines read back from the sign, and throws if the sign does not show what was written.",
     args: z.object({
       at: Position,
       lines: z

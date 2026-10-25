@@ -57,8 +57,8 @@ interface SignOptions extends Pick<HarnessOptions, "inventory" | "equipment" | "
 
 /**
  * The harness bot has no sign editor. This gives it the members the routine reaches for, and plays the server's part: the server lets the held item
- * act on the sign first, so honeycomb waxes it, a dye or an ink sac changes its text, and a hanging sign in hand on a hanging sign tries to hang
- * another sign there and opens nothing; a bare hand or any other item opens the editor (`signOpen`).
+ * act on the sign first, so honeycomb waxes it, a dye or an ink sac changes its text, and a hanging sign in hand on a wall hanging sign tries to hang
+ * another sign there and opens nothing; a ceiling hanging sign, a bare hand, or any other item opens the editor (`signOpen`).
  */
 function signWorld(options: SignOptions = {}) {
   const at = options.at ?? SIGN_AT;
@@ -82,7 +82,7 @@ function signWorld(options: SignOptions = {}) {
       else if (held && /_dye$/.test(held)) entity.value.front_text.value.color = str("blue");
       else if (held === "glow_ink_sac") entity.value.front_text.value.has_glowing_text = byte(1);
       else if (held === "ink_sac") entity.value.front_text.value.has_glowing_text = byte(0);
-      else if (held && /hanging_sign$/.test(held) && /hanging_sign$/.test(block.name)) {
+      else if (held && /hanging_sign$/.test(held) && /wall_hanging_sign$/.test(block.name)) {
         // tries to hang another sign there: this sign is untouched and no editor opens
       }
       else if (!options.silent && entity.value.is_waxed.value === 0) {
@@ -225,7 +225,7 @@ describe("social.sign: the write uses a hand the server will open the editor for
   const heldCases: { held: string; block: string; hand: string }[] = [
     ...APPLICATORS.map((held) => ({ held, block: "oak_sign", hand: "bread" })),
     { held: "oak_hanging_sign", block: "oak_wall_hanging_sign", hand: "bread" },
-    { held: "oak_hanging_sign", block: "oak_hanging_sign", hand: "bread" },
+    { held: "oak_hanging_sign", block: "oak_hanging_sign", hand: "oak_hanging_sign" },
     { held: "bread", block: "oak_sign", hand: "bread" },
     { held: "oak_sign", block: "oak_sign", hand: "oak_sign" },
     { held: "dirt", block: "oak_wall_hanging_sign", hand: "dirt" },
@@ -237,7 +237,7 @@ describe("social.sign: the write uses a hand the server will open the editor for
       const heldBefore = world.h.count(held);
       const result = await world.h.run(social.sign, { at: world.at, lines: ["board"] });
       assert.deepEqual(result.lines, ["board", "", "", ""]);
-      assert.deepEqual(world.hands, [hand], "an item that acts on the sign is never the hand the sign is used with");
+      assert.deepEqual(world.hands, [hand], "the sign is used with a hand the server opens its editor for");
       assert.equal(world.entity.value.is_waxed.value, 0);
       assert.equal(world.entity.value.front_text.value.color.value, "black");
       assert.equal(world.entity.value.front_text.value.has_glowing_text.value, 0);
@@ -259,6 +259,26 @@ describe("social.sign: the write uses a hand the server will open the editor for
       assert.equal(world.h.bot.quickBarSlot, 0);
       assert.equal(world.h.count(item), count);
     }
+  });
+
+  it("an inventory full of hanging signs, on a ceiling hanging sign: the held item is used as it is and the sign is written", async () => {
+    const world = signWorld({ block: "oak_hanging_sign", inventory: { oak_hanging_sign: 576 }, equipment: { hand: "oak_hanging_sign" } });
+    const result = await world.h.run(social.sign, { at: world.at, lines: ["ceiling"] });
+    assert.deepEqual(result.lines, ["ceiling", "", "", ""]);
+    assert.deepEqual(world.hands, ["oak_hanging_sign"], "a hanging sign item opens a ceiling hanging sign's editor");
+    assert.equal(world.h.bot.quickBarSlot, 0);
+    assert.equal(world.h.count("oak_hanging_sign"), 576);
+    assert.equal(world.entity.value.is_waxed.value, 0);
+  });
+
+  it("the same full inventory on a wall hanging sign: no choice opens the editor, so it throws naming the stacks", async () => {
+    const world = signWorld({ block: "oak_wall_hanging_sign", inventory: { oak_hanging_sign: 576 }, equipment: { hand: "oak_hanging_sign" } });
+    await assert.rejects(
+      world.h.run(social.sign, { at: world.at, lines: ["x"] }),
+      /every hotbar stack holds one of \["oak_hanging_sign"\], which acts on the oak_wall_hanging_sign instead of opening its editor.*Free one hotbar slot \(inventory\.toss\)/,
+    );
+    assert.deepEqual([world.hands.length, world.updates.length], [0, 0]);
+    assert.equal(world.entity.value.is_waxed.value, 0);
   });
 
   it("every hotbar stack acts on the sign, with the main grid free: the held stack waits there and comes back to its slot", async () => {
