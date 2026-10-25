@@ -659,10 +659,83 @@ describe("'air' cells", () => {
       assert.ok(built.failed.length > 0);
       for (const f of built.failed) {
         assert.equal(f.block, "air");
-        assert.match(f.reason, /^gravel kept falling into .* from above after 8 more digs; clear the cells above it too/);
+        assert.match(f.reason, /^gravel kept falling into .* from above; clear the cells above it too/);
       }
     } finally {
       stop();
     }
+  });
+
+  /**
+   * Lava that spreads as in the game: a dug-out cell among `cells` turns to lava `ticks` after it is both clear and beside lava, the clock's
+   * own time even when a sleep passes many ticks at once, so lava runs on along a row (checked whenever the run yields).
+   */
+  function lavaFlow(g: Harness, cells: Xyz[], ticks: number): () => void {
+    const clearedAt = new Map<string, number>();
+    const lavaAt = new Map<string, number>();
+    g.bot.on("diggingCompleted", (dug) => clearedAt.set(key([dug.position.x, dug.position.y, dug.position.z]), g.bot.time.age));
+    let timer: NodeJS.Immediate;
+    const spread = () => {
+      for (let changed = true; changed; ) {
+        changed = false;
+        for (const c of cells) {
+          const cleared = clearedAt.get(key(c));
+          if (cleared === undefined || g.blockAt(c).name !== "air") continue;
+          const wet = [[1, 0, 0], [-1, 0, 0], [0, 0, 1], [0, 0, -1], [0, 1, 0]]
+            .map(([dx, dy, dz]) => [c[0] + dx!, c[1] + dy!, c[2] + dz!] as Xyz)
+            .filter((n) => g.blockAt(n).name === "lava")
+            .map((n) => lavaAt.get(key(n)) ?? -Infinity);
+          if (wet.length === 0) continue;
+          const due = Math.max(cleared, Math.min(...wet)) + ticks;
+          if (g.bot.time.age < due) continue;
+          g.setBlock(c, "lava");
+          lavaAt.set(key(c), due);
+          changed = true;
+        }
+      }
+      timer = setImmediate(spread);
+    };
+    timer = setImmediate(spread);
+    return () => clearImmediate(timer);
+  }
+
+  it("that lava flows into after they are dug out are reported as failed, naming the lava and the fix, one cell or a row of them", async () => {
+    for (const cells of [[[2, 64, 0]], [[1, 64, 0], [2, 64, 0]]] as Xyz[][]) {
+      // Lava spreads one block in 30 ticks, after dig.dig and the falling-block wait are done with the cell.
+      const g = createHarness({ blocks: [...cells.map((at) => ({ name: "dirt", at })), { name: "lava", at: [3, 64, 0] }], position: [0.5, 64, 2.5] });
+      const stop = lavaFlow(g, cells, 30);
+      try {
+        const cut = await g.run(builder.fill, { from: cells[0]!, to: cells.at(-1)!, block: "air" });
+        const built = await g.run(builder.build, cut);
+        assert.equal(built.placed, 0, `${cells.length} cell(s)`);
+        assert.equal(built.alreadyCorrect, 0);
+        assert.deepEqual(built.failed.map((f) => [f.position.x, f.block]).sort(), cells.map((c) => [c[0], "air"]));
+        for (const f of built.failed) assert.match(f.reason, /^lava flowed into .* after it was cleared; place a block there first or clear the lava$/);
+        assert.equal((await g.run(builder.check, cut)).correct, 0, "check agrees: the cells hold lava");
+      } finally {
+        stop();
+      }
+    }
+  });
+});
+
+describe("builder.check and builder.build agree on the block placing an item gives", () => {
+  it("count a torch cell holding wall_torch, an oak_sign cell holding oak_wall_sign and a bamboo cell holding bamboo_sapling as correct, and another wall form as a mismatch", async () => {
+    const g = createHarness({
+      blocks: [
+        { name: "stone", from: [0, 64, 1], to: [3, 65, 1] },
+        { name: "wall_torch", at: [0, 64, 0] },
+        { name: "oak_wall_sign", at: [1, 64, 0] },
+        { name: "bamboo_sapling", at: [2, 64, 0] },
+        { name: "redstone_wall_torch", at: [3, 64, 0] },
+      ],
+      position: [1.5, 64, -2.5],
+    });
+    const right = { origin: { x: 0, y: 64, z: 0 }, blueprint: { palette: { t: "torch", s: "oak_sign", b: "bamboo" }, layers: [["tsb"]] } };
+    assert.deepEqual(await g.run(builder.check, right), { correct: 3, total: 3, mismatches: [] });
+    // build finds them already there and needs no torch, sign or bamboo for them.
+    assert.deepEqual(await g.run(builder.build, right), { placed: 0, alreadyCorrect: 3, failed: [] });
+    const wrong = await g.run(builder.check, { origin: { x: 3, y: 64, z: 0 }, blueprint: { palette: { t: "torch" }, layers: [["t"]] } });
+    assert.deepEqual(wrong.mismatches.map((m) => m.actual), ["redstone_wall_torch"]);
   });
 });

@@ -2403,7 +2403,7 @@
       },
       {
         "name": "build",
-        "description": "Build the `blueprint` with its first layer's first row's first character at `origin`; the result of line, arc, fill, box or combine is both at once: `await builder.build(ctx, await builder.box(ctx, {...}))`. Skips cells already correct. Digs out 'air' cells first, top down, and again when sand or gravel falls back in (they count as placed); then places blocks bottom-up, each once something solid touches it. Fails up front on missing materials unless `partial`. Returns { placed, alreadyCorrect, failed }, each cell counted in exactly one.",
+        "description": "Build the `blueprint` with its first layer's first row's first character at `origin`; the result of line, arc, fill, box or combine is both at once: `await builder.build(ctx, await builder.box(ctx, {...}))`. Skips cells already correct. Digs out 'air' cells first, top down, and again when sand or gravel falls back in (they count as placed); then places blocks bottom-up, each once something solid touches it. Before returning it reads every 'air' cell again, after water or lava beside one has had time to flow: a cell that sand, gravel or a fluid filled is in failed, naming it. Fails up front on missing materials unless `partial`. Returns { placed, alreadyCorrect, failed }, each cell counted in exactly one.",
         "args": {
           "$schema": "https://json-schema.org/draft/2020-12/schema",
           "type": "object",
@@ -2557,7 +2557,7 @@
       },
       {
         "name": "check",
-        "description": "Compare the world with the `blueprint` at `origin` (a shape's result is both): { correct, total, mismatches (first 20) }. An 'air' cell is correct when it holds air or cave_air.",
+        "description": "Compare the world with the `blueprint` at `origin` (a shape's result is both): { correct, total, mismatches (first 20) }. An 'air' cell is correct when it holds air or cave_air; a block's cell also when it holds the form placing that block gives against a wall (wall_torch for torch, oak_wall_sign for oak_sign) or bamboo_sapling for bamboo.",
         "args": {
           "$schema": "https://json-schema.org/draft/2020-12/schema",
           "type": "object",

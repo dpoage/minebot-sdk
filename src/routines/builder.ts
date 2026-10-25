@@ -69,9 +69,15 @@ export function blueprintMaterials(blueprint: Blueprint): Record<string, number>
 /** True for the blocks an 'air' cell accepts. */
 const isClear = (name: string): boolean => name === AIR || name === "cave_air";
 
-/** True when the world already holds `block` at a target: for 'air', air or cave_air. build and check agree through this. */
+/**
+ * True when the world already holds `block` at a target: for 'air', air or cave_air; otherwise the block, or the form placing its
+ * item gives against a wall (wall_torch for torch, oak_wall_sign for oak_sign) or a bamboo_sapling for bamboo, as place.place accepts.
+ * build and check agree through this.
+ */
 function holds(actual: string | undefined, block: string): boolean {
-  return block === AIR ? actual !== undefined && isClear(actual) : actual === block;
+  if (actual === undefined) return false;
+  if (block === AIR) return isClear(actual);
+  return actual === block || actual.replace("wall_", "") === block || (block === "bamboo" && actual === "bamboo_sapling");
 }
 
 /**
@@ -103,6 +109,33 @@ async function clearCell(ctx: RoutineContext, pos: Vec3): Promise<boolean> {
 const FALLS = /^(?:sand|red_sand|gravel|suspicious_sand|suspicious_gravel|\w+_concrete_powder|(?:chipped_|damaged_)?anvil)$/;
 /** How many times build digs out again the 'air' cells that falling blocks refilled. */
 const REFILL_ROUNDS = 8;
+/** Lava spreads one block in 30 ticks (1.5 s) in the overworld, water in 5: a cleared cell beside a fluid is read again after this long. */
+const FLOW_MS = 2_000;
+
+/**
+ * The reasons the 'air' cells that do not hold air when build ends are failed for, by cell: read once falling blocks have landed and,
+ * while a clear cell touches water or lava, every `FLOW_MS` until a wait changes nothing.
+ */
+async function stillFilled(ctx: RoutineContext, cells: readonly Vec3[]): Promise<Map<Vec3, string>> {
+  const { bot } = ctx;
+  const nameAt = (pos: Vec3) => bot.blockAt(pos)?.name ?? "an unloaded block";
+  await settle(ctx, cells);
+  for (let wait = 0; wait < 5; wait++) {
+    const before = cells.map(nameAt).join();
+    if (!cells.some((c) => isClear(nameAt(c)) && FACES.some((face) => /^(?:water|lava)$/.test(nameAt(c.plus(face)))))) break;
+    await ctx.sleep(FLOW_MS);
+    if (cells.map(nameAt).join() === before) break;
+  }
+  const reasons = new Map<Vec3, string>();
+  for (const pos of cells) {
+    const now = nameAt(pos);
+    if (isClear(now)) continue;
+    if (now === "water" || now === "lava") reasons.set(pos, `${now} flowed into ${pos} after it was cleared; place a block there first or clear the ${now}`);
+    else if (FALLS.test(now)) reasons.set(pos, `${now} kept falling into ${pos} from above; clear the cells above it too (add them to the blueprint as 'air')`);
+    else reasons.set(pos, `${pos} holds ${now} when the build ends`);
+  }
+  return reasons;
+}
 
 /**
  * Waits until sand or gravel set loose above `cells` has landed: a falling block is a falling_block
@@ -166,22 +199,10 @@ async function buildBlueprint(ctx: RoutineContext, blueprint: Blueprint, origin:
   for (const t of todo.filter((t) => t.block === AIR).sort(topDown)) await attempt(t, () => clearCell(ctx, t.position));
   // Sand or gravel above the cells falls in once what held it up is dug; dig out what landed until the cells stay clear.
   if (placed.size > 0) {
-    for (let round = 1; ; round++) {
+    for (let round = 0; round < REFILL_ROUNDS; round++) {
       await settle(ctx, clears.map((t) => t.position));
       const refilled = clears.filter((t) => !failed.has(t) && !holds(bot.blockAt(t.position)?.name, AIR)).sort(topDown);
       if (refilled.length === 0) break;
-      if (round > REFILL_ROUNDS) {
-        for (const t of refilled) {
-          const now = bot.blockAt(t.position)?.name ?? "an unloaded block";
-          failed.set(
-            t,
-            FALLS.test(now)
-              ? `${now} kept falling into ${t.position} from above after ${REFILL_ROUNDS} more digs; clear the cells above it too (add them to the blueprint as 'air')`
-              : `${t.position} holds ${now} again after being dug out ${REFILL_ROUNDS} more times`,
-          );
-        }
-        break;
-      }
       for (const t of refilled) await attempt(t, () => clearCell(ctx, t.position));
     }
   }
@@ -200,6 +221,16 @@ async function buildBlueprint(ctx: RoutineContext, blueprint: Blueprint, origin:
     const t = blocks.splice(next, 1)[0]!;
     await attempt(t, () => place.place(ctx, { at: t.position, item: t.block }));
     if (placed.has(t)) rescan = true;
+  }
+
+  // Last, every 'air' cell is read again once what this build set loose has settled: one that sand, gravel or a fluid filled is failed, naming it.
+  const open = clears.filter((t) => !failed.has(t));
+  if (placed.size > 0 && open.length > 0) {
+    const reasons = await stillFilled(ctx, open.map((t) => t.position));
+    for (const t of open) {
+      const reason = reasons.get(t.position);
+      if (reason !== undefined) failed.set(t, reason);
+    }
   }
 
   const result: BuildResult = { placed: 0, alreadyCorrect: 0, failed: [] };
@@ -240,7 +271,7 @@ export const materials = defineRoutine(
 export const build = defineRoutine(
   {
     name: "builder.build",
-    description: "Build the `blueprint` with its first layer's first row's first character at `origin`; the result of line, arc, fill, box or combine is both at once: `await builder.build(ctx, await builder.box(ctx, {...}))`. Skips cells already correct. Digs out 'air' cells first, top down, and again when sand or gravel falls back in (they count as placed); then places blocks bottom-up, each once something solid touches it. Fails up front on missing materials unless `partial`. Returns { placed, alreadyCorrect, failed }, each cell counted in exactly one.",
+    description: "Build the `blueprint` with its first layer's first row's first character at `origin`; the result of line, arc, fill, box or combine is both at once: `await builder.build(ctx, await builder.box(ctx, {...}))`. Skips cells already correct. Digs out 'air' cells first, top down, and again when sand or gravel falls back in (they count as placed); then places blocks bottom-up, each once something solid touches it. Before returning it reads every 'air' cell again, after water or lava beside one has had time to flow: a cell that sand, gravel or a fluid filled is in failed, naming it. Fails up front on missing materials unless `partial`. Returns { placed, alreadyCorrect, failed }, each cell counted in exactly one.",
     args: z.object({
       blueprint: Blueprint,
       origin: Position,
@@ -258,7 +289,7 @@ export const build = defineRoutine(
 export const check = defineRoutine(
   {
     name: "builder.check",
-    description: "Compare the world with the `blueprint` at `origin` (a shape's result is both): { correct, total, mismatches (first 20) }. An 'air' cell is correct when it holds air or cave_air.",
+    description: "Compare the world with the `blueprint` at `origin` (a shape's result is both): { correct, total, mismatches (first 20) }. An 'air' cell is correct when it holds air or cave_air; a block's cell also when it holds the form placing that block gives against a wall (wall_torch for torch, oak_wall_sign for oak_sign) or bamboo_sapling for bamboo.",
     args: z.object({ blueprint: Blueprint, origin: Position }),
     returns: z.object({
       correct: z.number(),
