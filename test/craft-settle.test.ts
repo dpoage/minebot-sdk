@@ -9,6 +9,19 @@ const TABLE = [{ name: "crafting_table", at: [1, 64, 0] as const }];
 /** The server answers, but the crafted item reaches the inventory this many ticks after bot.craft resolved (20 ticks = 1 s). */
 const LAG = 5;
 
+/**
+ * Lets the clock of a run in progress reach `tick`, or returns as soon as the run ends: a run that ends
+ * before the test acts did not wait, and the test's assertions then fail it instead of looping forever.
+ */
+async function whileRunning(h: Harness, run: Promise<unknown>, tick: number): Promise<void> {
+  let ended = false;
+  const end = () => {
+    ended = true;
+  };
+  void run.then(end, end);
+  while (!ended && h.bot.time.age < tick) await new Promise<void>((resolve) => setImmediate(resolve));
+}
+
 describe("the harness's late crafted item", () => {
   it("lands in the inventory after bot.craft resolved, when the clock passes the delay, and tells the inventory's listeners", async () => {
     const h = createHarness({ inventory: { oak_planks: 3, stick: 2 }, blocks: TABLE, craftResultDelay: LAG });
@@ -51,14 +64,8 @@ describe("craft.craft on a server whose result arrives late", () => {
     const h = createHarness({ inventory: { oak_planks: 4 }, craftResultDelay: 40 });
     const start = h.bot.time.age;
     const run = h.run(craft.craft, { item: "crafting_table" });
-    let ended = false;
-    const end = () => {
-      ended = true;
-    };
-    void run.then(end, end);
     // An unrelated pickup 25 ticks in: the wait restarts, so the result at tick 40 is still in time (a 1500 ms wait from the start would have ended at tick 30).
-    // A run that ends before then did not wait, and the assertions below fail it.
-    while (!ended && h.bot.time.age < start + 25) await new Promise<void>((resolve) => setImmediate(resolve));
+    await whileRunning(h, run, start + 25);
     h.give("dirt");
     assert.equal(await run, 1);
     assert.equal(h.count("crafting_table"), 1);
@@ -153,6 +160,23 @@ describe("craft.craft when the inventory has no room for the result", () => {
       return true;
     });
   });
+
+  it("counts the slots of an item the recipe does not use as they are: dirt split over two partial stacks leaves no slot free", async () => {
+    // 36 slots: two stacks of 16 dirt (one stack of 32 would fit), the axe's inputs, and 32 single fillers, six of them logs.
+    const inventory: Record<string, number> = { ...fillerSingles(), oak_planks: 4, stick: 3, dirt: 16 };
+    delete inventory.cobblestone;
+    const h = createHarness({ inventory, blocks: TABLE, craftResultDelay: LAG });
+    const slots = h.bot.inventory as unknown as { slots: unknown[]; set(slot: number, item: unknown): void; make(name: string, count: number): unknown };
+    slots.set(slots.slots.findIndex((item, slot) => slot >= 9 && slot < 45 && item === null), slots.make("dirt", 16));
+    assert.equal(h.bot.inventory.emptySlotCount(), 0);
+    await assert.rejects(h.run(crafter.make, { item: "wooden_axe" }), (err: Error) => {
+      assert.ok(err instanceof InventoryFullError, err.message);
+      assert.match(err.message, /^crafted 0 of 1 wooden_axe: the inventory is full, so the 1 wooden_axe the recipe makes fell at the bot's feet/);
+      return true;
+    });
+    for (const log of ["oak_log", "birch_log", "spruce_log", "jungle_log", "acacia_log", "dark_oak_log"]) assert.equal(h.count(log), 1, log);
+    assert.deepEqual(h.entities.filter((e) => e.name === "item").map((e) => `${e.getDroppedItem()?.count} ${e.getDroppedItem()?.name}`), ["1 wooden_axe"]);
+  });
 });
 
 describe("craft.craft with a foreign drop of the crafted item lying nearby", () => {
@@ -160,7 +184,7 @@ describe("craft.craft with a foreign drop of the crafted item lying nearby", () 
     const h = createHarness({ inventory: { oak_planks: 3, stick: 2 }, blocks: TABLE, craftResultDelay: 20 });
     const start = h.bot.time.age;
     const run = h.run(craft.craft, { item: "wooden_axe" });
-    while (h.bot.time.age < start + 2) await new Promise<void>((resolve) => setImmediate(resolve));
+    await whileRunning(h, run, start + 2);
     h.spawn({ name: "item", item: "wooden_axe", at: [3, 64, 1] });
     assert.equal(await run, 1);
     assert.equal(h.bot.time.age - start, 20, "the settle ends when the bot's own axe lands, not when the foreign one appears");
@@ -171,7 +195,7 @@ describe("craft.craft with a foreign drop of the crafted item lying nearby", () 
     const h = createHarness({ inventory: { oak_planks: 2 }, craftResultDelay: LAG });
     const start = h.bot.time.age;
     const run = h.run(craft.craft, { item: "stick" });
-    while (h.bot.time.age < start + 2) await new Promise<void>((resolve) => setImmediate(resolve));
+    await whileRunning(h, run, start + 2);
     h.spawn({ name: "item", item: "stick", count: 4, at: [2, 64, 2] });
     assert.equal(await run, 4);
     assert.equal(h.count("stick"), 4, "the falling stack is still on the ground, not in the count");
@@ -183,7 +207,7 @@ describe("craft.craft with a foreign drop of the crafted item lying nearby", () 
     dropClicks(h, 0);
     const start = h.bot.time.age;
     const run = h.run(craft.craft, { item: "stick" });
-    while (h.bot.time.age < start + 2) await new Promise<void>((resolve) => setImmediate(resolve));
+    await whileRunning(h, run, start + 2);
     h.spawn({ name: "item", item: "stick", count: 4, at: [2, 64, 2] });
     await assert.rejects(run, (err: Error) => {
       assert.ok(!(err instanceof InventoryFullError), err.message);

@@ -60,19 +60,25 @@ async function settle(ctx: RoutineContext, settled: () => boolean): Promise<void
 }
 
 /**
- * How many of the crafted item the `times` crafts can fit in the inventory, computed before they run:
- * each craft consumes its inputs first (a stack may empty, which frees a slot), then the outputs take
- * room on a matching partial stack or an empty slot, the crafted item last. Stacks are modelled packed,
- * the most room any arrangement of the same items can have, so the answer never says "no room" for an
- * inventory that could hold the result.
+ * How many of the crafted item the `times` crafts can fit in the inventory, computed before they run.
+ * Stacks of items the recipe neither uses nor makes never move, so they take the slots they take.
+ * The recipe's own items are modelled packed: Mineflayer picks an input stack up whole and puts what is
+ * left back onto a partial stack first, and the result likewise joins partial stacks before an empty slot:
+ * each craft consumes its inputs (a stack may empty, which frees a slot), then the crafted item takes
+ * room on its partial stack or an empty slot, then any other output (a bucket left over) does.
  */
 function roomFor(ctx: RoutineContext, recipe: { delta: readonly { id: number; count: number }[] }, resultId: number, times: number): number {
   const { bot } = ctx;
   const size = (type: number) => bot.registry.items[type]?.stackSize ?? 64;
+  const involved = new Set(recipe.delta.map((d) => d.id));
+  let fixed = 0;
   const counts = new Map<number, number>();
-  for (const stack of bot.inventory.items()) counts.set(stack.type, (counts.get(stack.type) ?? 0) + stack.count);
+  for (const stack of bot.inventory.items()) {
+    if (involved.has(stack.type)) counts.set(stack.type, (counts.get(stack.type) ?? 0) + stack.count);
+    else fixed++;
+  }
   const slots = () => {
-    let used = 0;
+    let used = fixed;
     for (const [type, count] of counts) used += Math.ceil(count / size(type));
     return used;
   };
@@ -86,7 +92,7 @@ function roomFor(ctx: RoutineContext, recipe: { delta: readonly { id: number; co
       const have = counts.get(d.id) ?? 0;
       const partial = have % size(d.id) === 0 ? 0 : size(d.id) - (have % size(d.id));
       const empty = Math.max(0, INVENTORY_SLOTS - slots()) * size(d.id);
-      // The other outputs, if any, are placed regardless: what they take is room the crafted item no longer has.
+      // Another output is placed regardless (what does not fit falls): what it takes is room the next craft's item no longer has.
       const fits = d.id === resultId ? Math.min(d.count, partial + empty) : d.count;
       counts.set(d.id, have + fits);
       if (d.id === resultId) room += fits;
