@@ -36,5 +36,5 @@ export default async ({ bot }: RoutineContext, { x, y, z }: { x: number; y: numb
 When a target times out, skip it and choose another one.
 
 <!-- builtins:move -->
-Built-in routines that walk take time limits: `minebot call move.to --args '{"position":[10,64,5],"timeoutMs":30000}'` gives up after `timeoutMs`.
+Built-in routines that walk take time limits: `minebot call move.to --args '{"position":[10,64,5],"timeoutMs":30000}'` gives up after `timeoutMs`. `move.to` also fails fast. After 12 seconds with no progress (no movement, no digging, no block change near the bot), it throws `stuck at ...`. When the pathfinder ends without a way within `range`, it throws `could not reach ...` and names the cause (no path, or the search ran out of time).
 <!-- /builtins:move -->

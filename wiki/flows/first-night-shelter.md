@@ -31,6 +31,24 @@ You need 10 cobblestone, or any other solid block. A wooden pickaxe digs cobbles
    ```
 
    Each `placeBlock` needs a solid block to click on, so the order matters: floor, lower ring, upper ring, roof. Observed: all four sides at both heights and the roof block were solid when it finished, and 6 of 16 cobblestone were left. The box has no opening; leave none, because a mob that climbs walls uses any gap it fits through (`mechanics/spider-climbing`).
+
+   <!-- builtins:builder -->
+   `builder.box` and `builder.build` build the box as one block. `builder.box` makes a blueprint of a hollow room between two corners, and `builder.build` places it in the right order, bottom layer first. This room is 3 blocks wide, long, and high. It has a full ring of walls at two heights and a roof over all 9 cells, so it costs 25 cobblestone, not 10. The corners are at your feet minus 1 and plus 1 on x and z, and the roof is 2 blocks above your feet:
+
+   ```ts
+   import * as builder from "minebot-sdk/routines/builder";
+   import type { RoutineContext } from "minebot-sdk/routine";
+
+   export default async (ctx: RoutineContext) => {
+     const { x, y, z } = ctx.bot.entity.position.floored();
+     const shelter = await builder.box(ctx, { from: [x - 1, y, z - 1], to: [x + 1, y + 2, z + 1], wall: "cobblestone", roof: "cobblestone" });
+     const needed = await builder.materials(ctx, { blueprint: shelter.blueprint });   // { cobblestone: 25 }
+     return { needed, built: await builder.build(ctx, shelter) };                      // { placed, alreadyCorrect, failed }
+   };
+   ```
+
+   Check that you hold the cobblestone and that `failed` is empty. You still decide where to stand, when to start, and what to do when a cell fails.
+   <!-- /builtins:builder -->
 3. **Wait.** Stay inside until the night ends:
 
    ```ts

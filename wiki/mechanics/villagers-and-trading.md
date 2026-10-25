@@ -35,6 +35,13 @@ Each trade has these fields: `inputItem1`, `inputItem2` (use it only when `hasIt
 
 Villagers are `e.name === "villager"`, and the wandering trader is `wandering_trader`. Find the nearest with `bot.nearestEntity((e) => e.name === "villager")`.
 
-<!-- builtins -->
-No built-in routine trades yet; use the code above.
-<!-- /builtins -->
+<!-- builtins:trade -->
+`trade.offers` and `trade.buy` do this for a villager or a wandering trader. Both walk to within 2 blocks of the nearest merchant within `radius` (default 8):
+
+```sh
+minebot call trade.offers
+minebot call trade.buy --args '{"index":0,"times":2}'
+```
+
+`trade.offers` returns `[{ index, give, get, uses, maxUses, disabled }]`, where `give` is the price the merchant charges you now, with demand and reputation included. `trade.buy` makes offer `index` up to `times` times and returns `{ traded, gave, got, shortfall? }`, measured from the inventory. It trades only as often as the output fits in the inventory, so nothing drops, and `shortfall` says why it made fewer trades than you asked for.
+<!-- /builtins:trade -->
