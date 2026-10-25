@@ -1,5 +1,7 @@
 // The player's inventory with Mineflayer's slot layout: armor at 5-8, the main grid at 9-35, the
-// hotbar at 36-44, the off hand at 45. Routines read `slots`, `items()`, and the held item.
+// hotbar at 36-44, the off hand at 45. Routines read `slots`, `items()`, and the held item, and
+// listen for `updateSlot` (slot, old, new) as on Mineflayer's inventory window.
+import { EventEmitter } from "node:events";
 import type { Item } from "prismarine-item";
 import type { ItemClass, Registry } from "./universe.ts";
 
@@ -9,7 +11,7 @@ const INVENTORY_START = 9;
 const INVENTORY_END = 45;
 const HOTBAR_START = 36;
 
-export class Inventory {
+export class Inventory extends EventEmitter {
   readonly slots: (Item | null)[] = new Array<Item | null>(46).fill(null);
   readonly inventoryStart = INVENTORY_START;
   readonly inventoryEnd = INVENTORY_END;
@@ -23,8 +25,15 @@ export class Inventory {
   readonly #registry: Registry;
 
   constructor(ItemClass: ItemClass, registry: Registry) {
+    super();
     this.#Item = ItemClass;
     this.#registry = registry;
+  }
+
+  #changed(slot: number, before: Item | null): void {
+    const after = this.slots[slot] ?? null;
+    this.emit("updateSlot", slot, before, after);
+    this.emit(`updateSlot:${slot}`, before, after);
   }
 
   /** The stacks in the main grid and the hotbar: what Mineflayer calls the inventory's items. */
@@ -55,8 +64,10 @@ export class Inventory {
   }
 
   set(slot: number, item: Item | null): void {
+    const before = this.slots[slot] ?? null;
     if (item) item.slot = slot;
     this.slots[slot] = item;
+    this.#changed(slot, before);
   }
 
   /** Slots in the order a pickup fills them: the hotbar, then the main grid. */
@@ -78,6 +89,7 @@ export class Inventory {
       const moved = Math.min(left, def.stackSize - stack.count);
       stack.count += moved;
       left -= moved;
+      this.#changed(slot, stack);
       if (left === 0) return 0;
     }
     for (const slot of this.#fillOrder()) {
@@ -102,6 +114,7 @@ export class Inventory {
       item.count -= taken;
       left -= taken;
       if (item.count === 0) this.slots[slot] = null;
+      this.#changed(slot, item);
       if (left === 0) break;
     }
     return count - left;
