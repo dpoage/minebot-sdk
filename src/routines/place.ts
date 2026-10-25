@@ -11,9 +11,8 @@ const MAX_REACH = 5.0;
 /** The server takes a placement against a block whose box is this close to the eyes (`REACH` plus 1 of slack), and ignores one farther. */
 const SERVER_REACH = 5.5;
 const EYE_HEIGHT = 1.62;
-/** Longest wait for the server's block updates to show a placement: the second half of a door arrives after the first. */
+/** Longest wait for the server's updates after a placement: the second half of a door, and the item leaving the hand, arrive just after the first half. */
 const SETTLE_MS = 1_000;
-const SETTLE_STEP_MS = 50;
 
 /** Candidate reference blocks around the target, in order of preference: below first. */
 const NEIGHBORS = [
@@ -126,12 +125,24 @@ function placedNames(ctx: RoutineContext, name: string): Set<string> | null {
   return names;
 }
 
-/** Where the second half of a two-cell block sits: above a lower door or tall plant half, ahead of a bed's foot. Null for a one-cell block,
- * including a growing crop with a lower half (pitcher_crop), which fills the cell above only later. */
-function partnerOf(block: Block): Vec3 | null {
+/**
+ * How the block `name` fills a second cell: a "tall" one (doors, double plants) the cell above its lower half, a "bed" the cell ahead
+ * of its foot. Null for a one-cell block, including a growing crop with a lower half (pitcher_crop), which fills the cell above only later.
+ */
+function twoCellKind(ctx: RoutineContext, name: string): "tall" | "bed" | null {
+  const states = ctx.bot.registry.blocksByName[name]?.states ?? [];
+  const has = (state: string, value: string) => states.some((s) => s.name === state && s.values?.includes(value));
+  if (has("half", "lower") && !states.some((s) => s.name === "age")) return "tall";
+  if (has("part", "foot")) return "bed";
+  return null;
+}
+
+/** Where the second half of a placed two-cell block sits: above a lower door or tall plant half, ahead of a bed's foot. Null for a one-cell block. */
+function partnerOf(ctx: RoutineContext, block: Block): Vec3 | null {
+  const kind = twoCellKind(ctx, block.name);
   const state = block.getProperties();
-  if (state.half === "lower" && !("age" in state)) return block.position.offset(0, 1, 0);
-  if (state.part === "foot") return block.position.plus(FACING[String(state.facing)] ?? new Vec3(0, 0, 0));
+  if (kind === "tall" && state.half === "lower") return block.position.offset(0, 1, 0);
+  if (kind === "bed" && state.part === "foot") return block.position.plus(FACING[String(state.facing)] ?? new Vec3(0, 0, 0));
   return null;
 }
 
@@ -141,7 +152,7 @@ function shortfall(ctx: RoutineContext, pos: Vec3, wanted: Set<string> | null, b
   const here = bot.blockAt(pos);
   if (!here) return `${pos} is not loaded`;
   if (wanted === null ? here.type === before.type : !wanted.has(here.name)) return `${pos} holds ${here.name}`;
-  const partner = partnerOf(here);
+  const partner = partnerOf(ctx, here);
   if (!partner) return null;
   const other = bot.blockAt(partner);
   if (other?.name !== here.name) return `its second cell ${partner} holds ${other?.name ?? "nothing loaded"}`;
@@ -150,13 +161,11 @@ function shortfall(ctx: RoutineContext, pos: Vec3, wanted: Set<string> | null, b
 
 /** The cell a two-cell block `name` also needs when placed at `pos`, and which part goes there; null for a one-cell block. */
 function secondCell(ctx: RoutineContext, pos: Vec3, name: string): { cell: Vec3; part: string } | null {
-  const { bot } = ctx;
-  const states = bot.registry.blocksByName[name]?.states ?? [];
-  const has = (state: string, value: string) => states.some((s) => s.name === state && s.values?.includes(value));
-  if (has("half", "lower") && !states.some((s) => s.name === "age")) return { cell: pos.offset(0, 1, 0), part: "upper half, the cell above" };
-  if (has("part", "foot")) {
+  const kind = twoCellKind(ctx, name);
+  if (kind === "tall") return { cell: pos.offset(0, 1, 0), part: "upper half, the cell above" };
+  if (kind === "bed") {
     // A bed's head goes the way the bot faces when it places the foot.
-    const { yaw } = bot.entity;
+    const { yaw } = ctx.bot.entity;
     const ahead = Math.abs(Math.sin(yaw)) > Math.abs(Math.cos(yaw)) ? new Vec3(-Math.sign(Math.sin(yaw)), 0, 0) : new Vec3(0, 0, -Math.sign(Math.cos(yaw)));
     return { cell: pos.plus(ahead), part: "head, the cell it faces" };
   }
@@ -203,14 +212,29 @@ async function stepOut(ctx: RoutineContext, pos: Vec3, name: string): Promise<vo
   if (overlaps(ctx, bot.entity, pos)) throw new Error(`the bot stands in ${pos} and could not step out of it to place ${name} there. Move at least one block away from ${pos} (move.to) and call again.`);
 }
 
-/** Waits briefly for the server's block updates to show `item` in every cell it needs; returns what is still wrong, or null. */
-async function settle(ctx: RoutineContext, pos: Vec3, wanted: Set<string> | null, before: Block): Promise<string | null> {
-  let problem = shortfall(ctx, pos, wanted, before);
-  for (let waited = 0; problem !== null && waited < SETTLE_MS; waited += SETTLE_STEP_MS) {
-    await ctx.sleep(SETTLE_STEP_MS);
-    problem = shortfall(ctx, pos, wanted, before);
+/**
+ * Resolves as soon as `done()` holds, checking it again on every `event` the bot emits, or after `ms` whatever it says; rejects when the run
+ * is stopped. Event-driven, so a placement returns within the same moment the server's update lands, not on the next polling step.
+ */
+async function until(ctx: RoutineContext, event: "blockUpdate" | "heldItemChanged", done: () => boolean, ms: number): Promise<void> {
+  const { bot, signal } = ctx;
+  signal.throwIfAborted();
+  if (done()) return;
+  const { promise, resolve, reject } = Promise.withResolvers<void>();
+  const check = () => {
+    if (done()) resolve();
+  };
+  const stop = () => reject(signal.reason);
+  const timer = setTimeout(resolve, ms);
+  bot.on(event, check);
+  signal.addEventListener("abort", stop, { once: true });
+  try {
+    await promise;
+  } finally {
+    clearTimeout(timer);
+    bot.off(event, check);
+    signal.removeEventListener("abort", stop);
   }
-  return problem;
 }
 
 /**
@@ -274,8 +298,9 @@ async function placeAt(ctx: RoutineContext, pos: Vec3, item: string): Promise<bo
   const stack = bot.inventory.items().find((i) => i.name === name);
   if (!stack) throw new Error(`no ${name} in inventory`);
   await bot.equip(stack, "hand");
-  const heldSlot = bot.heldItem?.slot ?? -1;
-  const heldCount = bot.heldItem?.count;
+  const held = bot.heldItem;
+  const heldSlot = held?.slot ?? -1;
+  const heldCount = held?.count;
   const before = bot.blockAt(pos);
   if (!before) throw new Error(`${pos} is not loaded`);
   const where = `${name} at ${pos} against ${describeFace(face)}`;
@@ -292,15 +317,15 @@ async function placeAt(ctx: RoutineContext, pos: Vec3, item: string): Promise<bo
   } finally {
     if (sneak) bot.setControlState("sneak", false);
   }
-  const problem = await settle(ctx, pos, wanted, before);
+  // The second half of a door or bed arrives in a block update just after the first.
+  await until(ctx, "blockUpdate", () => shortfall(ctx, pos, wanted, before) === null, SETTLE_MS);
+  const problem = shortfall(ctx, pos, wanted, before);
   if (problem !== null) {
     throw new Error(`placed ${where}, but ${problem}, not ${name}.${secondCellNote(ctx, pos, name)}${solid ? bodiesNote(ctx, pos, name) : ""}${tooFar} Free the cells the block needs and call again.`);
   }
   // The server takes the item from the hand a moment after the block shows. Until the inventory says so, a next call
   // could pick this stack again, now empty on the server, and place nothing.
-  for (let waited = 0; bot.game.gameMode !== "creative" && bot.inventory.slots[heldSlot]?.count === heldCount && waited < SETTLE_MS; waited += SETTLE_STEP_MS) {
-    await ctx.sleep(SETTLE_STEP_MS);
-  }
+  if (held && bot.game.gameMode !== "creative") await until(ctx, "heldItemChanged", () => bot.inventory.slots[heldSlot]?.count !== heldCount, SETTLE_MS);
   return true;
 }
 
@@ -308,7 +333,7 @@ export const place = defineRoutine(
   {
     name: "place.place",
     description:
-      "Place one block of `item` at `at` ({x,y,z} or [x,y,z]), digging out a different solid block first. Needs a solid neighbor to place against; it walks closer only when no neighbor's face is within 5 blocks of the eyes, and sneaks when the only neighbors are blocks like a crafting table or chest. The bot steps out of the cell first for a block with a collision box; nothing is refused up front for other bodies. Throws, naming the cause, when the block did not end up in every cell it needs: a creature, player, boat or minecart in the way, a door's cell above or a bed's cell ahead not free. Returns false if the block was already there, true once it is in place (a torch or sign that went on a wall counts).",
+      "Place one block of `item` at `at` ({x,y,z} or [x,y,z]), digging out a different solid block first. Needs a solid neighbor to place against; it walks closer only when no neighbor's face is within 5 blocks of the eyes. It prefers a face on a plain block, and sneaks when it places against a block like a crafting table or chest, so no window opens. The bot steps out of the cell first for a block with a collision box; nothing is refused up front for other bodies. Throws, naming the cause, when the block did not end up in every cell it needs: a creature, player, boat or minecart in the way, a door's cell above or a bed's cell ahead not free. Returns false if the block was already there, true once it is in place (a torch or sign that went on a wall counts).",
     args: z.object({ at: Position, item: z.string().min(1) }),
     returns: z.boolean(),
   },

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import type { EventEmitter } from "node:events";
 import { describe, it } from "node:test";
 import type { Block } from "minebot-sdk/routine";
 import { createHarness, type Harness } from "minebot-sdk/testing";
@@ -27,8 +28,27 @@ function serverPlaces(h: Harness, block: string, properties?: Record<string, unk
     seen.push(`${reference.position} ${face}`);
     const at = reference.position.plus(face);
     h.setBlock([at.x, at.y, at.z], block, properties);
+    const held = h.bot.heldItem;
+    if (held) held.count -= 1;
   };
   return seen;
+}
+
+/**
+ * Runs `update` and emits `event` on the bot the moment the routine starts listening for it: the server's update lands while the
+ * routine waits. The harness bot is a node EventEmitter; mineflayer's Bot type does not list `newListener`.
+ */
+function arrivesWhileWaiting(h: Harness, event: "blockUpdate" | "heldItemChanged", update: () => void): void {
+  const emitter = h.bot as unknown as EventEmitter;
+  const onListener = (name: string | symbol) => {
+    if (name !== event) return;
+    emitter.off("newListener", onListener);
+    queueMicrotask(() => {
+      update();
+      emitter.emit(event);
+    });
+  };
+  emitter.on("newListener", onListener);
 }
 
 describe("place.place: bodies in the cell", () => {
@@ -347,20 +367,32 @@ describe("place.place: every cell holds the block", () => {
     assert.equal(h.count("torch"), 1);
   });
 
-  it("returns only once the server has taken the item from the hand, so a next call does not pick a stack that is empty on the server", async () => {
+  it("returns once the item has left the hand, as soon as that update arrives, so a next call does not pick a stack that is empty on the server", async () => {
     const h = createHarness({ inventory: { cobblestone: 2 } });
-    // The block shows at once; the inventory shows the item taken only once a game tick has passed, as on a real server.
+    // The block shows at once; the inventory update that takes the item comes after it.
     h.bot.placeBlock = async (reference, face) => {
       const at = reference.position.plus(face);
       h.setBlock([at.x, at.y, at.z], "cobblestone");
       const held = h.bot.heldItem;
-      if (!held) throw new Error("nothing in hand");
-      const placedAt = h.bot.time.age;
-      const count = held.count;
-      Object.defineProperty(held, "count", { configurable: true, get: () => (h.bot.time.age > placedAt ? count - 1 : count) });
+      arrivesWhileWaiting(h, "heldItemChanged", () => {
+        if (held) held.count -= 1;
+      });
     };
+    const age = h.bot.time.age;
     assert.equal(await h.run(place.place, { at: [1, 64, 0], item: "cobblestone" }), true);
     assert.equal(h.count("cobblestone"), 1, "returned before the inventory showed the item used");
+    assert.equal(h.bot.time.age, age, "it slept instead of returning when the update arrived");
+  });
+
+  it("returns true as soon as a door's upper half arrives after the lower one, without sleeping", async () => {
+    const h = createHarness({ inventory: { oak_door: 1 } });
+    spyOnPlacements(h, () => {
+      h.setBlock([1, 64, 0], "oak_door", { half: "lower", facing: "north" });
+      arrivesWhileWaiting(h, "blockUpdate", () => h.setBlock([1, 65, 0], "oak_door", { half: "upper", facing: "north" }));
+    });
+    const age = h.bot.time.age;
+    assert.equal(await h.run(place.place, { at: [1, 64, 0], item: "oak_door" }), true);
+    assert.equal(h.bot.time.age, age, "it slept instead of returning when the upper half arrived");
   });
 
   it("returns true for a pitcher pod: a young pitcher crop fills one cell though it has a lower half", async () => {
