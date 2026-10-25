@@ -274,8 +274,8 @@ const HOTBAR_START = 36;
 const EDITOR_WAIT_MS = 3_000;
 /** How long the server gets to show an edit back to the bot, whether a sign's text or a book's contents. */
 const READBACK_MS = 2_000;
-/** What a right click does to a sign instead of opening it for editing: honeycomb waxes it for good, dyes and ink sacs recolor or glow its text. */
-const SIGN_APPLICATOR = /^(?:honeycomb|ink_sac|glow_ink_sac|[a-z_]+_dye)$/;
+/** A string the server caps at `limit` characters as it counts them: UTF-16 code units, where a character outside the BMP (an emoji) counts as 2. Zod's `.max` counts code points and passes a 46-unit line of 23 emoji, which the write then fails on. */
+const serverChars = (limit: number, message: string) => z.string().max(limit, message).refine((text) => text.length <= limit, message);
 
 /** The member `key` of `value` when it is an object that has one, else undefined: how the NBT the server sends is read without trusting its shape. */
 function field(value: unknown, key: string): unknown {
@@ -322,7 +322,7 @@ function signToEdit(ctx: RoutineContext, pos: Vec3): Block {
     throw new Error(`there is no sign at ${where(pos)}: the block there is ${block.name}. Place one first with place.place({ at: { x: ${pos.x}, y: ${pos.y}, z: ${pos.z} }, item: "oak_sign" }), then call social.sign again.`);
   }
   if (isWaxed(block)) {
-    throw new Error(`the ${block.name} at ${where(pos)} is waxed, and a waxed sign can never be edited. Break it with dig.dig and place a new one with place.place({ at: { x: ${pos.x}, y: ${pos.y}, z: ${pos.z} }, item: "${block.name}" }).`);
+    throw new Error(`the ${block.name} at ${where(pos)} is waxed, and a waxed sign can never be edited. Replace it with a fresh sign and call social.sign on that one instead.`);
   }
   const distance = bot.entity.position.offset(0, EYE_HEIGHT, 0).distanceTo(pos.offset(0.5, 0.5, 0.5));
   if (distance > REACH) {
@@ -332,22 +332,34 @@ function signToEdit(ctx: RoutineContext, pos: Vec3): Block {
 }
 
 /**
- * Runs `work` with a main hand that cannot change the sign: using honeycomb, a dye, or an ink sac on a sign waxes, colors, or glows it and
- * opens no editor. A hand holding one of those is moved to another hotbar slot (an empty one when there is one) for the duration, and moved back.
+ * Runs `work` with an empty main hand. The 26.1 server opens a sign's editor only for a bare click: it lets the held item act on the sign first, so
+ * honeycomb waxes it, dyes and ink sacs recolor or glow its text, and a hanging sign in hand on a hanging sign tries to hang another sign there
+ * instead of opening the editor. The held stack is set aside for the duration — the hand switched to an empty hotbar slot, or the stack moved into
+ * an empty main-grid slot — and restored afterwards, with the selected hotbar slot back where it was.
  */
-async function withoutApplicatorInHand<T>(ctx: RoutineContext, work: () => Promise<T>): Promise<T> {
+async function withEmptyHand<T>(ctx: RoutineContext, work: () => Promise<T>): Promise<T> {
   const { bot } = ctx;
-  if (!bot.heldItem || !SIGN_APPLICATOR.test(bot.heldItem.name)) return work();
-  const hotbar = Array.from({ length: 9 }, (_, i) => bot.inventory.slots[HOTBAR_START + i]);
-  const empty = hotbar.findIndex((stack) => !stack);
-  const free = empty >= 0 ? empty : hotbar.findIndex((stack) => stack && !SIGN_APPLICATOR.test(stack.name));
-  if (free < 0) throw new Error(`the main hand holds ${bot.heldItem.name}, which would change the sign instead of opening it, and every hotbar slot holds honeycomb, dye, or ink: free one hotbar slot (inventory.toss), then call again.`);
-  const original = bot.quickBarSlot;
-  bot.setQuickBarSlot(free);
+  if (!bot.heldItem) return work();
+  const emptyHotbar = Array.from({ length: 9 }, (_, i) => bot.inventory.slots[HOTBAR_START + i]).findIndex((stack) => !stack);
+  if (emptyHotbar >= 0) {
+    const original = bot.quickBarSlot;
+    bot.setQuickBarSlot(emptyHotbar);
+    try {
+      return await work();
+    } finally {
+      bot.setQuickBarSlot(original);
+    }
+  }
+  const heldSlot = HOTBAR_START + bot.quickBarSlot;
+  const mainGridFree = bot.inventory.slots.slice(9, HOTBAR_START).findIndex((stack) => !stack);
+  if (mainGridFree < 0) {
+    throw new Error(`the main hand holds ${bot.heldItem.name}, which can stop the server opening the sign's editor, and the inventory has no free slot to set it aside in. Free one slot (inventory.toss), then call again.`);
+  }
+  await bot.moveSlotItem(heldSlot, 9 + mainGridFree);
   try {
     return await work();
   } finally {
-    bot.setQuickBarSlot(original);
+    await bot.moveSlotItem(9 + mainGridFree, heldSlot);
   }
 }
 
@@ -376,15 +388,15 @@ export const sign = defineRoutine(
   {
     name: "social.sign",
     description:
-      "Write `lines` (1 to 4 strings, each at most 45 characters; about 15 characters show per line, so keep lines short) on the existing sign at `at` ({x,y,z} or [x,y,z]). `side`: \"front\" (default) or \"back\". The sign must already stand there (place it with place.place, e.g. item \"oak_sign\") and be within 4.5 blocks of the bot; walk closer first with move.to. A waxed sign cannot be written. Lines you leave out end up empty. Honeycomb, dye, or ink in the main hand is set aside while writing, so the sign is never waxed or recolored. Returns { at, side, lines } with the four lines read back from the sign, and throws if the sign does not show what was written.",
+      "Write `lines` (1 to 4 strings, each at most 45 characters as the server counts them — an emoji counts as 2; about 15 characters show per line, so keep lines short) on the existing sign at `at` ({x,y,z} or [x,y,z]). `side`: \"front\" (default) or \"back\". The sign must already stand there (place it with place.place, e.g. item \"oak_sign\") and be within 4.5 blocks of the bot; walk closer first with move.to. A waxed sign cannot be written. Lines you leave out end up empty. Whatever the main hand holds is set aside while writing — an empty hand is the only click that opens every sign's editor — and restored afterwards, so the sign is never waxed or recolored. Returns { at, side, lines } with the four lines read back from the sign, and throws if the sign does not show what was written.",
     args: z.object({
       at: Position,
       lines: z
         .array(
-          z
-            .string()
-            .max(SIGN_LINE_MAX, `a sign line holds at most ${SIGN_LINE_MAX} characters: shorten this line (about 15 show per line), or move text onto another line`)
-            .refine((line) => !/[\r\n]/.test(line), "a sign line cannot contain a line break: put each line as its own entry of `lines`"),
+          serverChars(
+            SIGN_LINE_MAX,
+            `a sign line holds at most ${SIGN_LINE_MAX} characters as the server counts them (an emoji counts as 2): shorten this line (about 15 show per line), or move text onto another line`,
+          ).refine((line) => !/[\r\n]/.test(line), "a sign line cannot contain a line break: put each line as its own entry of `lines`"),
         )
         .min(1, "give 1 to 4 lines: pass `lines` as an array of strings, e.g. [\"Welcome\", \"to the shop\"]")
         .max(4, "a sign holds 4 lines at most: pass 4 or fewer entries in `lines`, or write another sign"),
@@ -396,7 +408,7 @@ export const sign = defineRoutine(
     const { bot } = ctx;
     const pos = toVec3(at).floored();
     const block = signToEdit(ctx, pos);
-    await withoutApplicatorInHand(ctx, async () => {
+    await withEmptyHand(ctx, async () => {
       await openEditor(ctx, block);
       bot.updateSign(block, lines.join("\n"), side === "back");
     });
@@ -420,10 +432,6 @@ const BOOK_TITLE_MAX = 32;
 
 /** Mineflayer implements `bot.signBook` but leaves it out of its typings. */
 type SigningBot = Bot & { signBook(slot: number, pages: string[], author: string, title: string): Promise<void> };
-
-function canSignBooks(bot: Bot): bot is SigningBot {
-  return typeof Reflect.get(bot, "signBook") === "function";
-}
 
 interface BookContents {
   item: string;
@@ -454,15 +462,13 @@ export const book = defineRoutine(
   {
     name: "social.book",
     description:
-      "Write `pages` (1 to 100 strings, each 1 to 1024 characters) into the first writable_book (book and quill) in the inventory, replacing what it held. A writable_book is made from a book, an ink_sac and a feather. Without `title` the book stays a writable_book that can be written again (a ledger). With `title` (1 to 32 characters) the book is signed: it becomes a written_book with you as the author, and can never be edited again. Returns { item, title?, pages } where pages is the count read back, and throws if the book does not hold what was written.",
+      "Write `pages` (1 to 100 strings, each 1 to 1024 characters as the server counts them — an emoji counts as 2) into the first writable_book (book and quill) in the inventory, replacing what it held. A writable_book is made from a book, an ink_sac and a feather. Without `title` the book stays a writable_book that can be written again (a ledger). With `title` (1 to 32 characters, counted the same way) the book is signed: it becomes a written_book with you as the author, and can never be edited again. Returns { item, title?, pages } where pages is the count read back, and throws if the book does not hold what was written.",
     args: z.object({
       pages: z
-        .array(z.string().min(1, "a book page cannot be empty: give every page some text").max(BOOK_PAGE_MAX, `a book page holds at most ${BOOK_PAGE_MAX} characters: split this text over more pages`))
+        .array(serverChars(BOOK_PAGE_MAX, `a book page holds at most ${BOOK_PAGE_MAX} characters as the server counts them (an emoji counts as 2): split this text over more pages`).min(1, "a book page cannot be empty: give every page some text"))
         .min(1, "a book needs at least 1 page: pass `pages` as an array of strings, e.g. [\"First page\", \"Second page\"]")
         .max(BOOK_PAGES_MAX, `a book holds at most ${BOOK_PAGES_MAX} pages: pass fewer entries in \`pages\``),
-      title: z
-        .string()
-        .max(BOOK_TITLE_MAX, `a book title holds at most ${BOOK_TITLE_MAX} characters: shorten the title`)
+      title: serverChars(BOOK_TITLE_MAX, `a book title holds at most ${BOOK_TITLE_MAX} characters as the server counts them (an emoji counts as 2): shorten the title`)
         .refine((title) => title.trim() !== "", "the book title is blank: give a title of 1 to 32 characters, or leave `title` out to keep the book editable")
         .optional(),
     }),
@@ -483,10 +489,11 @@ export const book = defineRoutine(
     // A server sends nothing back for an edit that changes nothing, so a book that already holds these pages is done.
     if (title === undefined && holdsWritten(bookContents(stack))) return { item: wanted, pages: pages.length };
 
+    // Mineflayer 4.39 always implements signBook; only its typings leave it out.
+    const signer = bot as SigningBot;
     try {
       if (title === undefined) await bot.writeBook(slot, pages);
-      else if (canSignBooks(bot)) await bot.signBook(slot, pages, bot.username, title);
-      else throw new Error("this bot's Mineflayer has no signBook");
+      else await signer.signBook(slot, pages, bot.username, title);
     } catch (error) {
       throw new Error(`the server did not confirm the book edit (${error instanceof Error ? error.message : String(error)}): the book was not written. Try again.`, { cause: error });
     }

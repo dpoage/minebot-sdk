@@ -56,9 +56,9 @@ interface SignOptions extends Pick<HarnessOptions, "inventory" | "equipment" | "
 }
 
 /**
- * The harness bot has no sign editor. This gives it the three members the routine reaches for, and plays the server's part: using a sign with an
- * ordinary hand opens its editor (`signOpen`), an `update_sign` from the player who has it open changes the text, and using a sign
- * with honeycomb, a dye, or an ink sac in hand changes the sign and opens nothing.
+ * The harness bot has no sign editor. This gives it the members the routine reaches for, and plays the server's part: only a bare click opens a
+ * sign's editor (`signOpen`); the server lets the held item act on the sign first, so honeycomb waxes it, a dye or an ink sac changes its text, and
+ * a hanging sign in hand on a hanging sign tries to hang another sign there and opens nothing.
  */
 function signWorld(options: SignOptions = {}) {
   const at = options.at ?? SIGN_AT;
@@ -82,6 +82,9 @@ function signWorld(options: SignOptions = {}) {
       else if (held && /_dye$/.test(held)) entity.value.front_text.value.color = str("blue");
       else if (held === "glow_ink_sac") entity.value.front_text.value.has_glowing_text = byte(1);
       else if (held === "ink_sac") entity.value.front_text.value.has_glowing_text = byte(0);
+      else if (held && /hanging_sign$/.test(held) && /hanging_sign$/.test(block.name)) {
+        // tries to hang another sign there: this sign is untouched and no editor opens
+      }
       else if (!options.silent && entity.value.is_waxed.value === 0) {
         editing = true;
         bot.emit("signOpen", block);
@@ -96,6 +99,11 @@ function signWorld(options: SignOptions = {}) {
     },
     setQuickBarSlot(slot: number) {
       (bot.inventory as unknown as { quickBarSlot: number }).quickBarSlot = slot;
+    },
+    async moveSlotItem(from: number, to: number) {
+      const inv = bot.inventory as unknown as { slots: (Item | null)[]; set(slot: number, item: Item | null): void };
+      inv.set(to, inv.slots[from] ?? null);
+      inv.set(from, null);
     },
   });
   const read = (side: Side) => [...entity.value[`${side}_text`].value.messages.value.value];
@@ -161,8 +169,15 @@ describe("social.sign: errors say the cause and the fix", () => {
     await assert.rejects(h.run(social.sign, { at: [5, 64, 5], lines: ["x"] }), /there is no sign at \(5, 64, 5\).*the block there is air/);
   });
 
-  it("a waxed sign: names waxed, never uses the sign", async () => {
-    const world = await refused({ waxed: true }, {}, /oak_sign at \(2, 64, 0\) is waxed.*never be edited/);
+  it("a waxed sign: names waxed and the fresh-sign fix, recommends no call that does not work, and never uses the sign", async () => {
+    const world = signWorld({ waxed: true });
+    const message = await world.h.run(social.sign, { at: world.at, lines: ["x"] }).then(
+      () => "wrote a waxed sign",
+      (error: Error) => error.message,
+    );
+    assert.match(message, /oak_sign at \(2, 64, 0\) is waxed.*never be edited.*fresh sign.*social\.sign/);
+    assert.doesNotMatch(message, /dig\.dig/, "dig.dig cannot break a sign (it returns {block:null} and leaves it)");
+    assert.doesNotMatch(message, /item: "/, "wall sign blocks are not items");
     assert.deepEqual([world.hands.length, world.updates.length], [0, 0]);
   });
 
@@ -196,47 +211,63 @@ describe("social.sign: errors say the cause and the fix", () => {
     assert.equal(world.updates.length, 0);
     await world.h.run(social.sign, { at: world.at, lines: ["x".repeat(45), "b", "c", "d"] });
   });
+
+  it("the line limit counts characters as the server does: 45 UTF-16 units pass, an emoji in the 46th unit is refused", async () => {
+    const world = signWorld();
+    const emoji = "\u{1F600}";
+    await world.h.run(social.sign, { at: world.at, lines: [`${emoji.repeat(22)}x`] });
+    await assert.rejects(world.h.run(social.sign, { at: world.at, lines: [emoji.repeat(23)] }), /a sign line holds at most 45 characters as the server counts them \(an emoji counts as 2\)/);
+    assert.equal(world.updates.length, 1, "the refused line never reached the server");
+  });
 });
 
-describe("social.sign: honeycomb, dye, and ink in hand never reach the sign", () => {
-  for (const held of APPLICATORS) {
-    it(`${held} in the main hand: the sign is written, unwaxed and uncolored, and the hand holds ${held} again afterwards`, async () => {
-      const world = signWorld({ inventory: { [held]: 1, bread: 2 }, equipment: { hand: held } });
+describe("social.sign: whatever the main hand holds never reaches the sign", () => {
+  const heldCases: { held: string; block: string }[] = [
+    ...APPLICATORS.map((held) => ({ held, block: "oak_sign" })),
+    { held: "oak_hanging_sign", block: "oak_wall_hanging_sign" },
+    { held: "oak_hanging_sign", block: "oak_hanging_sign" },
+    { held: "bread", block: "oak_sign" },
+  ];
+  for (const { held, block } of heldCases) {
+    it(`${held} in the main hand on a ${block}: written with a bare click, unwaxed and uncolored, and the hand restored`, async () => {
+      const world = signWorld({ block, inventory: { [held]: 1, bread: 2 }, equipment: { hand: held } });
       assert.equal(world.h.bot.heldItem?.name, held);
+      const heldBefore = world.h.count(held);
       const result = await world.h.run(social.sign, { at: world.at, lines: ["board"] });
       assert.deepEqual(result.lines, ["board", "", "", ""]);
-      assert.deepEqual(world.hands, [world.hands[0]]);
-      assert.ok(world.hands[0] === undefined || world.hands[0] === "bread", `the sign was used with ${world.hands[0]} in hand`);
+      assert.deepEqual(world.hands, [undefined], "the editor only opens for a bare click");
       assert.equal(world.entity.value.is_waxed.value, 0);
       assert.equal(world.entity.value.front_text.value.color.value, "black");
       assert.equal(world.entity.value.front_text.value.has_glowing_text.value, 0);
+      assert.equal(world.h.bot.quickBarSlot, 0, "the selected hotbar slot is restored");
       assert.equal(world.h.bot.heldItem?.name, held);
-      assert.equal(world.h.count(held), 1);
+      assert.equal(world.h.count(held), heldBefore);
     });
   }
 
-  it("a hand of an ordinary item stays where it is", async () => {
-    const world = signWorld({ inventory: { bread: 2, honeycomb: 1 }, equipment: { hand: "bread" } });
-    const slot = world.h.bot.quickBarSlot;
-    await world.h.run(social.sign, { at: world.at, lines: ["x"] });
-    assert.deepEqual(world.hands, ["bread"]);
-    assert.equal(world.h.bot.quickBarSlot, slot);
-  });
-
-  it("with every hotbar slot holding honeycomb, a dye, or ink: says to free a slot, and touches nothing", async () => {
-    const stuff = { honeycomb: 1, ink_sac: 1, glow_ink_sac: 1, red_dye: 1, blue_dye: 1, green_dye: 1, black_dye: 1, white_dye: 1, yellow_dye: 1 };
-    const world = signWorld({ inventory: stuff, equipment: { hand: "honeycomb" } });
-    await assert.rejects(world.h.run(social.sign, { at: world.at, lines: ["x"] }), /every hotbar slot holds honeycomb, dye, or ink: free one hotbar slot/);
-    assert.deepEqual([world.hands.length, world.updates.length], [0, 0]);
-    assert.equal(world.entity.value.is_waxed.value, 0);
-  });
-
-  it("a full hotbar of other items: the hand moves to one of them and back", async () => {
+  it("a full hotbar: the held stack waits in the main grid and comes back to its slot", async () => {
     const stuff = { honeycomb: 1, bread: 1, apple: 1, stick: 1, coal: 1, dirt: 1, cobblestone: 1, sand: 1, gravel: 1 };
     const world = signWorld({ inventory: stuff, equipment: { hand: "honeycomb" } });
+    const slot = world.h.bot.quickBarSlot;
     await world.h.run(social.sign, { at: world.at, lines: ["x"] });
-    assert.ok(world.hands[0] !== undefined && world.hands[0] !== "honeycomb");
+    assert.deepEqual(world.hands, [undefined], "the editor only opens for a bare click");
+    assert.equal(world.h.bot.quickBarSlot, slot);
     assert.equal(world.h.bot.heldItem?.name, "honeycomb");
+    const inv = world.h.bot.inventory as unknown as { slots: (Item | null)[] };
+    assert.ok(inv.slots.slice(9, 36).every((stack) => stack === null), "the main grid is empty again");
+  });
+
+  it("no free slot anywhere: says to free one, and touches nothing", async () => {
+    const filler = [
+      "honeycomb", "ink_sac", "glow_ink_sac", "white_dye", "light_gray_dye", "gray_dye", "black_dye", "brown_dye", "red_dye",
+      "orange_dye", "yellow_dye", "lime_dye", "green_dye", "cyan_dye", "light_blue_dye", "blue_dye", "purple_dye", "magenta_dye",
+      "pink_dye", "bread", "apple", "stick", "coal", "charcoal", "dirt", "cobblestone", "sand", "gravel", "oak_log", "birch_log",
+      "spruce_log", "stone", "granite", "diorite", "andesite", "iron_ingot",
+    ];
+    const world = signWorld({ inventory: Object.fromEntries(filler.map((name) => [name, 1])), equipment: { hand: "honeycomb" } });
+    await assert.rejects(world.h.run(social.sign, { at: world.at, lines: ["x"] }), /no free slot to set it aside.*[Ff]ree one slot \(inventory\.toss\)/);
+    assert.deepEqual([world.hands.length, world.updates.length], [0, 0]);
+    assert.equal(world.entity.value.is_waxed.value, 0);
   });
 });
 
@@ -397,6 +428,18 @@ describe("social.book: errors say the cause and the fix", () => {
     await refuse({ pages: ["p"], title: "" }, /title is blank/);
     await refuse({ pages: "not a list" }, /pages/);
     assert.equal(calls.length, 0);
+  });
+
+  it("the page and title limits count characters as the server does: an emoji counts as 2", async () => {
+    const { h, calls } = bookWorld();
+    const emoji = "\u{1F600}";
+    const refuse = (args: Record<string, unknown>, message: RegExp) => assert.rejects(h.run(social.book, args as never), message);
+    await h.run(social.book, { pages: [emoji.repeat(512)] });
+    await h.run(social.book, { pages: ["p"], title: `${emoji.repeat(15)}xx` });
+    await refuse({ pages: [emoji.repeat(513)] }, /a book page holds at most 1024 characters as the server counts them \(an emoji counts as 2\)/);
+    await refuse({ pages: [emoji.repeat(600)] }, /a book page holds at most 1024 characters as the server counts them \(an emoji counts as 2\)/);
+    await refuse({ pages: ["p"], title: emoji.repeat(17) }, /a book title holds at most 32 characters as the server counts them \(an emoji counts as 2\)/);
+    assert.equal(calls.length, 2, "the refused pages and titles never reached the server");
   });
 
   it("the limits themselves are accepted", async () => {

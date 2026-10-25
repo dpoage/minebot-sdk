@@ -3499,7 +3499,7 @@
       },
       {
         "name": "sign",
-        "description": "Write `lines` (1 to 4 strings, each at most 45 characters; about 15 characters show per line, so keep lines short) on the existing sign at `at` ({x,y,z} or [x,y,z]). `side`: \"front\" (default) or \"back\". The sign must already stand there (place it with place.place, e.g. item \"oak_sign\") and be within 4.5 blocks of the bot; walk closer first with move.to. A waxed sign cannot be written. Lines you leave out end up empty. Honeycomb, dye, or ink in the main hand is set aside while writing, so the sign is never waxed or recolored. Returns { at, side, lines } with the four lines read back from the sign, and throws if the sign does not show what was written.",
+        "description": "Write `lines` (1 to 4 strings, each at most 45 characters as the server counts them — an emoji counts as 2; about 15 characters show per line, so keep lines short) on the existing sign at `at` ({x,y,z} or [x,y,z]). `side`: \"front\" (default) or \"back\". The sign must already stand there (place it with place.place, e.g. item \"oak_sign\") and be within 4.5 blocks of the bot; walk closer first with move.to. A waxed sign cannot be written. Lines you leave out end up empty. Whatever the main hand holds is set aside while writing — an empty hand is the only click that opens every sign's editor — and restored afterwards, so the sign is never waxed or recolored. Returns { at, side, lines } with the four lines read back from the sign, and throws if the sign does not show what was written.",
         "args": {
           "$schema": "https://json-schema.org/draft/2020-12/schema",
           "type": "object",
@@ -3615,7 +3615,7 @@
       },
       {
         "name": "book",
-        "description": "Write `pages` (1 to 100 strings, each 1 to 1024 characters) into the first writable_book (book and quill) in the inventory, replacing what it held. A writable_book is made from a book, an ink_sac and a feather. Without `title` the book stays a writable_book that can be written again (a ledger). With `title` (1 to 32 characters) the book is signed: it becomes a written_book with you as the author, and can never be edited again. Returns { item, title?, pages } where pages is the count read back, and throws if the book does not hold what was written.",
+        "description": "Write `pages` (1 to 100 strings, each 1 to 1024 characters as the server counts them — an emoji counts as 2) into the first writable_book (book and quill) in the inventory, replacing what it held. A writable_book is made from a book, an ink_sac and a feather. Without `title` the book stays a writable_book that can be written again (a ledger). With `title` (1 to 32 characters, counted the same way) the book is signed: it becomes a written_book with you as the author, and can never be edited again. Returns { item, title?, pages } where pages is the count read back, and throws if the book does not hold what was written.",
         "args": {
           "$schema": "https://json-schema.org/draft/2020-12/schema",
           "type": "object",
