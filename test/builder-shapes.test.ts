@@ -5,6 +5,7 @@ import { describe, it } from "node:test";
 import { setImmediate as nextTurn } from "node:timers/promises";
 import { createHarness, type Harness } from "minebot-sdk/testing";
 import * as builder from "../src/routines/builder.ts";
+import { placedNames } from "../src/routines/place.ts";
 
 type Xyz = [number, number, number];
 type Placed = { origin: { x: number; y: number; z: number }; blueprint: Parameters<typeof builder.blueprintBlocks>[0] };
@@ -572,6 +573,29 @@ describe("'air' cells", () => {
     assert.ok(g.position.distanceTo(g.blockAt([20, 64, 0]).position) < 6, "the bot walked up");
   });
 
+  it("are failed, not dug past reach, when the walk ends without moving: the reason names where it ended and what to do", async () => {
+    // The bot on the only standable pillar over the void, the dirt 8 blocks away under a bedrock cap nothing can stand on
+    // within 3 of it: the pathfinder finds nowhere to go and the walk ends where it began, still out of dig reach.
+    const g = createHarness({
+      ground: false,
+      blocks: [
+        { name: "bedrock", at: [0, 63, 0] },
+        { name: "dirt", at: [8, 64, 0] },
+        { name: "bedrock", from: [8, 65, 0], to: [8, 67, 0] },
+      ],
+      position: [0.5, 64, 0.5],
+    });
+    const far = await g.run(builder.fill, { from: [8, 64, 0], to: [8, 64, 0], block: "air" });
+    const result = await g.run(builder.build, far);
+    assert.deepEqual([result.placed, result.alreadyCorrect], [0, 0]);
+    assert.equal(result.failed.length, 1);
+    assert.match(result.failed[0]!.reason, /dirt at \(8, 64, 0\) is 8\.1 blocks from the eyes, beyond the 4\.5-block dig reach/);
+    assert.match(result.failed[0]!.reason, /the walk toward it ended at \(0, 64, 0\)/);
+    assert.match(result.failed[0]!.reason, /Walk next to \(8, 64, 0\) \(move\.to\)/);
+    assert.equal(g.blockAt([8, 64, 0]).name, "dirt", "nothing was dug");
+    assert.deepEqual([g.position.x, g.position.y, g.position.z], [0.5, 64, 0.5], "the bot never moved");
+  });
+
   it("clear thin blocks without a collision box, which dig.dig leaves, and report water and unloaded cells by what they are", async () => {
     const g = createHarness({ blocks: [{ name: "short_grass", at: [2, 64, 0] }, { name: "water", at: [3, 64, 0] }], position: [0.5, 64, 0.5] });
     const cut = await g.run(builder.fill, { from: [2, 64, 0], to: [3, 64, 0], block: "air" });
@@ -739,5 +763,13 @@ describe("builder.check and builder.build agree on the block placing an item giv
     assert.deepEqual(await g.run(builder.build, right), { placed: 0, alreadyCorrect: 3, failed: [] });
     const wrong = await g.run(builder.check, { origin: { x: 3, y: 64, z: 0 }, blueprint: { palette: { t: "torch" }, layers: [["t"]] } });
     assert.deepEqual(wrong.mismatches.map((m) => m.actual), ["redstone_wall_torch"]);
+  });
+
+  it("read that rule from place.placedNames, the one copy of it, not a restatement in builder", async () => {
+    const g = createHarness({});
+    assert.deepEqual([...(await g.run((ctx) => placedNames(ctx, "torch"), {}))!].sort(), ["torch", "wall_torch"]);
+    assert.deepEqual([...(await g.run((ctx) => placedNames(ctx, "oak_sign"), {}))!].sort(), ["oak_sign", "oak_wall_sign"]);
+    assert.deepEqual([...(await g.run((ctx) => placedNames(ctx, "bamboo"), {}))!].sort(), ["bamboo", "bamboo_sapling"]);
+    assert.equal(await g.run((ctx) => placedNames(ctx, "wheat_seeds"), {}), null, "an item with no block of its name places by any change");
   });
 });

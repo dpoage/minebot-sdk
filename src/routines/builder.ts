@@ -1,7 +1,8 @@
 // The builder routines: build structures from blueprints, calling the place, dig and inventory primitives,
 // and make blueprints (line, arc, fill, box, combine). The blueprint format lives here because it is these routines' argument and result.
-import { defineRoutine, goals, Point, Position, type RoutineContext, toVec3, Vec3, within, z } from "minebot-sdk/routine";
+import { defineRoutine, Point, Position, type RoutineContext, toVec3, Vec3, within, z } from "minebot-sdk/routine";
 import * as dig from "minebot-sdk/routines/dig";
+import * as move from "minebot-sdk/routines/move";
 import * as place from "minebot-sdk/routines/place";
 import * as inventory from "minebot-sdk/routines/inventory";
 
@@ -68,22 +69,28 @@ export function blueprintMaterials(blueprint: Blueprint): Record<string, number>
 
 /** True for the blocks an 'air' cell accepts. */
 const isClear = (name: string): boolean => name === AIR || name === "cave_air";
-
 /**
- * True when the world already holds `block` at a target: for 'air', air or cave_air; otherwise the block, or the form placing its
- * item gives against a wall (wall_torch for torch, oak_wall_sign for oak_sign) or a bamboo_sapling for bamboo, as place.place accepts.
- * build and check agree through this.
+ * True when the world already holds `block` at a target: for 'air', air or cave_air; otherwise the block in any form placing
+ * its item gives (wall_torch for torch, oak_wall_sign for oak_sign, bamboo_sapling for bamboo), by place.place's own rule
+ * `placedNames` — the one copy — so build and check accept exactly what place does.
  */
-function holds(actual: string | undefined, block: string): boolean {
+function holds(ctx: RoutineContext, actual: string | undefined, block: string): boolean {
   if (actual === undefined) return false;
   if (block === AIR) return isClear(actual);
-  return actual === block || actual.replace("wall_", "") === block || (block === "bamboo" && actual === "bamboo_sapling");
+  const names = place.placedNames(ctx, block);
+  return names !== null && names.has(actual);
 }
 
+/** Survival players dig blocks up to 4.5 blocks from the eyes (the gatherer's dig reach, and the testing harness's). */
+const DIG_REACH = 4.5;
+const EYE_HEIGHT = 1.62;
+
 /**
- * Digs out whatever is at `pos`. Returns false when it already was air. Walks within reach first.
- * Fluids and undiggable blocks fail naming the block. Whether the cell stays clear (sand or gravel
- * above may fall in) is for the caller to read once falling blocks have landed.
+ * Digs out whatever is at `pos`. Returns false when it already was air. Walks within dig reach first (move.to, as the
+ * gatherer walks to dig) and requires it: the pathfinder can end a walk where it began, without an error, and digging
+ * past reach then marks the cell air on the client while the server never digs it, so no later re-read catches it.
+ * Fluids and undiggable blocks fail naming the block. Whether the cell stays clear (sand or gravel above may fall in)
+ * is for the caller to read once falling blocks have landed.
  */
 async function clearCell(ctx: RoutineContext, pos: Vec3): Promise<boolean> {
   const { bot } = ctx;
@@ -92,9 +99,23 @@ async function clearCell(ctx: RoutineContext, pos: Vec3): Promise<boolean> {
   if (isClear(block.name)) return false;
   if (block.name === "water" || block.name === "lava") throw new Error(`${block.name} at ${pos} cannot be dug out; place a block there first`);
   if (!block.diggable) throw new Error(`${block.name} at ${pos} cannot be dug`);
-  // Survival players dig blocks up to 4.5 blocks from the eyes.
-  if (bot.entity.position.offset(0, 1.6, 0).distanceTo(pos.offset(0.5, 0.5, 0.5)) > 4.5) {
-    await within(30_000, "pathfinding", bot.pathfinder.goto(new goals.GoalNear(pos.x, pos.y, pos.z, 3)), () => bot.pathfinder.setGoal(null));
+  const eyes = () => bot.entity.position.offset(0, EYE_HEIGHT, 0);
+  const inReach = () => eyes().distanceTo(pos.offset(0.5, 0.5, 0.5)) <= DIG_REACH;
+  if (!inReach()) {
+    let walkFailed: unknown = null;
+    try {
+      await move.to(ctx, { position: pos, range: 3, timeoutMs: 45_000 });
+    } catch (err) {
+      walkFailed = err;
+    }
+    if (!inReach()) {
+      if (walkFailed !== null && ctx.signal.aborted) throw walkFailed;
+      const cause = walkFailed === null ? "" : ` (${walkFailed instanceof Error ? walkFailed.message : String(walkFailed)})`;
+      throw new Error(
+        `${block.name} at ${pos} is ${eyes().distanceTo(pos.offset(0.5, 0.5, 0.5)).toFixed(1)} blocks from the eyes, beyond the ${DIG_REACH}-block dig reach, and the walk toward it ended at ${bot.entity.position.floored()}${cause}. Walk next to ${pos} (move.to), building a way there if there is none, and build again.`,
+      );
+    }
+    if (walkFailed !== null) ctx.log(`build: digging ${pos} from here, in reach though the walk failed: ${walkFailed instanceof Error ? walkFailed.message : String(walkFailed)}`);
   }
   if (block.boundingBox === "block") {
     await dig.dig(ctx, { at: pos });
@@ -171,7 +192,7 @@ type Target = { position: Vec3; block: string };
 async function buildBlueprint(ctx: RoutineContext, blueprint: Blueprint, origin: Vec3, partial = false): Promise<BuildResult> {
   const { bot } = ctx;
   const targets: Target[] = blueprintBlocks(blueprint).map((b) => ({ position: origin.offset(b.dx, b.dy, b.dz), block: b.block }));
-  const todo = targets.filter((t) => !holds(bot.blockAt(t.position)?.name, t.block));
+  const todo = targets.filter((t) => !holds(ctx, bot.blockAt(t.position)?.name, t.block));
   const needed: Record<string, number> = {};
   for (const t of todo) if (t.block !== AIR) needed[t.block] = (needed[t.block] ?? 0) + 1;
   const short = (
@@ -201,7 +222,7 @@ async function buildBlueprint(ctx: RoutineContext, blueprint: Blueprint, origin:
   if (placed.size > 0) {
     for (let round = 0; round < REFILL_ROUNDS; round++) {
       await settle(ctx, clears.map((t) => t.position));
-      const refilled = clears.filter((t) => !failed.has(t) && !holds(bot.blockAt(t.position)?.name, AIR)).sort(topDown);
+      const refilled = clears.filter((t) => !failed.has(t) && !holds(ctx, bot.blockAt(t.position)?.name, AIR)).sort(topDown);
       if (refilled.length === 0) break;
       for (const t of refilled) await attempt(t, () => clearCell(ctx, t.position));
     }
@@ -253,7 +274,7 @@ function checkBuild(ctx: RoutineContext, blueprint: Blueprint, origin: Vec3): Bu
   for (const b of blocks) {
     const position = origin.offset(b.dx, b.dy, b.dz);
     const actual = ctx.bot.blockAt(position)?.name ?? "unloaded";
-    if (!holds(actual, b.block)) mismatches.push({ position, expected: b.block, actual });
+    if (!holds(ctx, actual, b.block)) mismatches.push({ position, expected: b.block, actual });
   }
   return { correct: blocks.length - mismatches.length, total: blocks.length, mismatches: mismatches.slice(0, 20) };
 }
@@ -271,7 +292,7 @@ export const materials = defineRoutine(
 export const build = defineRoutine(
   {
     name: "builder.build",
-    description: "Build the `blueprint` with its first layer's first row's first character at `origin`; the result of line, arc, fill, box or combine is both at once: `await builder.build(ctx, await builder.box(ctx, {...}))`. Skips cells already correct. Digs out 'air' cells first, top down, and again when sand or gravel falls back in (they count as placed); then places blocks bottom-up, each once something solid touches it. Before returning it reads every 'air' cell again, after water or lava beside one has had time to flow: a cell that sand, gravel or a fluid filled is in failed, naming it. Fails up front on missing materials unless `partial`. Returns { placed, alreadyCorrect, failed }, each cell counted in exactly one.",
+    description: "Build the `blueprint` with its first layer's first row's first character at `origin`; the result of line, arc, fill, box or combine is both at once: `await builder.build(ctx, await builder.box(ctx, {...}))`. Skips cells already correct. Digs out 'air' cells first, top down, and again when sand or gravel falls back in (they count as placed); a cell the bot cannot get within 4.5 blocks of the eyes to dig is failed, naming where the walk ended; then places blocks bottom-up, each once something solid touches it. Before returning it reads every 'air' cell again, after water or lava beside one has had time to flow: a cell that sand, gravel or a fluid filled is in failed, naming it. Fails up front on missing materials unless `partial`. Returns { placed, alreadyCorrect, failed }, each cell counted in exactly one.",
     args: z.object({
       blueprint: Blueprint,
       origin: Position,

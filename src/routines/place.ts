@@ -115,8 +115,8 @@ function usable(faces: Face[]): Face[] {
   return faces.filter((face) => face.distance <= MAX_REACH).sort((a, b) => rank(a) - rank(b));
 }
 
-/** The blocks `name` may turn into when placed: itself, its wall variants (wall_torch, oak_wall_sign, ...), a bamboo sapling. Null for an item with no block of its own name (wheat_seeds, redstone): then any change of the cell counts. */
-function placedNames(ctx: RoutineContext, name: string): Set<string> | null {
+/** The blocks `name` may turn into when placed: itself, its wall variants (wall_torch, oak_wall_sign, ...), a bamboo sapling. Null for an item with no block of its own name (wheat_seeds, redstone): then any change of the cell counts. builder.build and builder.check read this same rule for what a blueprint's cell may hold. */
+export function placedNames(ctx: RoutineContext, name: string): Set<string> | null {
   const { registry } = ctx.bot;
   if (!registry.blocksByName[name]) return null;
   const names = new Set([name]);
