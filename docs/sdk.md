@@ -107,7 +107,7 @@ The partition keeps each primitive small enough to learn from its source (`mineb
 
 Four behaviors are easy to miss:
 
-- `place.place` does not refuse a placement up front because another body stands in the cell; it tries, then throws with the cause. Only when no solid block touches the target cell does it fail before it walks or digs (`nothing solid next to ...`). It accepts the variants that placing an item gives, verifies both cells of a two-cell block (a door, a bed), sneaks when it places against a block that opens a window or takes the item, and walks only when no neighbor face is within 5.0 blocks of the eyes.
+- `place.place` does not refuse a placement up front because another body stands in the cell; it tries, then throws with the cause. It accepts the variants that placing an item gives, verifies both cells of a two-cell block (a door, a bed), sneaks when it places against a block that opens a window or takes the item, and walks only when no neighbor face is within 5.0 blocks of the eyes.
 - `move.to` stops a walk that makes no progress for 12 seconds with `stuck at ...`. When the pathfinder ends without a way within `range`, it throws `could not reach ...` and names the cause.
 - `gatherer.collectDrops` returns `{ reached, unreachable }`: the number of positions it reached and the positions it could not.
 - `craft.craft` waits for the inventory to settle and returns what the inventory gained. It throws `InventoryFullError` when the inventory had no room for the result, and an error that begins `crafted 0 of ...` when nothing arrived.
