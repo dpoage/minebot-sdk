@@ -558,7 +558,7 @@
   },
   {
     "name": "items",
-    "description": "Look up recipes, and find the items lying on the ground.",
+    "description": "Look up recipes, find the items lying on the ground, and rename an item at an anvil.",
     "uses": [],
     "routines": [
       {
@@ -645,6 +645,54 @@
             ],
             "additionalProperties": false
           }
+        }
+      },
+      {
+        "name": "rename",
+        "description": "Rename the first stack of `item` in the inventory that does not already have `name` to `name` (1-50 characters; spaces are fine) at an anvil within reach (4.5 blocks; this never walks, so go there first, for example move.to). The cost is experience levels, usually 1 or more; an error names the cost and your level. When every stack of `item` already has `name`, this returns at once, spending nothing. Returns { item, name, count: how many were renamed, levelsSpent }.",
+        "args": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "item": {
+              "type": "string",
+              "minLength": 1
+            },
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 50
+            }
+          },
+          "required": [
+            "item",
+            "name"
+          ]
+        },
+        "returns": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "item": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "count": {
+              "type": "number"
+            },
+            "levelsSpent": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "item",
+            "name",
+            "count",
+            "levelsSpent"
+          ],
+          "additionalProperties": false
         }
       }
     ]
