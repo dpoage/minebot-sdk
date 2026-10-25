@@ -25,9 +25,9 @@ import { appendFileSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { HostEvents, preemptingRunner, RunReporter } from "../../../src/host/channel.ts";
 import { Triggers } from "../../../src/host/triggers.ts";
-import { ProgramRunner } from "../../../src/program/runner.ts";
+import { ProgramRunner, type RunOutcome } from "../../../src/program/runner.ts";
 import type { ProgramScope } from "../../../src/program/scope.ts";
-import { programFinished, type FromHost, type HostInit, type ToHost } from "../../../src/protocol/host.ts";
+import { previewOf, type FromHost, type HostInit, type RunPreview, type ToHost } from "../../../src/protocol/host.ts";
 import { ReflexInput } from "../../../src/protocol/index.ts";
 import { JsonStore } from "../../../src/store.ts";
 
@@ -64,10 +64,24 @@ let sourceDir = "";
 
 const AsyncFunction = Object.getPrototypeOf(async () => {}).constructor as new (...parameters: string[]) => (ctx: ProgramScope) => Promise<unknown>;
 
-/** Starts a stand-in routine (`source` is the body of its function over `ctx`) once its start is acked, telling the test when. */
-function start(source: string, timeoutMs: number) {
+/**
+ * Starts a stand-in routine (`source` is the body of its function over `ctx`) once its start is acked, telling the test
+ * when. The error it throws is kept before the runner formats it, and the previews of its end are
+ * attached to the outcome, as the body's runs do: the supervisor, not the host, pushes `program_finished`.
+ */
+function start(source: string, timeoutMs: number): Promise<RunOutcome & RunPreview> {
   events.push("acked", { at: Date.now() });
-  return runner.call(async (scope) => new AsyncFunction("ctx", source)(scope), { timeoutMs, sourceDir });
+  let thrown: unknown;
+  return runner
+    .call(async (scope) => {
+      try {
+        return await new AsyncFunction("ctx", source)(scope);
+      } catch (err) {
+        thrown ??= err;
+        throw err;
+      }
+    }, { timeoutMs, sourceDir })
+    .then((result) => ({ ...result, ...previewOf(result, thrown) }));
 }
 
 /** The routine a reflex of this fixture names; the fixture has no library, so nothing loads it. */
@@ -86,11 +100,7 @@ async function serve(id: number, method: string, pathname: string, body: string 
   if (pathname === "/triggers") return { triggers: triggers.reflexes() };
   if (pathname !== "/call") return { pid: process.pid };
   const { source, timeoutMs } = JSON.parse(body ?? "{}") as { source: string; timeoutMs: number };
-  return reporter.record({ code: source, timeoutMs, requestId: id }, async () => {
-    const result = await start(source, timeoutMs);
-    if (!result.hung) events.push("program_finished", programFinished(result));
-    return result;
-  });
+  return reporter.record({ code: source, timeoutMs, requestId: id }, () => start(source, timeoutMs));
 }
 
 process.on("message", async (message: ToHost) => {

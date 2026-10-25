@@ -293,6 +293,38 @@ function explainReturn(err: unknown, url: string): unknown {
   return err;
 }
 
+/**
+ * What `RoutineLoader.run` says of a source with a static `import` declaration inside a function or
+ * block, which only the module's top level may hold. The same scope rule as `explainReturn`: only the
+ * run's own parse error, whose stack Node opens with the run's URL. The parser blames an `export`
+ * inside a function with the same message, so the line it names is read before anything is explained:
+ * only a line that, past its leading whitespace, begins the `import` declaration itself (the keyword,
+ * then whitespace, `{`, `*`, or a quote — not `import(` or `import.meta`) is explained; an `import`
+ * that follows other code on the line — a string, a comment, a call — is left as the parser said it,
+ * a safe miss, for the parser may be blaming an `export`. The dynamic import shown is an example — it
+ * names the module — not a promise that pasting it parses wherever the declaration sat, which only an
+ * async function's body can hold.
+ */
+function explainImport(err: unknown, url: string, source: string): unknown {
+  if (!(err instanceof SyntaxError) || !err.stack?.startsWith(`${url}:`) || !/cannot be used outside of module code/i.test(err.message)) return err;
+  const line = Number(/^:(\d+)/.exec(err.stack.slice(url.length))?.[1]);
+  const lines = source.split("\n");
+  const lineText = lines[line - 1] ?? "";
+  const at = lineText.search(/\S/);
+  if (!/^import(?=[\s{*'"])/.test(lineText.slice(at))) return err;
+  // The declaration may run over lines; this is its text, from its own first line's `import`.
+  const statement = lines.slice(line - 1).join("\n").slice(at);
+  const move = `a run's import declarations go at the top of its module, above \`export default\`: line ${line} has one inside a function`;
+  const specifier = /^import\s*(?:[\s\S]*?\bfrom\b\s*)?(['"])([^'"\n]*)\1/.exec(statement)?.[2];
+  if (specifier === undefined) {
+    err.message = `${move} (${err.message})`;
+    return err;
+  }
+  const name = /^import\s*\*\s*as\s+([_$\p{ID_Start}][_$\p{ID_Continue}\u200C\u200D]*)/u.exec(statement)?.[1] ?? "mod";
+  err.message = `${move}; inside an async function, \`const ${name} = await import(${JSON.stringify(specifier)})\` loads it at run time (${err.message})`;
+  return err;
+}
+
 /** A scan of the library's bytes: the generation they make and the text each module has in it. */
 interface Scan {
   generation: string;
@@ -341,7 +373,7 @@ export class RoutineLoader {
    * made for this call alone, whatever bytes it has. Its imports resolve as a library module's do, with
    * `./<name>.ts` the library's module of that name as of the library's bytes now (the generation
    * `load` would use); this changes no generation, so a later `load` returns what an earlier one did.
-   * A source with a top-level `return` rejects with an error that names `export default`.
+   * A source with a top-level `return`, or a static `import` inside a function, rejects with an error that names `export default`.
    */
   async run(source: string): Promise<unknown> {
     const library = this.#library;
@@ -357,7 +389,7 @@ export class RoutineLoader {
     try {
       return await import(url.href);
     } catch (err) {
-      throw explainReturn(err, url.href);
+      throw explainReturn(explainImport(err, url.href, source), url.href);
     }
   }
 

@@ -19,6 +19,7 @@
     "DEFAULT_TRIGGER_TIMEOUT_MS",
     "EndpointSchema",
     "EventsQuery",
+    "KEPT_RUNS",
     "LessonInput",
     "MAX_NOTES",
     "MAX_NOTE_LENGTH",

@@ -93,6 +93,7 @@ By default, the MCP server serves the core tools. The agent acts through runs, a
 | `get_events` | Returns chat, damage, deaths, joins, disconnects, and what the player did or noticed (items picked up, blocks broken and placed, low health or food, hostile creatures near) since a cursor. |
 | `wait_for` | Blocks until a matching event arrives (chat, whisper, system message, night, day, hostile_near, low_health, low_food, item_picked_up, ...) or the timeout, then returns it. The cheap way to idle. |
 | `api_reference` | Returns the run reference for this body: what a run is and what `ctx` holds. |
+| `get_run` | Returns a finished run's record: status, logs, and error or result. `seq` is the `run` field of the run's `program_finished` event. Do not pass the event's own `seq`: if that number is also the seq of a kept run, `get_run` returns that other run without an error. Without `seq`, it returns the most recent finished run. The body keeps the last 20 finished runs, so a caller that detached (a timeout, a killed CLI) reads the outcome here instead of running again. |
 | `builtin_docs` | Returns the reference for the built-in routines: call shapes, arguments, and results. Only on a body that offers built-ins. |
 | `call_routine` | Calls an action (a saved routine that `bind_routine` bound to a name) or a built-in routine by its `<module>.<routine>` name, with JSON arguments. Blocks until the call returns, fails, or times out, and answers like `run_program`. Only on a body that offers routines or built-ins. |
 | `bind_routine` | Binds a name to a saved routine, as an action or, on a body with reflexes, as a reflex. With `source`, it saves the module first. Only on a body that offers routines. |
@@ -127,7 +128,7 @@ A run is a TypeScript or JavaScript module. The body evaluates it inside the bot
 - `export default async (ctx, args) => result`: the body calls the function with the run's context and the run's `args` (a JSON object, `{}` when none) and awaits the result.
 - A module without a default export has no result.
 
-A `return` statement outside a function is a syntax error, so a run cannot end with one. The body sends the result back as JSON.
+A `return` statement outside a function is a syntax error, so a run cannot end with one. The body sends the result back as JSON. A static `import` declaration inside a function or block is a syntax error too. When the declaration begins its own line, the load error also says to move it to the top of the module, above `export default`, and, when the import names a module, shows `const name = await import("module")` as the way to load it at run time. An `import` that follows other code on the same line gets the parser's error alone.
 
 `ctx` has these members and no others:
 
@@ -173,6 +174,10 @@ export default async (ctx: RoutineContext): Promise<string> => {
 
 Send a run from a file with `minebot run walk-to-log.ts`, or from stdin. `--args <json>` passes the `args` object to the default function, and `--timeout <ms>` limits the run. Without `--args`, `args` is `{}`. `null` is an argument, not a missing one: the CLI, HTTP, and MCP refuse it because `args` is a JSON object.
 
+A run ends with a `program_finished` event. Its data holds `status`, `durationMs`, and `run`, the run's seq. A call adds `call`, the routine's name. A failed run adds `error`, the first line of the error message, and a run that returned a value adds `result`, the value as JSON. `error` and `result` stop at 200 characters, and a longer text ends with `…`. To read the whole outcome later, pass the event's `data.run` (not the event's own `seq`) to `minebot runs <seq>`, `GET /runs/<seq>`, or the `get_run` tool. Without a seq, each returns the most recent finished run. `GET /runs/<seq>` answers HTTP 404 when no run has finished or when the seq is not among the last 20 finished runs; the message lists the kept seqs. A reflex firing is not a kept run.
+
+The run reference that `api_reference` returns (and that `run_program` carries) holds a complete run to copy and change, after the paragraph on imports and before the list of `ctx` members. On a body with routines that offers `inventory`, `sense`, or `move` (the first one found in that order), the run calls one routine of that module that only reads state or stops what is not running.
+
 The body runs one run at a time: runs, calls, and reflex firings share one slot. A second request gets HTTP 409. The default timeout is 60 seconds; the maximum is 30 minutes. If a run times out or stops, the body halts pathfinding, digging, and movement keys, `ctx.sleep` rejects, and the body removes the `on` handlers that exist at that moment. The run then gets a grace period to end. If it does not end, the body kills the bot host and restarts it: the restart reconnects as the same player, and the run answers with its `status` (`stopped` or `timeout`) and an `error` that says the run did not stop. Every way to abort a run has this kill deadline: a stop, a timeout, and a preemption by a reflex. The body kills the host 5.5 seconds after the abort (the 5 second grace plus a 0.5 second margin), also when the run blocks the host with synchronous code after it catches the abort. The restart can start late: it waits 1 second, and the wait doubles after each restart in quick succession, up to 60 seconds. See [How it works](#how-it-works). Long loops must check `ctx.signal.aborted` so the run ends in time.
 
 `globalThis` keeps its values between runs. A restart of the body clears them, and so does a restart of the bot host, the process that runs the modules. The bot host restarts after a crash, and when the body kills it for a run that does not stop. A timer or a `bot.on` listener that you create yourself outlives the run, and one that throws after the run has ended restarts the bot host.
@@ -197,7 +202,7 @@ Besides chat, damage, and deaths, the event log records what the player does and
 
 ## Built-in routines
 
-The SDK ships 18 built-in routine modules in `src/routines/`. Each module holds routines that do one kind of work. A built-in routine has a call name, `<module>.<routine>`, and takes one object argument. Every call validates its arguments and its result against the routine's zod schemas, nested calls included. A bad call fails with the schema.
+The SDK ships 19 built-in routine modules in `src/routines/`. Each module holds routines that do one kind of work. A built-in routine has a call name, `<module>.<routine>`, and takes one object argument. Every call validates its arguments and its result against the routine's zod schemas, nested calls included. A bad call fails with the schema.
 
 | Module | Uses | Routines |
 | - | - | - |
@@ -216,11 +221,21 @@ The SDK ships 18 built-in routine modules in `src/routines/`. Each module holds 
 | `bucket` | | `fill`, `empty` |
 | `gatherer` | move, sense, dig, inventory, items | `gather`, `collectDrops` |
 | `crafter` | move, sense, place, inventory, craft, items, furnace | `make` |
-| `builder` | move, sense, dig, place, inventory | `materials`, `build`, `check` |
+| `builder` | move, sense, dig, place, inventory | `materials`, `build`, `check`, `line`, `arc`, `fill`, `box`, `combine` |
 | `explorer` | move, sense, dig | `scan`, `explore`, `remember`, `places`, `waypoints`, `travel`, `surface` |
 | `social` | move, sense, inventory | `say`, `waitForChat`, `players`, `follow`, `give` |
+| `trade` | move | `offers`, `buy` |
 
-The first thirteen modules do one thing each. The last five build on them through their public routines, so anything they do, your own routine can do too. See [docs/sdk.md](docs/sdk.md) for the full model.
+The first thirteen modules do one thing each. The last six build on them through their public routines, so anything they do, your own routine can do too. See [docs/sdk.md](docs/sdk.md) for the full model.
+
+What the routines do that a first call does not show:
+
+- `move.to` fails fast. After 12 seconds with no progress (no movement, no digging, and no block change near the bot), it throws `stuck at ...`. When the pathfinder ends without a way within `range`, it throws `could not reach ...` and names the cause.
+- `place.place` does not refuse a placement up front because another body stands in the cell. It tries, and then throws, with the cause, when the block does not end up in every cell it needs. It accepts the variants that placing an item gives (`wall_torch` for `torch`, `oak_wall_sign` for `oak_sign`). For a block of two cells (a door, a bed), it verifies both cells. It sneaks when it places against a block that opens a window or takes the item, such as a crafting table or a chest. It walks closer only when no neighbor face is within 5.0 blocks of the eyes.
+- `gatherer.collectDrops` returns `{ reached, unreachable }`. `reached` counts the positions it walked to (several stacks in one block count once), and `unreachable` lists the positions it could not reach.
+- `craft.craft` waits for the inventory to settle after the craft, and returns how many items the inventory gained. When the inventory has no room for the result, it throws `InventoryFullError`: the items fell at the bot's feet, and the message says how to recover them. When nothing arrives, it throws `crafted 0 of ...`.
+- `builder.line`, `builder.arc`, `builder.fill`, `builder.box`, and `builder.combine` make a blueprint from a few numbers and return `{ origin, blueprint }` in world coordinates. `builder.build` and `builder.check` take that result as it is: `await builder.build(ctx, await builder.box(ctx, { from, to, wall: "cobblestone", roof: "cobblestone" }))`. A blueprint cell of `air` digs out the block there; it needs no material.
+- `trade.offers` walks to the nearest villager or wandering trader and returns its offers. `trade.buy` makes offer number `index` up to `times` times, and returns `{ traded, gave, got, shortfall? }`, measured from the inventory. `shortfall` says why a run that traded fewer than `times` times stopped early. When no trade happens at all, `trade.buy` throws and names the cause, such as `did not trade: the inventory has no room ...`.
 
 There are two ways to call a built-in routine:
 
@@ -569,6 +584,7 @@ See [wiki/README.md](wiki/README.md) for the page format and the rules for addin
 | `run [file]` | Runs a module from a file, or from stdin. `--args <json>` passes the arguments of its default function. Exits with status 2 if the run does not end `ok`. |
 | `stop` | Aborts the running run. |
 | `events` | Prints buffered events. Use `--since <seq>` to get only newer events. |
+| `runs` | `runs [seq]` prints a finished run's record: its seq and, for a call, its name, then status, logs, and error or result. `seq` is the `run` field of the run's `program_finished` event. Without it, the command prints the most recent finished run. |
 | `wait` | Blocks until a matching event arrives, then prints it as JSON, or `timed out`. Options: `--types a,b`, `--from <name>`, `--match <regex>`, `--since <seq>`, `--timeout <ms>`. |
 | `chat <message>` | Sends a chat message. |
 | `routines` | Lists the saved routines and what is bound to them. `routines save <file...>` saves each `.ts` or `.js` file under its file name, in the order given (list the modules that a routine imports first). `routines source <name>`, `routines versions <name>`, and `routines revert <name> <version>`. Only on a body that offers routines. |

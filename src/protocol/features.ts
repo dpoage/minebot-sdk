@@ -73,6 +73,52 @@ function contextMembers(features: BodyFeatures): { name: string; line: string }[
 }
 
 /**
+ * The built-in call the run template makes for a module it can be written against: one that reads
+ * state or stops what is not running, so the template runs verbatim, changing nothing, on any body
+ * that offers the module. The first entry whose module the body offers wins.
+ */
+const TEMPLATE_CALLS: readonly { module: string; lines: readonly string[]; result: string }[] = [
+  {
+    module: "inventory",
+    lines: ["const totals = await inventory.list(ctx, {});", "ctx.log(`carrying ${Object.keys(totals).length} item types`);"],
+    result: "return { at: here.toArray(), itemTypes: Object.keys(totals).length };",
+  },
+  {
+    module: "sense",
+    lines: ['const stone = await sense.find(ctx, { blocks: "stone" });', "ctx.log(`stone in reach: ${stone.length} positions`);"],
+    result: "return { at: here.toArray(), stoneNearby: stone.length };",
+  },
+  {
+    module: "move",
+    lines: ["await move.stop(ctx, {});", 'ctx.log("stopped any pathfinding");'],
+    result: "return { at: here.toArray() };",
+  },
+];
+
+/**
+ * One complete run an agent can copy, change, and send as it is: its imports at the top of the module,
+ * above `export default`, then the default function. The built-in call is included only where the body
+ * both has routines and offers the module (a built-in import is told only there, as `builtinsDoc`
+ * does); the template is complete without it.
+ */
+function runTemplate(features: BodyFeatures): string {
+  const caps = capabilities(features);
+  const call = caps.routines ? TEMPLATE_CALLS.find(({ module }) => features.builtins.includes(module)) : undefined;
+  const lines = call?.lines ?? ["ctx.log(`standing at ${here.x},${here.y},${here.z}`);"];
+  const result = call?.result ?? "return { at: here.toArray() };";
+  return [
+    'import { Vec3 } from "vec3";',
+    ...(call ? [`import * as ${call.module} from "minebot-sdk/routines/${call.module}";`] : []),
+    "",
+    "export default async (ctx, args) => {",
+    "  const here = new Vec3(ctx.bot.entity.position.x, ctx.bot.entity.position.y, ctx.bot.entity.position.z);",
+    ...lines.map((line) => `  ${line}`),
+    `  ${result}`,
+    "};",
+  ].join("\n");
+}
+
+/**
  * Describes the run environment of one body. Shown to agents by the MCP server and the CLI.
  * Lists only the features the body offers, so an agent does not spend turns on locked ones.
  */
@@ -89,6 +135,12 @@ export function programApiDoc(features: BodyFeatures): string {
   return `A run is a TypeScript or JavaScript module (types are stripped, not checked) that the body evaluates inside the bot host, against a live Mineflayer bot, afresh each time. Its result is its default export: \`export default async (ctx, args) => result\` is called with the run's context and the run's args (a JSON object, {} when none) and its awaited return is the result; any other default export is the result itself (awaited); a module without a default export has no result. A \`return\` statement outside a function is a syntax error, so the module cannot end with one. The result is sent back as JSON.
 
 It can import Node's core modules (\`node:fs\`, \`node:os\`), the packages this body ships (mineflayer, mineflayer-pathfinder, vec3, minecraft-data, prismarine-*, zod), and \`minebot-sdk/<subpath>\`${sdk} (bare \`minebot-sdk\` does not resolve); require() of a package or a core module works too.${library}
+
+A complete run, to copy and change:
+
+\`\`\`ts
+${runTemplate(features)}
+\`\`\`
 
 ctx, the default function's first argument, has exactly: ${members.map((member) => member.name).join(", ")}.
 ${members.map((member) => `- ${member.line}`).join("\n")}

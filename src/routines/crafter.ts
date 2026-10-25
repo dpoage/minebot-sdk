@@ -143,6 +143,8 @@ async function makeItem(ctx: RoutineContext, name: string, count = 1, depth = 0)
       await smeltMissing(ctx, name, count - have, depth);
       if ((await countOf(ctx, name)) >= count) return countOf(ctx, name);
     } catch (err) {
+      // Items on the ground and a full inventory: another recipe would only spend more inputs, so the caller frees a slot first.
+      if (err instanceof craft.InventoryFullError) throw err;
       failures.push(err instanceof Error ? err.message : String(err));
     }
   }
@@ -157,6 +159,7 @@ async function makeItem(ctx: RoutineContext, name: string, count = 1, depth = 0)
           await smeltMissing(ctx, name, count - (await countOf(ctx, name)), depth);
           if ((await countOf(ctx, name)) >= count) return countOf(ctx, name);
         } catch (err) {
+          if (err instanceof craft.InventoryFullError) throw err;
           failures.push(err instanceof Error ? err.message : String(err));
         }
       }
@@ -204,6 +207,7 @@ async function makeItem(ctx: RoutineContext, name: string, count = 1, depth = 0)
       await craft.craft(ctx, { item: name, count: count - (await countOf(ctx, name)) });
       return countOf(ctx, name);
     } catch (err) {
+      if (err instanceof craft.InventoryFullError) throw err;
       failures.push(err instanceof Error ? err.message : String(err));
     }
   }
@@ -214,7 +218,7 @@ async function makeItem(ctx: RoutineContext, name: string, count = 1, depth = 0)
 export const make = defineRoutine(
   {
     name: "crafter.make",
-    description: "Make sure the inventory holds at least `count` (default 1) of `item`, crafting intermediate items (planks, sticks, tables) as needed and finding or placing a crafting table. An item that a furnace makes (iron_ingot, glass, stone, charcoal, cooked food) is smelted from the matching input the inventory holds, at a furnace within 32 blocks, else one placed from the inventory, else one crafted from 8 cobblestone; fuel is coal, charcoal, planks, or logs from the inventory. Fails with the missing raw material, which you must gather. Returns the count held.",
+    description: "Make sure the inventory holds at least `count` (default 1) of `item`, crafting intermediate items (planks, sticks, tables) as needed and finding or placing a crafting table. An item that a furnace makes (iron_ingot, glass, stone, charcoal, cooked food) is smelted from the matching input the inventory holds, at a furnace within 32 blocks, else one placed from the inventory, else one crafted from 8 cobblestone; fuel is coal, charcoal, planks, or logs from the inventory. Fails with the missing raw material, which you must gather, or, when a crafted item found no room in the inventory, with where it fell. Returns the count held.",
     args: z.object({ item: z.string().min(1), count: z.number().int().positive().default(1) }),
     returns: z.number(),
   },

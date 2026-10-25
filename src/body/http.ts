@@ -18,6 +18,8 @@ export interface RequestContext {
 export interface Route {
   method: "GET" | "POST" | "PUT" | "DELETE";
   path: string;
+  /** Path pattern for routes with a path parameter, matched against the pathname instead of `path`. */
+  pattern?: RegExp;
   handler: (ctx: RequestContext) => unknown;
 }
 
@@ -57,7 +59,7 @@ export function serveBodyApi(options: ServerOptions): http.Server {
       throw new HttpError(401, "missing or invalid bearer token");
     }
     const method = req.method ?? "";
-    const route = options.routes.find((candidate) => candidate.method === method && candidate.path === url.pathname);
+    const route = options.routes.find((candidate) => candidate.method === method && (candidate.pattern ? candidate.pattern.test(url.pathname) : candidate.path === url.pathname));
     if (route) return { status: 200, body: await route.handler({ req, res, url, read: () => readJson(req) }) };
     // The host parses the body only when the route it matches reads one, so an unknown route answers 404 whatever the body.
     const raw = method === "POST" || method === "PUT" ? await readRaw(req) : { body: null, tooLarge: false };

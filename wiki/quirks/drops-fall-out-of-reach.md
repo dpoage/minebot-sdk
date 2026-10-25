@@ -32,5 +32,5 @@ export default async ({ bot, sleep }: RoutineContext) => {
 ```
 
 <!-- builtins:gatherer -->
-`minebot call gatherer.collectDrops` does the same, and `gatherer.gather` already picks up drops after each block.
+`minebot call gatherer.collectDrops` does the same, and `gatherer.gather` already picks up drops after each block. It returns `{ reached, unreachable }`: `reached` counts the positions it walked to (several stacks in one block count once), and `unreachable` lists the positions it could not reach. A drop still falling gets up to 2 seconds to land before the routine walks to it.
 <!-- /builtins:gatherer -->

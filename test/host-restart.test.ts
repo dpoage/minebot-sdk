@@ -68,10 +68,10 @@ type History = InstanceType<typeof ProgramHistory>;
 function refusingEnds(history: History): History {
   const refusing = {
     begin: async (...args: Parameters<History["begin"]>) => {
-      await history.begin(...args);
-      return async () => {
+      const start = await history.begin(...args);
+      return { ...start, end: async () => {
         throw new Error("disk full");
-      };
+      } };
     },
     register: history.register.bind(history),
   };
@@ -205,7 +205,7 @@ describe("restart: a program that does not stop ends with its host", () => {
     await sleep(GRACE_MS + 800);
     assert.equal(await pidOf(t), before);
     assert.equal(eventsOf(t, "disconnected").length, 0);
-    assert.equal(eventsOf(t, "program_finished").length, 0, "the settled run's finish is the host's to push");
+    assert.equal(eventsOf(t, "program_finished").length, 1, "the settled run's finish is pushed when its end is recorded");
     assert.deepEqual(await t.host.stop(), { stopped: false }, "nothing is left running");
   });
 
@@ -519,12 +519,13 @@ describe("restart: what a run is owed follows its state", () => {
   it("keeps no record of a request run once its answer was delivered: stop finds nothing to stop and an idle death owes it nothing", { timeout: 20_000 }, async () => {
     const t = await scripted();
     for (let i = 0; i < 3; i++) assert.deepEqual(withoutDuration((await run(t, "settle", 20)).body).rest, { status: "timeout", logs: "settled" });
+    assert.equal(eventsOf(t, "program_finished").length, 3, "each settled run's finish was pushed when its end was recorded");
     // The host delivers each run right after its answer, so by the answer to this request every run is delivered.
     await pidOf(t);
     assert.equal(t.host.openRuns, 0, "delivered runs are still held");
     assert.deepEqual(await t.host.stop(), { stopped: false });
     await killHost(t);
-    assert.equal(eventsOf(t, "program_finished").length, 0, "the idle host's death synthesized a run's end");
+    assert.equal(eventsOf(t, "program_finished").length, 3, "the idle host's death synthesized a run's end");
     assert.deepEqual(historyOf(t).map((line) => line.status), ["timeout", "timeout", "timeout"]);
   });
 
@@ -564,8 +565,8 @@ describe("restart: what a run is owed follows its state", () => {
           assert.equal(eventsOf(t, "disconnected").length, 1);
           if (request) {
             assert.deepEqual(await request, { status: 500, body: { error: "disk full" } });
-            // The host pushed it before it reported the end.
-            assert.deepEqual(eventsOf(t, "program_finished").map((e) => e.data.status), ["ok"]);
+            // The finish was pushed as the refused write was recorded: the run ends in the write's error.
+            assert.deepEqual(eventsOf(t, "program_finished").map((e) => e.data.status), ["error"]);
             assert.equal(eventsOf(t, "reflex_finished").length, 0);
             return;
           }
@@ -611,9 +612,10 @@ describe("restart: every run in flight at its host's death ends once, with its r
           assert.equal(answer.status, 200);
           assert.deepEqual(withoutDuration(answer.body).rest, { ...expected, ...(end.result !== undefined && { result: end.result }), logs: "" });
         }
-        // program_finished carries the status alone, as the host pushes it.
+        // program_finished is pushed when the end is recorded (its fields: test/run-records.test.ts); a reflex's end is a reflex_finished.
         const finished = eventsOf(t, kind === "request" ? "program_finished" : "reflex_finished");
-        assert.deepEqual(finished.map(({ data: { durationMs: _, ...rest } }) => rest), [kind === "request" ? { status: end.status } : { name: "reflex", ...expected }]);
+        if (kind === "request") assert.deepEqual(finished.map((e) => e.data.status), [end.status]);
+        else assert.deepEqual(finished.map(({ data: { durationMs: _, ...rest } }) => rest), [{ name: "reflex", ...expected }]);
         assert.equal(eventsOf(t, kind === "request" ? "reflex_finished" : "program_finished").length, 0);
         assert.deepEqual(historyOf(t).map((line) => line.status), [end.status]);
         const reasons = eventsOf(t, "disconnected").map((e) => String(e.data.reason));
@@ -747,7 +749,7 @@ describe("restart: a run's start is recorded before its code may run", () => {
       begin: async () => {
         await sleep(200);
         writtenAt = Date.now();
-        return async () => {};
+        return { seq: 1, startedAt: "t0", record: () => ({ seq: 1, startedAt: "t0", status: "ok", logs: "", durationMs: 0 }), end: async () => {} };
       },
     } as unknown as InstanceType<typeof ProgramHistory>;
     const events = new EventLog();

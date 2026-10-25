@@ -103,16 +103,21 @@ describe("a host that cannot start", () => {
 });
 
 describe("a run whose end the history cannot write", () => {
-  /** What the run host's two runs (one with a result, one that throws first) ended with, over a history at `file`. */
-  async function recordedRuns(file: string): Promise<Record<string, unknown>[]> {
+  /** How the run host's three runs ended over a history at `file`, and the supervisor's log of their finishes. */
+  async function recordedRuns(file: string): Promise<{ runs: Record<string, unknown>[]; finishes: Record<string, unknown>[] }> {
     const events = new EventLog();
     const host = new HostProcess({ init: {} as HostInit, events, history: new ProgramHistory({ file }), entry: path.join(FIXTURES, "run-host.ts") });
     try {
       await host.start();
       host.join();
-      const first = await events.wait({ types: ["recorded"], since: 0, timeoutMs: 10_000 });
-      const second = await events.wait({ types: ["recorded"], since: first.next, timeoutMs: 10_000 });
-      return [first.event!.data, second.event!.data];
+      const runs: Record<string, unknown>[] = [];
+      let next = 0;
+      for (let i = 0; i < 3; i++) {
+        const recorded = await events.wait({ types: ["recorded"], since: next, timeoutMs: 10_000 });
+        runs.push(recorded.event!.data);
+        next = recorded.next;
+      }
+      return { runs, finishes: events.since(0).events.filter((event) => event.type === "program_finished").map((event) => event.data) };
     } finally {
       await host.close();
     }
@@ -122,20 +127,36 @@ describe("a run whose end the history cannot write", () => {
     // A directory where the file should be: the run's final line cannot be appended.
     const file = path.join(ROOT, "history-is-a-directory");
     mkdirSync(file);
-    const [result, thrown] = await recordedRuns(file);
+    const { runs } = await recordedRuns(file);
+    const [result, thrown, boom] = runs;
     assert.equal(result!.name, "result");
     assert.match(String(result!.error), /^EISDIR: /, "the run settled before its end was recorded");
     assert.deepEqual(thrown, { name: "thrown", error: "the body is not connected" }, "a run that threw before its result keeps its own error");
+    assert.match(String(boom!.error), /^EISDIR: /, "an error run is failed by the refused write, not by its program's error");
+  });
+
+  it("previews the substituted end's own error in program_finished, not the host's report of the run", async () => {
+    const file = path.join(ROOT, "history-is-a-directory-2");
+    mkdirSync(file);
+    const { finishes } = await recordedRuns(file);
+    // The runs that reported an end (the one that threw host-side never did): each finish previews the write error its record holds.
+    assert.equal(finishes.length, 2, `one finish per reported end: ${JSON.stringify(finishes)}`);
+    for (const finish of finishes) {
+      assert.match(String(finish.error), /^EISDIR: /, `the event previews the end the record holds: ${JSON.stringify(finish)}`);
+    }
+    assert.ok(!finishes.some((finish) => finish.error === "the program boomed"), "the host's preview of the program's error does not survive the end the supervisor substituted");
   });
 
   it("settles a run once its final line is on disk", async () => {
     const file = path.join(ROOT, "history-written.jsonl");
-    const [result, thrown] = await recordedRuns(file);
+    const { runs } = await recordedRuns(file);
+    const [result, thrown, boom] = runs;
     assert.deepEqual(result, { name: "result", status: "ok" });
     assert.deepEqual(thrown, { name: "thrown", error: "the body is not connected" });
+    assert.deepEqual(boom, { name: "boom", status: "error" });
     assert.deepEqual(
       readFileSync(file, "utf8").trim().split("\n").map((line) => JSON.parse(line).status),
-      ["ok"],
+      ["ok", "error"],
     );
   });
 });

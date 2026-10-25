@@ -56,9 +56,10 @@ const CATALOG: readonly CatalogEntry[] = [
   entry("combat", () => import("./combat.ts"), ["attack", "fight", "retreat"]),
   entry("farm", () => import("./farm.ts"), ["till", "plant", "harvest", "breed"]),
   entry("bucket", () => import("./bucket.ts"), ["fill", "empty"]),
+  entry("trade", () => import("./trade.ts"), ["offers", "buy"]),
   entry("gatherer", () => import("./gatherer.ts"), ["gather", "collectDrops"]),
   entry("crafter", () => import("./crafter.ts"), ["make"]),
-  entry("builder", () => import("./builder.ts"), ["materials", "build", "check"]),
+  entry("builder", () => import("./builder.ts"), ["materials", "build", "check", "line", "arc", "fill", "box", "combine"]),
   entry("explorer", () => import("./explorer.ts"), ["scan", "explore", "remember", "places", "waypoints", "travel", "surface"]),
   entry("social", () => import("./social.ts"), ["say", "waitForChat", "players", "follow", "give"]),
 ];
