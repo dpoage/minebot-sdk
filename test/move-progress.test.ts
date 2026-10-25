@@ -166,4 +166,25 @@ describe("move.to end-of-walk distance", () => {
     );
     assert.equal(pathfinder.goal, null, "the goal was cleared");
   });
+
+  it("reports a search the plugin's `goto` rejects ('NoPath', 'Timeout') as could-not-reach with its cause, and stops pathfinding", async () => {
+    const cases = [
+      { status: "timeout", name: "Timeout", message: "Took to long to decide path to goal!", why: "the path search ran out of time" },
+      { status: "noPath", name: "NoPath", message: "No path to the goal!", why: "the pathfinder found no way there from here" },
+    ];
+    for (const { status, name, message, why } of cases) {
+      const h = createHarness();
+      const pathfinder = h.bot.pathfinder as unknown as { goal: unknown; goto: (goal: unknown) => Promise<void> };
+      // As the plugin: the search ends with a partial path toward the goal, and `goto` rejects.
+      pathfinder.goto = async (goal) => {
+        pathfinder.goal = goal;
+        h.bot.emit("path_update", { status, path: [{ x: 1, y: 64, z: 0 }] } as never);
+        throw Object.assign(new Error(message), { name });
+      };
+      await assert.rejects(h.run(move.to, { position: [10, 64, 0], range: 1 }), {
+        message: `could not reach (10, 64, 0): stopped at (0, 64, 0), 10.0 blocks away; ${why}`,
+      });
+      assert.equal(pathfinder.goal, null, `${status}: the goal was cleared`);
+    }
+  });
 });

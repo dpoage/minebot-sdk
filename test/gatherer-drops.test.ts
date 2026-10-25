@@ -1,8 +1,9 @@
-// gatherer.collectDrops tries each drop once and reports { reached, unreachable } (mb-jfa.6). A drop hanging in
-// mid-air has no cell to stand in, so the harness pathfinder fails the walk to it.
+// gatherer.collectDrops tries each drop once and reports { reached, unreachable } (mb-jfa.6), walking only once
+// fresh drops have landed. A drop hanging in mid-air has no cell to stand in, so the harness pathfinder fails the walk to it.
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { createHarness, type Harness } from "minebot-sdk/testing";
+import { Vec3 } from "minebot-sdk/routine";
 import * as gatherer from "../src/routines/gatherer.ts";
 
 const MID_AIR = { name: "item", item: "oak_log", at: [7.5, 68, 0.5] } as const;
@@ -50,5 +51,15 @@ describe("gatherer drops", () => {
   it("collectDrops with nothing to pick up returns zero and an empty list", async () => {
     const h = createHarness();
     assert.deepEqual(await h.run(gatherer.collectDrops, {}), { reached: 0, unreachable: [] });
+  });
+
+  it("collectDrops waits for a falling drop to land and walks to where it lies", async () => {
+    const h = createHarness({ position: [0.5, 64, 0.5] });
+    const drop = h.spawn({ name: "item", item: "oak_log", at: [3.5, 72, 0.5] });
+    // The drop falls from y 72 to the ground (64.25) over 30 ticks (1.5 s of game time), as a dug log's drop does.
+    const start = h.bot.time.age;
+    Object.defineProperty(drop, "position", { get: () => new Vec3(3.5, Math.max(64.25, 72 - (h.bot.time.age - start) * 0.26), 0.5) });
+    assert.deepEqual(await h.run(gatherer.collectDrops, {}), { reached: 1, unreachable: [] });
+    assert.equal(h.count("oak_log"), 1, "picked up where it landed");
   });
 });

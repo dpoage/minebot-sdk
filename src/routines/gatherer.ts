@@ -22,14 +22,34 @@ const MAX_FAILURES = 12;
 const DIG_REACH = 4.5;
 const EYE_HEIGHT = 1.62;
 
-/** Walks within 3 blocks of `target`. A walk that fails where `target` is in dig reach anyway, as the top log of a tall trunk, is no failure. */
+/**
+ * Walks within 3 blocks of `target` unless it is in dig reach already. A walk that fails where `target` is
+ * in dig reach anyway is no failure.
+ */
 async function walkToDig(ctx: RoutineContext, target: Vec3): Promise<void> {
+  const inReach = () => ctx.bot.entity.position.offset(0, EYE_HEIGHT, 0).distanceTo(target.offset(0.5, 0.5, 0.5)) <= DIG_REACH;
+  if (inReach()) return;
   try {
     await move.to(ctx, { position: target, range: 3, timeoutMs: 45_000 });
   } catch (err) {
-    if (ctx.signal.aborted || ctx.bot.entity.position.offset(0, EYE_HEIGHT, 0).distanceTo(target.offset(0.5, 0.5, 0.5)) > DIG_REACH) throw err;
+    if (ctx.signal.aborted || !inReach()) throw err;
     ctx.log(`gather: digging ${target} from here, in reach though the walk failed: ${err instanceof Error ? err.message : String(err)}`);
   }
+}
+
+/** The floored positions of the drops within `radius`, keyed `x,y,z`, once they hold still between two looks 250 ms apart (up to 2 s). */
+async function landedDrops(ctx: RoutineContext, radius: number): Promise<Map<string, Point>> {
+  let targets = new Map<string, Point>();
+  // A dug block's drop can still be falling; a walk toward where it hangs in the air finds no path.
+  for (let waited = 0; waited <= 2000; waited += 250) {
+    const seen = new Map<string, Point>();
+    for (const p of await items.drops(ctx, { radius })) seen.set(`${p.x},${p.y},${p.z}`, p);
+    const still = waited > 0 && seen.size === targets.size && [...seen.keys()].every((key) => targets.has(key));
+    targets = seen;
+    if (still) break;
+    await ctx.sleep(250);
+  }
+  return targets;
 }
 
 /**
@@ -39,8 +59,7 @@ async function walkToDig(ctx: RoutineContext, target: Vec3): Promise<void> {
  */
 async function pickUpDrops(ctx: RoutineContext, failed: Set<string>, radius = 8): Promise<{ reached: number; unreachable: Point[] }> {
   await ctx.sleep(400);
-  const targets = new Map<string, Point>();
-  for (const p of await items.drops(ctx, { radius })) targets.set(`${p.x},${p.y},${p.z}`, p);
+  const targets = await landedDrops(ctx, radius);
   let reached = 0;
   const unreachable: Point[] = [];
   for (const [key, p] of targets) {
