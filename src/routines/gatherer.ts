@@ -1,6 +1,6 @@
 // The gatherer routines: collect resources by walking, digging, and picking up the drops —
 // built from the move, sense, dig, inventory, and items primitives.
-import { defineRoutine, NamePattern, Point, type RoutineContext, Vec3, z } from "minebot-sdk/routine";
+import { type Block, defineRoutine, NamePattern, Point, type RoutineContext, Vec3, z } from "minebot-sdk/routine";
 import * as move from "minebot-sdk/routines/move";
 import * as sense from "minebot-sdk/routines/sense";
 import * as dig from "minebot-sdk/routines/dig";
@@ -37,19 +37,23 @@ async function walkToDig(ctx: RoutineContext, target: Vec3): Promise<void> {
   }
 }
 
-/** The floored positions of the drops within `radius`, keyed `x,y,z`, once they hold still between two looks 250 ms apart (up to 2 s). */
-async function landedDrops(ctx: RoutineContext, radius: number): Promise<Map<string, Point>> {
-  let targets = new Map<string, Point>();
-  // A dug block's drop can still be falling; a walk toward where it hangs in the air finds no path.
-  for (let waited = 0; waited <= 2000; waited += 250) {
-    const seen = new Map<string, Point>();
-    for (const p of await items.drops(ctx, { radius })) seen.set(`${p.x},${p.y},${p.z}`, p);
-    const still = waited > 0 && seen.size === targets.size && [...seen.keys()].every((key) => targets.has(key));
-    targets = seen;
-    if (still) break;
+/** True for a block an item lies on or floats in. An unloaded block counts: nothing is known against it. */
+const holdsItem = (block: Block | null) => block === null || block.boundingBox === "block" || block.name === "water" || block.name === "lava";
+
+/**
+ * The floored positions of the drops within `radius` that lie on something, keyed `x,y,z`. A dug block's drop
+ * falls for a moment, and the client sees it hang where it was until the server's next position update (up to
+ * a second); a walk toward a drop in mid-air finds no path. So this looks every 250 ms, up to 2 s, until no
+ * drop is in mid-air, and leaves out any that still are.
+ */
+async function lyingDrops(ctx: RoutineContext, radius: number): Promise<Map<string, Point>> {
+  const lies = (p: Point) => holdsItem(ctx.bot.blockAt(new Vec3(p.x, p.y, p.z))) || holdsItem(ctx.bot.blockAt(new Vec3(p.x, p.y - 1, p.z)));
+  for (let waited = 0; ; waited += 250) {
+    const drops = await items.drops(ctx, { radius });
+    const lying = drops.filter(lies);
+    if (lying.length === drops.length || waited >= 2000) return new Map(lying.map((p) => [`${p.x},${p.y},${p.z}`, p]));
     await ctx.sleep(250);
   }
-  return targets;
 }
 
 /**
@@ -59,7 +63,7 @@ async function landedDrops(ctx: RoutineContext, radius: number): Promise<Map<str
  */
 async function pickUpDrops(ctx: RoutineContext, failed: Set<string>, radius = 8): Promise<{ reached: number; unreachable: Point[] }> {
   await ctx.sleep(400);
-  const targets = await landedDrops(ctx, radius);
+  const targets = await lyingDrops(ctx, radius);
   let reached = 0;
   const unreachable: Point[] = [];
   for (const [key, p] of targets) {
@@ -138,7 +142,7 @@ export const gather = defineRoutine(
 export const collectDrops = defineRoutine(
   {
     name: "gatherer.collectDrops",
-    description: "Walk over each position within `radius` (default 8) where dropped items lie, once, to pick them up. Returns { reached, unreachable }: how many such positions it reached (several stacks in one block count once) and the positions it could not reach.",
+    description: "Walk over each position within `radius` (default 8) where dropped items lie, once, to pick them up; a drop still falling gets up to 2 s to land, and one still in mid-air then is left out. Returns { reached, unreachable }: how many such positions it reached (several stacks in one block count once) and the positions it could not reach.",
     args: z.object({ radius: z.number().positive().default(8) }),
     returns: z.object({ reached: z.number(), unreachable: z.array(Point) }),
   },

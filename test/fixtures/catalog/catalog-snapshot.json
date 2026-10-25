@@ -2114,7 +2114,7 @@
       },
       {
         "name": "collectDrops",
-        "description": "Walk over each position within `radius` (default 8) where dropped items lie, once, to pick them up. Returns { reached, unreachable }: how many such positions it reached (several stacks in one block count once) and the positions it could not reach.",
+        "description": "Walk over each position within `radius` (default 8) where dropped items lie, once, to pick them up; a drop still falling gets up to 2 s to land, and one still in mid-air then is left out. Returns { reached, unreachable }: how many such positions it reached (several stacks in one block count once) and the positions it could not reach.",
         "args": {
           "$schema": "https://json-schema.org/draft/2020-12/schema",
           "type": "object",
