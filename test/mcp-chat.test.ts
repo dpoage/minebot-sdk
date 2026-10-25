@@ -1,6 +1,6 @@
 // send_chat over the real MCP surface against a whole fake body (see fixtures/host/fake-body.ts):
-// speech never waits for the run slot — POST /chat is off it, unlike POST /call and POST /run —
-// and `to` composes the /msg whisper in the MCP handler, before the POST the body sees.
+// POST /chat is off the run slot, so send_chat works while a run holds it (POST /call and POST /run
+// are refused as busy), and `to` composes the /msg whisper in the MCP handler, before the POST the body sees.
 import assert from "node:assert/strict";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -22,7 +22,6 @@ const RECORDER =
   "    ctx.bot.sent = [...((ctx.bot.sent as string[] | undefined) ?? []), message];\n" +
   "  };\n" +
   "};\n";
-/** Reads back what the recorder has seen. */
 const SENT = "export default (ctx: { bot: { sent?: string[] } }) => ctx.bot.sent ?? [];\n";
 
 /** One MCP tool call: whether it errored, and its text. */
@@ -59,7 +58,6 @@ describe("the core send_chat tool against a whole body", () => {
     await body.close();
   });
 
-  /** What the body has sent as chat so far. */
   async function sent(): Promise<string[]> {
     const run = (await body.ok("POST", "/run", { code: SENT })) as RunResult;
     assert.equal(run.status, "ok", run.error ?? "");

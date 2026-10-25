@@ -83,15 +83,17 @@ From a checkout of this repository, point the harness at the source instead:
 claude mcp add minebot -- node --conditions=minebot-sdk:source /absolute/path/to/minebot/src/cli.ts mcp --bot alpha
 ```
 
-By default, the MCP server serves the core tools. The agent acts through runs, and a run reaches everything else through its context, `ctx` (`ctx.notes`, `ctx.status()`, `ctx.bot.chat`, `ctx.wiki`). A run cannot bind a routine, so the core set holds the tools that call and bind routines, and the one that documents the built-in routines. A short tool list keeps the agent's context small.
+By default, the MCP server serves the core tools. The agent acts through runs, and a run reaches everything else through its context, `ctx` (`ctx.notes`, `ctx.status()`, `ctx.bot.chat`, `ctx.wiki`). A run cannot bind a routine, so the core set holds the tools that call and bind routines, and the one that documents the built-in routines. The core set also holds `send_chat`: while another run holds the slot, a new run is refused, and `send_chat` still speaks. A short tool list keeps the agent's context small.
 
 | Core tool | What it does |
 | - | - |
 | `observe` | Returns position, vitals, armor, effects, biome, open sky, inventory, nearby creatures, and run state as one line. `full: true` returns the complete JSON. |
 | `run_program` | Runs a module and blocks until it returns, fails, or times out. Its description holds the run reference for this body. |
 | `stop_program` | Aborts the running run and halts movement, pathfinding, and digging. |
+| `get_run` | Returns what a finished run ended with (status, logs, and error or result), named by the `seq` in its `program_finished` event; without `seq`, the latest finished run. The body keeps the last 20 finished runs. A caller that timed out reads the outcome here instead of running again. |
 | `get_events` | Returns chat, damage, deaths, joins, disconnects, and what the player did or noticed (items picked up, blocks broken and placed, low health or food, hostile creatures near) since a cursor. |
 | `wait_for` | Blocks until a matching event arrives (chat, whisper, system message, night, day, hostile_near, low_health, low_food, item_picked_up, ...) or the timeout, then returns it. The cheap way to idle. |
+| `send_chat` | Sends a public chat message or a command as the player, or whispers to one player when you pass `to` (sent as `/msg`, so a leading `/` stays text and runs no command). Works while a run is going. |
 | `api_reference` | Returns the run reference for this body: what a run is and what `ctx` holds. |
 | `builtin_docs` | Returns the reference for the built-in routines: call shapes, arguments, and results. Only on a body that offers built-ins. |
 | `call_routine` | Calls an action (a saved routine that `bind_routine` bound to a name) or a built-in routine by its `<module>.<routine>` name, with JSON arguments. Blocks until the call returns, fails, or times out, and answers like `run_program`. Only on a body that offers routines or built-ins. |
@@ -103,7 +105,6 @@ By default, the MCP server serves the core tools. The agent acts through runs, a
 | - | - |
 | `status` | Returns deaths and reconnects since the body started, and progress toward the body's milestones. |
 | `notes_list`, `notes_set`, `notes_delete` | Read and write the agent's persistent notes. |
-| `send_chat` | Sends a chat message or a command as the player. |
 | `list_builtins` | Lists the built-in modules, their uses and routines, and how often each routine worked. |
 | `builtin_search` | Ranks the built-in routines and modules by what they do (names, descriptions, argument names). |
 | `builtin_source` | Prints a built-in module's source: the model for writing your own. |
@@ -117,7 +118,7 @@ By default, the MCP server serves the core tools. The agent acts through runs, a
 
 The MCP server reads the body endpoint on every call. If the body restarts, the MCP server keeps working.
 
-The MCP server asks the body which features it offers: before it connects, and before every tool call. It lists the built-in tools (`builtin_docs`, `list_builtins`, `builtin_search`, `builtin_source`) only when the body offers built-ins, the routine tools (`bind_routine`, `list_routines`, `routine_save`, `routine_source`, `routine_versions`, `routine_revert`, `unbind_routine`) only when the body offers routines, `call_routine` when the body offers either, the wiki tools only when the wiki is not `off`, and `wiki_add_lesson` only in `write` mode. `bind_routine` takes the reflex fields (`on`, `when`, and so on) only when the body also has reflexes. When the answer changes, tools appear or disappear and the server sends `notifications/tools/list_changed`. The `run_program` and `status` descriptions and `minebot api` describe only the offered features. While the body cannot be reached, the MCP server lists only the ungated tools of its tool set: `observe`, `run_program`, `api_reference`, `stop_program`, `get_events`, and `wait_for`, plus `status`, the `notes_*` tools, and `send_chat` with `--tools full`.
+The MCP server asks the body which features it offers: before it connects, and before every tool call. It lists the built-in tools (`builtin_docs`, `list_builtins`, `builtin_search`, `builtin_source`) only when the body offers built-ins, the routine tools (`bind_routine`, `list_routines`, `routine_save`, `routine_source`, `routine_versions`, `routine_revert`, `unbind_routine`) only when the body offers routines, `call_routine` when the body offers either, the wiki tools only when the wiki is not `off`, and `wiki_add_lesson` only in `write` mode. `bind_routine` takes the reflex fields (`on`, `when`, and so on) only when the body also has reflexes. When the answer changes, tools appear or disappear and the server sends `notifications/tools/list_changed`. The `run_program` and `status` descriptions and `minebot api` describe only the offered features. While the body cannot be reached, the MCP server lists only the ungated tools of its tool set: `observe`, `run_program`, `api_reference`, `stop_program`, `get_run`, `get_events`, `wait_for`, and `send_chat`, plus `status` and the `notes_*` tools with `--tools full`.
 
 ## Runs
 
@@ -207,7 +208,7 @@ The SDK ships 18 built-in routine modules in `src/routines/`. Each module holds 
 | `place` | | `place` |
 | `inventory` | | `list`, `count`, `equip`, `toss` |
 | `craft` | | `craft`, `table` |
-| `items` | | `recipes`, `drops` |
+| `items` | | `recipes`, `drops`, `rename` |
 | `furnace` | | `smelt`, `take` |
 | `container` | | `list`, `deposit`, `withdraw` |
 | `survival` | | `eat`, `sleep`, `wake`, `armor` |
@@ -218,7 +219,7 @@ The SDK ships 18 built-in routine modules in `src/routines/`. Each module holds 
 | `crafter` | move, sense, place, inventory, craft, items, furnace | `make` |
 | `builder` | move, sense, dig, place, inventory | `materials`, `build`, `check` |
 | `explorer` | move, sense, dig | `scan`, `explore`, `remember`, `places`, `waypoints`, `travel`, `surface` |
-| `social` | move, sense, inventory | `say`, `waitForChat`, `players`, `follow`, `give` |
+| `social` | move, sense, inventory | `say`, `waitForChat`, `players`, `follow`, `give`, `gesture`, `sign`, `book` |
 
 The first thirteen modules do one thing each. The last five build on them through their public routines, so anything they do, your own routine can do too. See [docs/sdk.md](docs/sdk.md) for the full model.
 

@@ -125,9 +125,9 @@ export const give = defineRoutine(
 const GESTURES = ["look", "nod", "shake", "wave", "crouch", "jump", "present"] as const;
 type Gesture = (typeof GESTURES)[number];
 
-/** One tick-aligned beat of a gesture: forced looks land on the next physics tick, so a step must outlast a few ticks for an onlooker to see it. */
+/** One beat of a gesture. Forced looks land on the next physics tick, so a step must outlast a few ticks for an onlooker to see it. */
 const BEAT_MS = 150;
-/** How far a nod or a shake swings the head from where it faced: about 26 degrees, enough that each swing reads as a movement. */
+/** A nod or shake swings the head this far (radians, about 26 degrees) from where it faced. */
 const SWING = 0.45;
 
 /** The entity of the player `username` that this bot can see, or a thrown error that names the cause and the fix. */
@@ -274,7 +274,7 @@ const HOTBAR_START = 36;
 const EDITOR_WAIT_MS = 3_000;
 /** How long the server gets to show an edit back to the bot, whether a sign's text or a book's contents. */
 const READBACK_MS = 2_000;
-/** A string the server caps at `limit` characters as it counts them: UTF-16 code units, where a character outside the BMP (an emoji) counts as 2. Zod's `.max` counts code points and passes a 46-unit line of 23 emoji, which the write then fails on. */
+/** A string the server caps at `limit` UTF-16 code units. Zod's `.max` counts code points, so it passes a 46-unit line of 23 emoji that the write then fails on. */
 const serverChars = (limit: number, message: string) => z.string().max(limit, message).refine((text) => text.length <= limit, message);
 
 /** The member `key` of `value` when it is an object that has one, else undefined: how the NBT the server sends is read without trusting its shape. */
@@ -307,7 +307,7 @@ function isWaxed(block: Block): boolean {
 
 const where = (pos: Point) => `(${pos.x}, ${pos.y}, ${pos.z})`;
 
-/** Mineflayer decodes the NBT the server sends as plain UTF-8, but NBT keeps a character outside the BMP (an emoji) as two surrogates of three bytes each, which it reads as six replacement characters. This is what a correct write of `text` reads as. */
+/** Mineflayer decodes NBT as plain UTF-8, but NBT stores a character outside the BMP (an emoji) as two three-byte surrogates, which it reads as six replacement characters. This is what a correct write of `text` reads as. */
 const asNbtRead = (text: string) => text.replace(/[\u{10000}-\u{10FFFF}]/gu, "\uFFFD".repeat(6));
 
 /**
@@ -331,7 +331,7 @@ function signToEdit(ctx: RoutineContext, pos: Vec3): Block {
   return block;
 }
 
-/** Whether right-clicking a sign with `item` in the main hand acts on the sign instead of opening its editor: honeycomb waxes it for good, dyes and ink sacs recolor or glow its text, and a hanging sign item on a wall hanging sign tries to hang another sign there. A ceiling hanging sign opens its editor for the same click a bot sends, and an empty hand or any other item opens every sign's editor. */
+/** Whether right-clicking a sign with `item` in the main hand acts on the sign instead of opening its editor: honeycomb waxes it, dyes and ink sacs recolor or glow its text, and a hanging sign item on a wall hanging sign tries to hang another sign there. A ceiling hanging sign, an empty hand, and any other item open the editor. */
 function actsOnSign(item: string | undefined, block: string): boolean {
   return item !== undefined && (item === "honeycomb" || item === "ink_sac" || item === "glow_ink_sac" || /_dye$/.test(item) || (/_hanging_sign$/.test(item) && /_wall_hanging_sign$/.test(block)));
 }
@@ -467,7 +467,7 @@ function describeBook(contents: BookContents | undefined): string {
   return `a ${contents.item}${signed} with ${contents.pages.length} page${contents.pages.length === 1 ? "" : "s"} ${JSON.stringify(contents.pages).slice(0, 200)}`;
 }
 
-/** The custom name a stack carries (the component reads as `{ type: "string", value }`), or undefined when it has none. */
+/** The plain-text custom name a stack carries (an anvil sets it as `{ type: "string", value }`), or undefined when it has none. A styled name (colored or formatted text) reads as none. */
 function bookName(stack: Item): string | undefined {
   const raw: unknown = stack.customName;
   const name = typeof raw === "string" ? raw : field(raw, "value");
@@ -488,14 +488,14 @@ function writableBooks(bot: Bot): { stack: Item; slot: number }[] {
 function bookLabel(stack: Item): string {
   const name = bookName(stack);
   const pages = bookContents(stack)?.pages.length ?? 0;
-  return `${name === undefined ? "the unnamed book and quill" : `the book and quill named ${JSON.stringify(name)}`} (${pages} page${pages === 1 ? "" : "s"})`;
+  return `${name === undefined ? "the book and quill with no plain-text name" : `the book and quill named ${JSON.stringify(name)}`} (${pages} page${pages === 1 ? "" : "s"})`;
 }
 
 export const book = defineRoutine(
   {
     name: "social.book",
     description:
-      "Write `pages` (1 to 100 strings, each 1 to 1024 characters as the server counts them — an emoji counts as 2) into a writable_book (book and quill) in the inventory, replacing what it held. A writable_book is made from a book, an ink_sac and a feather. `book`: \"new\" (default) writes into a BLANK writable_book (no pages, or only empty pages) and never touches one that holds writing: if none is blank it throws and names the fix (craft a book and quill, or pass book: \"first\") and which book \"first\" would rewrite. \"first\" rewrites the first unsigned writable_book in slot order — the main inventory grid first, then the hotbar (the off-hand is not searched); e.g. a renamed 'Ledger' in the main grid and a blank book in the hotbar: \"first\" picks 'Ledger', \"new\" picks the blank one. Without `title` the book stays a writable_book that can be written again (a ledger). With `title` (1 to 32 characters, counted the same way) the book is signed: it becomes a written_book with you as the author, and can never be edited again. Returns { item, title?, name?, pages } where pages is the count read back and name is the custom name of the book that was written, when it had one, and throws if the book does not hold what was written.",
+      "Write `pages` (1 to 100 strings, each 1 to 1024 characters as the server counts them — an emoji counts as 2) into a writable_book (book and quill) in the inventory, replacing what it held. A writable_book is made from a book, an ink_sac and a feather. `book`: \"new\" (default) writes into a BLANK writable_book (no pages, or only empty pages; a blank book with a custom name, such as one renamed at an anvil, still counts as blank) and never touches one that holds writing: if none is blank it throws and names the fix (craft a book and quill, or pass book: \"first\") and which book \"first\" would rewrite. \"first\" rewrites the first unsigned writable_book in slot order — the main inventory grid first, then the hotbar (the off-hand is not searched); e.g. a renamed 'Ledger' that holds writing in the main grid and a blank book in the hotbar: \"first\" picks 'Ledger', \"new\" picks the blank one. Without `title` the book stays a writable_book that can be written again (a ledger). With `title` (1 to 32 characters, counted the same way) the book is signed: it becomes a written_book with you as the author, and can never be edited again. Returns { item, title?, name?, pages } where pages is the count read back and name is the plain-text custom name of the book that was written (such as one set at an anvil), when it had one; a book with a styled name (colored or formatted text) returns no name. Throws if the book does not hold what was written.",
     args: z.object({
       pages: z
         .array(serverChars(BOOK_PAGE_MAX, `a book page holds at most ${BOOK_PAGE_MAX} characters as the server counts them (an emoji counts as 2): split this text over more pages`).min(1, "a book page cannot be empty: give every page some text"))
@@ -532,7 +532,6 @@ export const book = defineRoutine(
     if (title === undefined && holdsWritten(bookContents(stack))) return done;
 
     // Mineflayer moves the book to the hotbar to edit it and back afterwards, and updates the stack's own `slot` on the way: the slot to read back is where it started.
-    // Mineflayer 4.39 always implements signBook; only its typings leave it out.
     const signer = bot as SigningBot;
     try {
       if (title === undefined) await bot.writeBook(slot, pages);

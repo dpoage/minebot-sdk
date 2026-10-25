@@ -123,11 +123,7 @@ async function poll(ctx: RoutineContext, polls: number, done: () => boolean): Pr
   return done();
 }
 
-/**
- * What the anvil window shows for `name`, and what that costs: sends the name, waits for the output
- * slot to carry it, and takes the cost from the window property the server sent with it. The
- * output can show an older name first, so this looks until the wanted one is there.
- */
+/** Sends `name`, waits until the output slot carries it, and returns the level cost the server sent with it. The output can show an older name first. */
 async function offerRename(ctx: RoutineContext, window: AnvilWindow, stack: Item, name: string, costs: { level: number | undefined }): Promise<number | undefined> {
   ctx.bot._client.write("name_item", { name });
   if (!(await poll(ctx, OFFER_POLLS, () => customNameOf(window.slots[OUTPUT_SLOT]) === name))) {
@@ -202,7 +198,7 @@ async function renameAtAnvil(ctx: RoutineContext, anvil: Block, stack: Item, nam
 export const rename = defineRoutine(
   {
     name: "items.rename",
-    description: `Rename the first stack of \`item\` in the inventory that does not already have \`name\` to \`name\` (1-${MAX_NAME_LENGTH} characters; spaces are fine) at an anvil within reach (${REACH} blocks; this never walks, so go there first, for example move.to). The cost is experience levels, usually 1 or more; an error names the cost and your level. When every stack of \`item\` already has \`name\`, this returns at once, spending nothing. Returns { item, name, count: how many were renamed, levelsSpent }.`,
+    description: `Rename the first stack of \`item\` in the inventory that does not already have \`name\` to \`name\` (1-${MAX_NAME_LENGTH} characters; spaces are fine) at an anvil within reach (${REACH} blocks; this never walks, so go there first, for example move.to). The cost is experience levels, usually 1 or more; an error names the cost and your level. Returns { item, name, count, levelsSpent }: count is how many items were renamed and levelsSpent is the levels it cost. When every stack of \`item\` already has \`name\`, nothing is renamed and no anvil is needed: this returns at once with count set to the size of the first stack of \`item\` and levelsSpent 0.`,
     args: z.object({
       item: z.string().min(1),
       name: z

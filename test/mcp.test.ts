@@ -14,8 +14,7 @@ const CLI = [...process.execArgv, path.join(import.meta.dirname, "..", "src", "c
 
 const CORE = ["api_reference", "bind_routine", "builtin_docs", "call_routine", "get_events", "get_run", "observe", "run_program", "send_chat", "stop_program", "wait_for"];
 // With no body reachable, the probe-gated tools (call_routine, bind_routine, builtin_docs) are not
-// served yet; send_chat is, like the rest of the ungated core: speech never waits for the run slot,
-// so it must not wait for a body to answer the feature probe either.
+// served yet; send_chat is, like the rest of the ungated core.
 const NO_BODY = ["api_reference", "get_events", "get_run", "observe", "run_program", "send_chat", "stop_program", "wait_for"];
 const ROUTINE_TOOLS = ["bind_routine", "call_routine", "list_routines", "routine_revert", "routine_save", "routine_source", "routine_versions", "unbind_routine"];
 const BUILTIN_TOOLS = ["builtin_docs", "builtin_search", "builtin_source", "list_builtins"];
@@ -58,7 +57,7 @@ describe("minebot mcp tool sets", () => {
   });
   after(() => body.close());
 
-  it("serves the core tools by default — send_chat among them, with the body up and unreachable, because speech never waits for the run slot — leaving notes and status to programs", async () => {
+  it("serves the core tools by default — send_chat among them, with the body up and unreachable — leaving notes and status to programs", async () => {
     assert.deepEqual(await tools(url), CORE);
     // A body nothing answers: the gated tools wait for the probe, but chat is served regardless.
     assert.deepEqual(await tools("http://127.0.0.1:1"), NO_BODY);
