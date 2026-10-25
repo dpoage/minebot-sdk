@@ -97,12 +97,17 @@ describe("craft.craft on a recipe whose result is also an input", () => {
   });
 });
 
-/** 36 stacks, every slot: a wooden axe's inputs (with some to spare, so neither stack empties) and 34 single items, six of them logs. */
+/** 34 single items that fill every slot but two; six of them are logs. */
+const FILLERS = ["dirt", "cobblestone", "sand", "gravel", "andesite", "diorite", "granite", "oak_log", "birch_log", "spruce_log", "jungle_log", "acacia_log", "dark_oak_log", "stone", "deepslate", "tuff", "calcite", "clay_ball", "flint", "coal", "raw_iron", "raw_copper", "raw_gold", "wheat_seeds", "wheat", "bone", "string", "feather", "leather", "rotten_flesh", "gunpowder", "arrow", "apple", "bread"] as const;
+
+/** The fillers as a starting inventory: one of each, so every slot they fill is taken. */
+function fillerSingles(): Record<string, number> {
+  return Object.fromEntries(FILLERS.map((filler) => [filler, 1]));
+}
+
+/** 36 stacks, every slot: a wooden axe's inputs (with some to spare, so neither stack empties) and the fillers. */
 function fullInventory(): Record<string, number> {
-  const inventory: Record<string, number> = { oak_planks: 4, stick: 3 };
-  const fillers = ["dirt", "cobblestone", "sand", "gravel", "andesite", "diorite", "granite", "oak_log", "birch_log", "spruce_log", "jungle_log", "acacia_log", "dark_oak_log", "stone", "deepslate", "tuff", "calcite", "clay_ball", "flint", "coal", "raw_iron", "raw_copper", "raw_gold", "wheat_seeds", "wheat", "bone", "string", "feather", "leather", "rotten_flesh", "gunpowder", "arrow", "apple", "bread"];
-  for (const filler of fillers) inventory[filler] = 1;
-  return inventory;
+  return { oak_planks: 4, stick: 3, ...fillerSingles() };
 }
 
 describe("craft.craft when the inventory has no room for the result", () => {
@@ -111,20 +116,80 @@ describe("craft.craft when the inventory has no room for the result", () => {
     const start = h.bot.time.age;
     await assert.rejects(h.run(craft.craft, { item: "wooden_axe" }), (err: Error) => {
       assert.ok(err instanceof InventoryFullError, err.message);
-      assert.match(err.message, /^crafted 0 of 1 wooden_axe: the inventory is full, so the 1 wooden_axe crafted fell to the ground near \(0, 64, 0\)/);
-      assert.match(err.message, /free a slot \(inventory\.toss an item you can spare\), then pick it up with gatherer\.collectDrops/);
+      assert.equal(err.name, "InventoryFullError");
+      assert.match(err.message, /^crafted 0 of 1 wooden_axe: the inventory is full, so the 1 wooden_axe the recipe makes fell at the bot's feet near \(0, 64, 0\) and the inputs are used; /);
+      assert.match(err.message, /free a slot \(inventory\.toss an item you can spare\), then pick them up with gatherer\.collectDrops/);
       return true;
     });
-    assert.equal(h.bot.time.age - start, LAG, "stops waiting when the axe is on the ground");
+    assert.equal(h.bot.time.age - start, 30, "the axe is on the ground, but only the quiet timeout ends the wait");
     assert.deepEqual(h.entities.filter((e) => e.name === "item").map((e) => `${e.getDroppedItem()?.count} ${e.getDroppedItem()?.name}`), ["1 wooden_axe"]);
   });
 
   it("makes crafter.make stop at the first axe on the ground, spending no logs on another", async () => {
     const h = createHarness({ inventory: fullInventory(), blocks: TABLE, craftResultDelay: LAG });
-    await assert.rejects(h.run(crafter.make, { item: "wooden_axe" }), /the inventory is full, so the 1 wooden_axe crafted fell to the ground/);
+    await assert.rejects(h.run(crafter.make, { item: "wooden_axe" }), /the inventory is full, so the 1 wooden_axe the recipe makes fell at the bot's feet/);
     for (const log of ["oak_log", "birch_log", "spruce_log", "jungle_log", "acacia_log", "dark_oak_log"]) assert.equal(h.count(log), 1, log);
     assert.deepEqual(h.entities.filter((e) => e.name === "item").map((e) => `${e.getDroppedItem()?.count} ${e.getDroppedItem()?.name}`), ["1 wooden_axe"]);
     assert.deepEqual([h.count("oak_planks"), h.count("stick")], [1, 1], "the inputs of one axe, no more");
+  });
+
+  it("logs the shortfall when the result only partly fits a partial stack, saying where the rest fell", async () => {
+    // oak_planks 62 leaves room for 2 on its stack and the log does not free a slot (it keeps 4), so of the 4 planks a craft makes only 2 fit.
+    const inventory = { ...fillerSingles(), oak_log: 5, oak_planks: 62, stick: 1 };
+    const h = createHarness({ inventory, craftResultDelay: LAG });
+    assert.equal(await h.run(craft.craft, { item: "oak_planks", count: 4 }), 2);
+    assert.deepEqual(h.logs, ["crafted 2 oak_planks, 2 short of the 4 asked for; the inventory is full, so the rest fell at the bot's feet near (0, 64, 0): free a slot, then pick it up with gatherer.collectDrops"]);
+    assert.equal(h.count("oak_planks"), 64);
+    assert.deepEqual(h.entities.filter((e) => e.name === "item").map((e) => `${e.getDroppedItem()?.count} ${e.getDroppedItem()?.name}`), ["2 oak_planks"]);
+  });
+
+  it("counts room on a partial stack, so a dropped click with room is the craft that made nothing, not a full inventory", async () => {
+    const inventory = { ...fillerSingles(), oak_log: 5, oak_planks: 62, stick: 1 };
+    const h = createHarness({ inventory, craftResultDelay: LAG });
+    dropClicks(h, 0);
+    await assert.rejects(h.run(craft.craft, { item: "oak_planks", count: 4 }), (err: Error) => {
+      assert.ok(!(err instanceof InventoryFullError), err.message);
+      assert.match(err.message, /crafted 0 of 4 oak_planks: nothing reached the inventory within 1\.5 s/);
+      return true;
+    });
+  });
+});
+
+describe("craft.craft with a foreign drop of the crafted item lying nearby", () => {
+  it("waits for its own result, not for the foreign axe: no 'inventory is full' when the output fits", async () => {
+    const h = createHarness({ inventory: { oak_planks: 3, stick: 2 }, blocks: TABLE, craftResultDelay: 20 });
+    const start = h.bot.time.age;
+    const run = h.run(craft.craft, { item: "wooden_axe" });
+    while (h.bot.time.age < start + 2) await new Promise<void>((resolve) => setImmediate(resolve));
+    h.spawn({ name: "item", item: "wooden_axe", at: [3, 64, 1] });
+    assert.equal(await run, 1);
+    assert.equal(h.bot.time.age - start, 20, "the settle ends when the bot's own axe lands, not when the foreign one appears");
+    assert.deepEqual(h.logs, ["crafted 1 wooden_axe"]);
+  });
+
+  it("a stack of sticks falling nearby during the wait is not this craft's result", async () => {
+    const h = createHarness({ inventory: { oak_planks: 2 }, craftResultDelay: LAG });
+    const start = h.bot.time.age;
+    const run = h.run(craft.craft, { item: "stick" });
+    while (h.bot.time.age < start + 2) await new Promise<void>((resolve) => setImmediate(resolve));
+    h.spawn({ name: "item", item: "stick", count: 4, at: [2, 64, 2] });
+    assert.equal(await run, 4);
+    assert.equal(h.count("stick"), 4, "the falling stack is still on the ground, not in the count");
+    assert.deepEqual(h.logs, ["crafted 4 stick"]);
+  });
+
+  it("a dropped click is still the craft that made nothing, not a full inventory", async () => {
+    const h = createHarness({ inventory: { oak_planks: 2 }, craftResultDelay: LAG });
+    dropClicks(h, 0);
+    const start = h.bot.time.age;
+    const run = h.run(craft.craft, { item: "stick" });
+    while (h.bot.time.age < start + 2) await new Promise<void>((resolve) => setImmediate(resolve));
+    h.spawn({ name: "item", item: "stick", count: 4, at: [2, 64, 2] });
+    await assert.rejects(run, (err: Error) => {
+      assert.ok(!(err instanceof InventoryFullError), err.message);
+      assert.match(err.message, /crafted 0 of 1 stick: nothing reached the inventory within 1\.5 s/);
+      return true;
+    });
   });
 });
 

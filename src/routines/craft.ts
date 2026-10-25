@@ -1,6 +1,6 @@
 // The craft routines: crafting at a table that is already within reach. Finding or placing one,
 // and crafting intermediate items, is the crafter routines' work on top of this primitive.
-import { type Block, defineRoutine, Point, type RoutineContext, type Vec3, z } from "minebot-sdk/routine";
+import { type Block, defineRoutine, Point, type RoutineContext, z } from "minebot-sdk/routine";
 
 export const description = "Craft items from the inventory at a table within reach.";
 export const uses = [] as const;
@@ -9,11 +9,16 @@ const TABLE_SEARCH_RADIUS = 4;
 /** The result of a table craft reaches the inventory after bot.craft resolves; how often to look, and how long without an inventory update means it is not coming. */
 const SETTLE_POLL_MS = 50;
 const SETTLE_QUIET_MS = 1500;
-/** Mineflayer tosses a crafted item that finds no room in the inventory; a new item entity of it this close to the bot is that item. */
-const DROP_RADIUS = 8;
+/** The main grid plus the hotbar: the slots a crafting result can enter. */
+const INVENTORY_SLOTS = 36;
 
-/** The crafted items did not fit in the inventory and lie on the ground near the bot: free a slot and pick them up, rather than crafting again. */
-export class InventoryFullError extends Error {}
+/** The crafted items did not fit in the inventory and fell at the bot's feet: free a slot and pick them up, rather than crafting again. */
+export class InventoryFullError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "InventoryFullError";
+  }
+}
 
 function itemId(ctx: RoutineContext, name: string): number {
   const item = ctx.bot.registry.itemsByName[name.replace(/^minecraft:/, "")];
@@ -54,22 +59,46 @@ async function settle(ctx: RoutineContext, settled: () => boolean): Promise<void
   }
 }
 
-/** The item entities within `DROP_RADIUS` of the bot that hold item `type` and are not among `known`: crafted items Mineflayer tossed for want of room. */
-function newDrops(ctx: RoutineContext, type: number, known: ReadonlySet<number>): { count: number; position: Vec3 }[] {
+/**
+ * How many of the crafted item the `times` crafts can fit in the inventory, computed before they run:
+ * each craft consumes its inputs first (a stack may empty, which frees a slot), then the outputs take
+ * room on a matching partial stack or an empty slot, the crafted item last. Stacks are modelled packed,
+ * the most room any arrangement of the same items can have, so the answer never says "no room" for an
+ * inventory that could hold the result.
+ */
+function roomFor(ctx: RoutineContext, recipe: { delta: readonly { id: number; count: number }[] }, resultId: number, times: number): number {
   const { bot } = ctx;
-  const drops: { count: number; position: Vec3 }[] = [];
-  for (const entity of Object.values(bot.entities)) {
-    if (entity.name !== "item" || known.has(entity.id) || entity.position.distanceTo(bot.entity.position) > DROP_RADIUS) continue;
-    const stack = entity.getDroppedItem();
-    if (stack?.type === type) drops.push({ count: stack.count, position: entity.position });
+  const size = (type: number) => bot.registry.items[type]?.stackSize ?? 64;
+  const counts = new Map<number, number>();
+  for (const stack of bot.inventory.items()) counts.set(stack.type, (counts.get(stack.type) ?? 0) + stack.count);
+  const slots = () => {
+    let used = 0;
+    for (const [type, count] of counts) used += Math.ceil(count / size(type));
+    return used;
+  };
+  let room = 0;
+  for (let craft = 0; craft < times; craft++) {
+    for (const d of recipe.delta) {
+      if (d.count < 0) counts.set(d.id, Math.max(0, (counts.get(d.id) ?? 0) + d.count));
+    }
+    const outputs = [...recipe.delta].filter((d) => d.count > 0).sort((a, b) => Number(b.id === resultId) - Number(a.id === resultId));
+    for (const d of outputs) {
+      const have = counts.get(d.id) ?? 0;
+      const partial = have % size(d.id) === 0 ? 0 : size(d.id) - (have % size(d.id));
+      const empty = Math.max(0, INVENTORY_SLOTS - slots()) * size(d.id);
+      // The other outputs, if any, are placed regardless: what they take is room the crafted item no longer has.
+      const fits = d.id === resultId ? Math.min(d.count, partial + empty) : d.count;
+      counts.set(d.id, have + fits);
+      if (d.id === resultId) room += fits;
+    }
   }
-  return drops;
+  return room;
 }
 
 /**
  * Crafts at least `count` more of `name` from what the inventory holds, using a crafting table
  * within reach when the recipe needs one. Returns what the inventory gained once it has settled;
- * fails when that is nothing, with an InventoryFullError when the crafted items fell to the ground.
+ * fails when that is nothing, with an InventoryFullError when the inventory had no room for the result.
  */
 async function craftItem(ctx: RoutineContext, name: string, count = 1): Promise<number> {
   const { bot } = ctx;
@@ -92,17 +121,16 @@ async function craftItem(ctx: RoutineContext, name: string, count = 1): Promise<
   const times = Math.ceil(count / recipe.result.count);
   // What the crafts add to the inventory: a recipe whose result is also an input (a smithing template makes 2 from 1) adds the difference.
   const gain = times * recipe.delta.filter((d) => d.id === id).reduce((n, d) => n + d.count, 0);
-  const known = new Set(Object.values(bot.entities).map((e) => e.id));
+  // Where an item Mineflayer tosses for want of room lands: at the bot's feet.
+  const feet = `(${Math.floor(bot.entity.position.x)}, ${Math.floor(bot.entity.position.y)}, ${Math.floor(bot.entity.position.z)})`;
+  const room = roomFor(ctx, recipe, id, times);
   const before = held();
   await bot.craft(recipe, times, table ?? undefined);
-  await settle(ctx, () => held() - before + newDrops(ctx, id, known).reduce((n, d) => n + d.count, 0) >= gain);
+  await settle(ctx, () => held() - before >= gain);
   const made = held() - before;
-  const drops = newDrops(ctx, id, known);
-  const lost = drops.reduce((n, d) => n + d.count, 0);
-  const at = drops[0] && `(${Math.floor(drops[0].position.x)}, ${Math.floor(drops[0].position.y)}, ${Math.floor(drops[0].position.z)})`;
-  if (made <= 0 && lost > 0) {
+  if (made <= 0 && room === 0) {
     throw new InventoryFullError(
-      `crafted 0 of ${count} ${name}: the inventory is full, so the ${lost} ${item} crafted fell to the ground near ${at}, and the inputs are used up; free a slot (inventory.toss an item you can spare), then pick it up with gatherer.collectDrops or by walking onto it, instead of crafting again`,
+      `crafted 0 of ${count} ${name}: the inventory is full, so the ${gain} ${item} the recipe makes fell at the bot's feet near ${feet} and the inputs are used; free a slot (inventory.toss an item you can spare), then pick them up with gatherer.collectDrops or by walking over that spot, instead of crafting again`,
     );
   }
   if (made <= 0) {
@@ -115,15 +143,15 @@ async function craftItem(ctx: RoutineContext, name: string, count = 1): Promise<
     );
   }
   const short = made < count ? `, ${count - made} short of the ${count} asked for` : "";
-  const spilled = lost > 0 ? `; the inventory is full, so ${lost} more fell to the ground near ${at}: free a slot, then pick them up with gatherer.collectDrops` : "";
-  ctx.log(`crafted ${made} ${name}${short}${spilled}`);
+  const overflow = room < gain && made < count ? `; the inventory is full, so the rest fell at the bot's feet near ${feet}: free a slot, then pick it up with gatherer.collectDrops` : "";
+  ctx.log(`crafted ${made} ${name}${short}${overflow}`);
   return made;
 }
 
 export const craft = defineRoutine(
   {
     name: "craft.craft",
-    description: "Craft at least `count` (default 1) more of `item` from the inventory. A recipe that needs a crafting table uses one within 4 blocks, and the call fails when there is none. Returns how many the inventory gained once the result settled, and fails when that is none: the error says where the items fell when the inventory had no room for them, and otherwise names the recipe's inputs.",
+    description: "Craft at least `count` (default 1) more of `item` from the inventory. A recipe that needs a crafting table uses one within 4 blocks, and the call fails when there is none. Returns how many the inventory gained once the result settled, and fails when that is none: when the inventory has no room for the result, the error says it fell at the bot's feet and how to recover it, and otherwise the error names the recipe's inputs.",
     args: z.object({ item: z.string().min(1), count: z.number().int().positive().default(1) }),
     returns: z.number(),
   },

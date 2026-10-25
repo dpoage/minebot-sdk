@@ -499,7 +499,7 @@
     "routines": [
       {
         "name": "craft",
-        "description": "Craft at least `count` (default 1) more of `item` from the inventory. A recipe that needs a crafting table uses one within 4 blocks, and the call fails when there is none. Returns how many the inventory gained once the result settled, and fails when that is none: the error says where the items fell when the inventory had no room for them, and otherwise names the recipe's inputs.",
+        "description": "Craft at least `count` (default 1) more of `item` from the inventory. A recipe that needs a crafting table uses one within 4 blocks, and the call fails when there is none. Returns how many the inventory gained once the result settled, and fails when that is none: when the inventory has no room for the result, the error says it fell at the bot's feet and how to recover it, and otherwise the error names the recipe's inputs.",
         "args": {
           "$schema": "https://json-schema.org/draft/2020-12/schema",
           "type": "object",
