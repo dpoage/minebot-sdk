@@ -90,7 +90,7 @@ By default, the MCP server serves the core tools. The agent acts through runs, a
 | `observe` | Returns position, vitals, armor, effects, biome, open sky, inventory, nearby creatures, and run state as one line. `full: true` returns the complete JSON. |
 | `run_program` | Runs a module and blocks until it returns, fails, or times out. Its description holds the run reference for this body. |
 | `stop_program` | Aborts the running run and halts movement, pathfinding, and digging. |
-| `get_run` | Returns what a finished run ended with (status, logs, and error or result), named by the `seq` in its `program_finished` event; without `seq`, the latest finished run. The body keeps the last 20 finished runs. A caller that timed out reads the outcome here instead of running again. |
+| `get_run` | Returns what a finished run ended with (status, logs, and error or result), named by `seq`: the `run` field in the `data` of its `program_finished` event (not the event's own `seq`); without `seq`, the latest finished run. The body keeps the last 20 finished runs. A caller that timed out reads the outcome here instead of running again. |
 | `get_events` | Returns chat, damage, deaths, joins, disconnects, and what the player did or noticed (items picked up, blocks broken and placed, low health or food, hostile creatures near) since a cursor. |
 | `wait_for` | Blocks until a matching event arrives (chat, whisper, system message, night, day, hostile_near, low_health, low_food, item_picked_up, ...) or the timeout, then returns it. The cheap way to idle. |
 | `send_chat` | Sends a public chat message or a command as the player, or whispers to one player when you pass `to` (sent as `/msg`, so a leading `/` stays text and runs no command). Works while a run is going. |
