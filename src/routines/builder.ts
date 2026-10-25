@@ -75,8 +75,9 @@ function holds(actual: string | undefined, block: string): boolean {
 }
 
 /**
- * Digs out whatever is at `pos` so the cell is air. Returns false when it already was. Walks within
- * reach first. Fluids and undiggable blocks fail naming the block.
+ * Digs out whatever is at `pos`. Returns false when it already was air. Walks within reach first.
+ * Fluids and undiggable blocks fail naming the block. Whether the cell stays clear (sand or gravel
+ * above may fall in) is for the caller to read once falling blocks have landed.
  */
 async function clearCell(ctx: RoutineContext, pos: Vec3): Promise<boolean> {
   const { bot } = ctx;
@@ -95,9 +96,32 @@ async function clearCell(ctx: RoutineContext, pos: Vec3): Promise<boolean> {
     // Thin blocks without collision (short_grass, torches) are not "solid" to dig.dig but are still in the way.
     await within(20_000, `clearing ${block.name}`, bot.dig(block), () => bot.stopDigging());
   }
-  const now = bot.blockAt(pos)?.name;
-  if (now === undefined || !isClear(now)) throw new Error(`${pos} holds ${now ?? "an unloaded block"} after digging out ${block.name}`);
   return true;
+}
+
+/** Blocks that fall when the block under them goes, and so refill a cell dug out below them. */
+const FALLS = /^(?:sand|red_sand|gravel|suspicious_sand|suspicious_gravel|\w+_concrete_powder|(?:chipped_|damaged_)?anvil)$/;
+/** How many times build digs out again the 'air' cells that falling blocks refilled. */
+const REFILL_ROUNDS = 8;
+
+/**
+ * Waits until sand or gravel set loose above `cells` has landed: a falling block is a falling_block
+ * entity until it lands. Gives up waiting after 10 seconds; the caller reads the cells either way.
+ */
+async function settle(ctx: RoutineContext, cells: readonly Vec3[]): Promise<void> {
+  const xs = cells.map((c) => c.x);
+  const zs = cells.map((c) => c.z);
+  const [minX, maxX, minZ, maxZ] = [Math.min(...xs), Math.max(...xs), Math.min(...zs), Math.max(...zs)];
+  const minY = Math.min(...cells.map((c) => c.y));
+  // A block loses its support on one game tick and starts falling on the next one or two.
+  await ctx.sleep(150);
+  for (let waited = 0; waited < 10_000; waited += 100) {
+    const falling = Object.values(ctx.bot.entities).some(
+      (e) => e.name === "falling_block" && e.position.x >= minX - 1 && e.position.x < maxX + 2 && e.position.z >= minZ - 1 && e.position.z < maxZ + 2 && e.position.y >= minY - 1,
+    );
+    if (!falling) return;
+    await ctx.sleep(100);
+  }
 }
 
 /** The six cells a block can be placed against. */
@@ -109,9 +133,11 @@ interface BuildResult {
   failed: { position: Vec3; block: string; reason: string }[];
 }
 
+type Target = { position: Vec3; block: string };
+
 async function buildBlueprint(ctx: RoutineContext, blueprint: Blueprint, origin: Vec3, partial = false): Promise<BuildResult> {
   const { bot } = ctx;
-  const targets = blueprintBlocks(blueprint).map((b) => ({ position: origin.offset(b.dx, b.dy, b.dz), block: b.block }));
+  const targets: Target[] = blueprintBlocks(blueprint).map((b) => ({ position: origin.offset(b.dx, b.dy, b.dz), block: b.block }));
   const todo = targets.filter((t) => !holds(bot.blockAt(t.position)?.name, t.block));
   const needed: Record<string, number> = {};
   for (const t of todo) if (t.block !== AIR) needed[t.block] = (needed[t.block] ?? 0) + 1;
@@ -121,29 +147,65 @@ async function buildBlueprint(ctx: RoutineContext, blueprint: Blueprint, origin:
   if (short.length > 0 && !partial) {
     throw new Error(`missing materials: ${short.map(([b, n]) => `${b} x${n}`).join(", ")} (pass { partial: true } to build what you can)`);
   }
-  const result: BuildResult = { placed: 0, alreadyCorrect: targets.length - todo.length, failed: [] };
-  // Bottom layer first; within a layer, nearest first; a block whose neighbours are all air waits until one of them is placed (an arch's
-  // top needs the blocks under it), and what nothing ever supports comes last and fails with place's own message.
-  todo.sort((a, b) => a.position.y - b.position.y || a.position.distanceTo(bot.entity.position) - b.position.distanceTo(bot.entity.position));
-  const ready = (t: (typeof todo)[number]) => t.block === AIR || FACES.some((face) => bot.blockAt(t.position.plus(face))?.boundingBox === "block");
-  let rescan = true;
-  while (todo.length > 0) {
+  // Every target ends in one of these: placed (this build put the block there or dug the cell out), failed (with the reason),
+  // or neither: already correct, at the start or when its turn came.
+  const placed = new Set<Target>();
+  const failed = new Map<Target, string>();
+  const attempt = async (t: Target, act: () => Promise<boolean>) => {
     if (ctx.signal.aborted) throw ctx.signal.reason;
-    let next = rescan ? todo.findIndex(ready) : 0;
+    try {
+      if (await act()) placed.add(t);
+    } catch (err) {
+      failed.set(t, err instanceof Error ? err.message : String(err));
+    }
+  };
+  const topDown = (a: Target, b: Target) => b.position.y - a.position.y || a.position.distanceTo(bot.entity.position) - b.position.distanceTo(bot.entity.position);
+
+  // 'air' cells first, top down: a column dug from the top has nothing left in it to fall into the cells below.
+  const clears = targets.filter((t) => t.block === AIR);
+  for (const t of todo.filter((t) => t.block === AIR).sort(topDown)) await attempt(t, () => clearCell(ctx, t.position));
+  // Sand or gravel above the cells falls in once what held it up is dug; dig out what landed until the cells stay clear.
+  if (placed.size > 0) {
+    for (let round = 1; ; round++) {
+      await settle(ctx, clears.map((t) => t.position));
+      const refilled = clears.filter((t) => !failed.has(t) && !holds(bot.blockAt(t.position)?.name, AIR)).sort(topDown);
+      if (refilled.length === 0) break;
+      if (round > REFILL_ROUNDS) {
+        for (const t of refilled) {
+          const now = bot.blockAt(t.position)?.name ?? "an unloaded block";
+          failed.set(
+            t,
+            FALLS.test(now)
+              ? `${now} kept falling into ${t.position} from above after ${REFILL_ROUNDS} more digs; clear the cells above it too (add them to the blueprint as 'air')`
+              : `${t.position} holds ${now} again after being dug out ${REFILL_ROUNDS} more times`,
+          );
+        }
+        break;
+      }
+      for (const t of refilled) await attempt(t, () => clearCell(ctx, t.position));
+    }
+  }
+
+  // Then blocks, bottom layer first; within a layer, nearest first; a block whose neighbours are all air waits until one of them is placed (an arch's
+  // top needs the blocks under it), and what nothing ever supports comes last and fails with place's own message.
+  const blocks = todo.filter((t) => t.block !== AIR).sort((a, b) => a.position.y - b.position.y || a.position.distanceTo(bot.entity.position) - b.position.distanceTo(bot.entity.position));
+  const ready = (t: Target) => FACES.some((face) => bot.blockAt(t.position.plus(face))?.boundingBox === "block");
+  let rescan = true;
+  while (blocks.length > 0) {
+    let next = rescan ? blocks.findIndex(ready) : 0;
     if (next < 0) {
       next = 0;
       rescan = false;
     }
-    const t = todo.splice(next, 1)[0]!;
-    try {
-      if (t.block === AIR ? await clearCell(ctx, t.position) : await place.place(ctx, { at: t.position, item: t.block })) {
-        result.placed++;
-        rescan = true;
-      }
-    } catch (err) {
-      result.failed.push({ position: t.position, block: t.block, reason: err instanceof Error ? err.message : String(err) });
-    }
+    const t = blocks.splice(next, 1)[0]!;
+    await attempt(t, () => place.place(ctx, { at: t.position, item: t.block }));
+    if (placed.has(t)) rescan = true;
   }
+
+  const result: BuildResult = { placed: 0, alreadyCorrect: 0, failed: [] };
+  for (const [t, reason] of failed) result.failed.push({ position: t.position, block: t.block, reason });
+  for (const t of placed) if (!failed.has(t)) result.placed++;
+  result.alreadyCorrect = targets.length - result.placed - result.failed.length;
   ctx.log(`build: placed ${result.placed}, already correct ${result.alreadyCorrect}, failed ${result.failed.length}`);
   return result;
 }
@@ -178,7 +240,7 @@ export const materials = defineRoutine(
 export const build = defineRoutine(
   {
     name: "builder.build",
-    description: "Build the `blueprint` with its first layer's first row's first character at `origin`; the result of line, arc, fill, box or combine is both at once: builder.build(builder.box({...})). Skips blocks already correct, places bottom-up, digs out 'air' cells (they count as placed). Fails up front on missing materials unless `partial`. Returns { placed, alreadyCorrect, failed }.",
+    description: "Build the `blueprint` with its first layer's first row's first character at `origin`; the result of line, arc, fill, box or combine is both at once: `await builder.build(ctx, await builder.box(ctx, {...}))`. Skips cells already correct. Digs out 'air' cells first, top down, and again when sand or gravel falls back in (they count as placed); then places blocks bottom-up, each once something solid touches it. Fails up front on missing materials unless `partial`. Returns { placed, alreadyCorrect, failed }, each cell counted in exactly one.",
     args: z.object({
       blueprint: Blueprint,
       origin: Position,
@@ -256,7 +318,7 @@ class Grid {
     this.depth = max[2] - min[2] + 1;
     const volume = this.width * this.height * this.depth;
     if (volume > MAX_VOLUME) {
-      throw new Error(`the shape spans ${this.width} x ${this.height} x ${this.depth} blocks (${volume.toLocaleString("en-US")} cells); the limit is ${MAX_VOLUME.toLocaleString("en-US")}. Check the coordinates, or make smaller shapes and builder.combine them`);
+      throw new Error(`the shape spans ${this.width} x ${this.height} x ${this.depth} blocks (${volume.toLocaleString("en-US")} cells); the limit is ${MAX_VOLUME.toLocaleString("en-US")}. Check the coordinates; for a structure this large, build its parts separately, one builder.build each`);
     }
     this.data = new Uint16Array(volume);
   }
@@ -323,7 +385,7 @@ function lineShape(a: Cell, b: Cell, block: string): Placed {
   return grid.toPlaced();
 }
 
-/** An arch of `block` between two cells with its top `rise` above their midpoint: see `arcCells`. Rise 0 is the straight line. */
+/** An arch of `block` between two cells that passes `rise` above their midpoint: see `arcCells`. Rise 0 is the straight line. */
 function arcShape(a: Cell, b: Cell, rise: number, block: string): Placed {
   if (rise === 0) return lineShape(a, b, block);
   const cells = arcCells(a, b, rise);
@@ -381,7 +443,7 @@ function stairBetween(a: Cell, b: Cell): Cell[] {
 }
 
 /**
- * The cells of the parabola through `from` and `to` whose highest point is `rise` blocks above their
+ * The cells of the parabola through `from` and `to` that passes `rise` blocks above their
  * midpoint: x and z move evenly from one end to the other and y is the straight line between the ends
  * plus 4 * rise * t * (1 - t), sampled finely enough that no step moves more than one block on any
  * axis, and rounded half up in exact integer arithmetic so the arc is the same from either end. Where
@@ -513,7 +575,7 @@ export const line = defineRoutine(
 export const arc = defineRoutine(
   {
     name: "builder.arc",
-    description: "An arch of `block` from `from` to `to` ({x,y,z} or [x,y,z]), ends included: the parabola in the vertical plane through both whose top is `rise` blocks above their midpoint (default: half the horizontal distance, rounded; 0 is a straight line, negative sags). A blueprint with its origin in world coordinates, which builder.build and builder.check take as they are. The same cells whichever end is `from`. `from` and `to` need different x or z unless rise is 0.",
+    description: "An arch of `block` from `from` to `to` ({x,y,z} or [x,y,z]), ends included: the parabola in the vertical plane through both that passes through the point `rise` blocks above their midpoint (default: half the horizontal distance, rounded; 0 is a straight line, negative sags). A blueprint with its origin in world coordinates, which builder.build and builder.check take as they are. The same cells whichever end is `from`. `from` and `to` need different x or z unless rise is 0.",
     args: z.object({ from: Position, to: Position, rise: z.number().int().optional(), block: Block }),
     returns: Placed,
   },

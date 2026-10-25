@@ -2,7 +2,8 @@
 // implementation, and builder.build/check/materials on 'air' cells over the harness's world.
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { createHarness } from "minebot-sdk/testing";
+import { setImmediate as nextTurn } from "node:timers/promises";
+import { createHarness, type Harness } from "minebot-sdk/testing";
 import * as builder from "../src/routines/builder.ts";
 
 type Xyz = [number, number, number];
@@ -458,7 +459,12 @@ describe("builder.combine", () => {
     await assert.rejects(h.run(builder.combine, { parts: [] }), /parts/);
     const a = await h.run(builder.fill, { from: [0, 64, 0], to: [0, 64, 0], block: "stone" });
     const b = await h.run(builder.fill, { from: [100000, 64, 100000], to: [100000, 64, 100000], block: "stone" });
-    await assert.rejects(h.run(builder.combine, { parts: [a, b] }), /limit is 4,000,000/);
+    await assert.rejects(h.run(builder.combine, { parts: [a, b] }), (err: Error) => {
+      // Combining the parts again would hit the same bounding box, so the advice is to build them separately.
+      assert.match(err.message, /limit is 4,000,000\. Check the coordinates; for a structure this large, build its parts separately, one builder.build each/);
+      assert.doesNotMatch(err.message, /combine/);
+      return true;
+    });
   });
 
   it("holds more than 90 different blocks in one blueprint", async () => {
@@ -591,5 +597,72 @@ describe("'air' cells", () => {
         [4, "air", "water"],
       ],
     );
+  });
+
+  /**
+   * Sand and gravel that fall as in the game: when the block under one is dug, it and the falling blocks stacked on it turn into
+   * falling_block entities at once and land `ticks` later on the first solid block below (checked whenever the run yields).
+   * Stop it with the returned function.
+   */
+  function gravity(g: Harness, ticks: number): () => void {
+    const pending: { entity: { id: number }; at: Xyz; block: string; due: number }[] = [];
+    g.bot.on("diggingCompleted", (dug) => {
+      for (let y = dug.position.y + 1; /^(?:sand|gravel)$/.test(g.blockAt([dug.position.x, y, dug.position.z]).name); y++) {
+        const at: Xyz = [dug.position.x, y, dug.position.z];
+        const entity = g.spawn({ name: "falling_block", at: [at[0] + 0.5, at[1], at[2] + 0.5] });
+        pending.push({ entity, at, block: g.blockAt(at).name, due: g.bot.time.age + ticks });
+        g.setBlock(at, "air");
+      }
+    });
+    let timer: NodeJS.Immediate;
+    const land = () => {
+      const due = pending.filter((p) => p.due <= g.bot.time.age).sort((a, b) => a.at[1] - b.at[1]);
+      for (const p of due) {
+        pending.splice(pending.indexOf(p), 1);
+        let y = p.at[1];
+        while (g.blockAt([p.at[0], y - 1, p.at[2]]).boundingBox !== "block") y--;
+        g.setBlock([p.at[0], y, p.at[2]], p.block);
+        delete (g.bot.entities as Record<number, unknown>)[p.entity.id];
+      }
+      timer = setImmediate(land);
+    };
+    timer = setImmediate(land);
+    return () => clearImmediate(timer);
+  }
+
+  it("stay clear over sand and gravel: a column is dug from the top, and what falls in from above once it lands is dug out again", async () => {
+    for (const block of ["gravel", "sand"]) {
+      // A 3-high column to clear, two more blocks of it above. They land 2 s after they come loose, long after dig.dig stops watching the cell.
+      const g = createHarness({ blocks: [{ name: block, from: [2, 64, 0], to: [2, 68, 0] }], inventory: { wooden_shovel: 1 }, position: [0.5, 64, 0.5] });
+      const stop = gravity(g, 40);
+      try {
+        const column = await g.run(builder.fill, { from: [2, 64, 0], to: [2, 66, 0], block: "air" });
+        const built = await g.run(builder.build, column);
+        assert.deepEqual(built, { placed: 3, alreadyCorrect: 0, failed: [] }, block);
+        g.advance(100);
+        await nextTurn();
+        assert.deepEqual(await g.run(builder.check, column), { correct: 3, total: 3, mismatches: [] }, block);
+        for (const y of [67, 68]) assert.equal(g.blockAt([2, y, 0]).name, "air", `${block} above fell in and was dug out`);
+      } finally {
+        stop();
+      }
+    }
+  });
+
+  it("that falling blocks keep refilling are reported as failed, naming the block and what to clear; every cell is counted once", async () => {
+    const g = createHarness({ blocks: [{ name: "gravel", from: [2, 64, 0], to: [2, 100, 0] }], inventory: { wooden_shovel: 1 }, position: [0.5, 64, 0.5] });
+    const stop = gravity(g, 40);
+    try {
+      const cells = await g.run(builder.fill, { from: [2, 64, 0], to: [2, 65, 0], block: "air" });
+      const built = await g.run(builder.build, cells);
+      assert.equal(built.placed + built.alreadyCorrect + built.failed.length, 2);
+      assert.ok(built.failed.length > 0);
+      for (const f of built.failed) {
+        assert.equal(f.block, "air");
+        assert.match(f.reason, /^gravel kept falling into .* from above after 8 more digs; clear the cells above it too/);
+      }
+    } finally {
+      stop();
+    }
   });
 });
