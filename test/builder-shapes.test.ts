@@ -673,7 +673,9 @@ describe("'air' cells", () => {
   function lavaFlow(g: Harness, cells: Xyz[], ticks: number): () => void {
     const clearedAt = new Map<string, number>();
     const lavaAt = new Map<string, number>();
-    g.bot.on("diggingCompleted", (dug) => clearedAt.set(key([dug.position.x, dug.position.y, dug.position.z]), g.bot.time.age));
+    g.bot.on("diggingCompleted", (dug) => {
+      clearedAt.set(key([dug.position.x, dug.position.y, dug.position.z]), g.bot.time.age);
+    });
     let timer: NodeJS.Immediate;
     const spread = () => {
       for (let changed = true; changed; ) {
