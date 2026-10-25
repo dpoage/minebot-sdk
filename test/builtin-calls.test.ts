@@ -86,7 +86,7 @@ describe("POST /call of a built-in routine", () => {
     await using({ stateFiles: { "routines/arm.ts": ARM } }, async (body) => {
       await body.ok("POST", "/bind", { kind: "action", name: "arm", routine: "arm" });
       assert.equal(runOf(await body.request("POST", "/call", { name: "arm" })).status, "ok");
-      const run = runOf(await body.request("POST", "/call", { name: "move.to", args: { position: [9, 70, 9] } }));
+      const run = runOf(await body.request("POST", "/call", { name: "move.to", args: { position: [2, 64, 2] } }));
       assert.deepEqual([run.status, run.result], ["ok", { x: 1, y: 64, z: 2 }]);
       assert.deepEqual(runOf(await body.request("POST", "/call", { name: "inventory.list" })).result, {});
       const failed = runOf(await body.request("POST", "/call", { name: "move.to", args: { position: "nowhere" } }));
