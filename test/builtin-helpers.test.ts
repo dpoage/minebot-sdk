@@ -27,6 +27,13 @@ describe("blueprints", () => {
     assert.deepEqual(blueprintMaterials(hut), { cobblestone: 15, oak_door: 1 });
   });
 
+  it("keeps 'air' cells as blocks to dig out but needs no material for them", () => {
+    const room = { palette: { "#": "cobblestone", a: "minecraft:air" }, layers: [["###", "#a#", "###"]] };
+    assert.deepEqual(blueprintBlocks(room).find((b) => b.dx === 1 && b.dz === 1), { dx: 1, dy: 0, dz: 1, block: "air" });
+    assert.equal(blueprintBlocks(room).length, 9);
+    assert.deepEqual(blueprintMaterials(room), { cobblestone: 8 });
+  });
+
   it("rejects characters missing from the palette", () => {
     assert.throws(() => blueprintBlocks({ palette: {}, layers: ["x"] }), /character "x" is not in the palette/);
   });
