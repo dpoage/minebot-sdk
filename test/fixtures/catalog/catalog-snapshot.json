@@ -313,7 +313,7 @@
     "routines": [
       {
         "name": "place",
-        "description": "Place one block of `item` at `at` ({x,y,z} or [x,y,z]), walking close and digging out a different solid block first. Needs a solid neighbor to place against within 4.5 blocks of the eyes (it walks closer once). The bot steps out if it stands in the cell; a creature, player, boat or minecart in the cell is an error, a dropped item is not. Throws, naming the cause, when the block did not end up in every cell it needs (a door needs the cell above free, a bed the cell ahead). Returns false if the block was already there, true once it is in place.",
+        "description": "Place one block of `item` at `at` ({x,y,z} or [x,y,z]), digging out a different solid block first. Needs a solid neighbor to place against; it walks closer only when no neighbor's face is within 5 blocks of the eyes, and sneaks when the only neighbors are blocks like a crafting table or chest. The bot steps out of the cell first for a block with a collision box; nothing is refused up front for other bodies. Throws, naming the cause, when the block did not end up in every cell it needs: a creature, player, boat or minecart in the way, a door's cell above or a bed's cell ahead not free. Returns false if the block was already there, true once it is in place (a torch or sign that went on a wall counts).",
         "args": {
           "$schema": "https://json-schema.org/draft/2020-12/schema",
           "type": "object",
