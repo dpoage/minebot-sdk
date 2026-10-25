@@ -142,87 +142,67 @@ async function offerRename(ctx: RoutineContext, window: AnvilWindow, stack: Item
   return costs.level;
 }
 
-/** The stacks in the player's part of the anvil window: what the server says the inventory holds while the window is open. */
-function stacksIn(window: AnvilWindow): Item[] {
-  return window.slots.slice(window.inventoryStart, window.inventoryEnd).filter((slot): slot is Item => slot !== null);
-}
-
 /**
- * Mineflayer copies the window's inventory part into `bot.inventory` at close, but it takes a stack that
- * differs from the old one only in its name for unchanged, so a renamed stack that lands where a stack of
- * the same item and count was keeps its old name there. This applies what the window showed.
+ * Puts the stack in the anvil and takes the renamed one out; whatever the anvil still holds goes back to
+ * the inventory before the window closes, and the inventory is read back from the server, whether or not
+ * that went well. Resolves with the level cost the anvil showed.
  */
-function syncNames(bot: RoutineContext["bot"], window: AnvilWindow): void {
-  const offset = window.inventoryStart - bot.inventory.inventoryStart;
-  for (let i = window.inventoryStart; i < window.inventoryEnd; i++) {
-    const shown = window.slots[i];
-    const slot = i - offset;
-    if (!shown || customNameOf(shown) === customNameOf(bot.inventory.slots[slot])) continue;
-    shown.slot = slot;
-    bot.inventory.updateSlot(slot, shown);
-  }
-}
-
-/**
- * Puts the stack in the anvil, takes the renamed one out, and checks the window shows it in the inventory;
- * whatever the anvil still holds goes back to the inventory before the window closes, whether or not that
- * went well. Resolves with the level cost the anvil showed and the count of the renamed stack.
- */
-async function renameAtAnvil(ctx: RoutineContext, anvil: Block, stack: Item, name: string, levelBefore: number, creative: boolean): Promise<{ cost: number | undefined; count: number }> {
+async function renameAtAnvil(ctx: RoutineContext, anvil: Block, stack: Item, name: string, levelBefore: number, creative: boolean): Promise<number | undefined> {
   const { bot } = ctx;
-  const count = stack.count;
   const window = await within(OPEN_TIMEOUT_MS, `opening the ${anvil.name}`, bot.openBlock(anvil), () => {});
+  // The server closes the window itself when the anvil breaks; it then returns what the anvil held.
+  const open = () => bot.currentWindow === window;
   const costs: { level: number | undefined } = { level: undefined };
   const onBar = (packet: { windowId: number; property: number; value: number }) => {
     if (packet.windowId === window.id && packet.property === COST_PROPERTY) costs.level = packet.value;
   };
   bot._client.on("craft_progress_bar", onBar);
-  const renamed = () => stacksIn(window).filter((i) => i.name === stack.name && customNameOf(i) === name);
-  const before = renamed().length;
   let failure: { error: unknown } | undefined;
-  let result: { cost: number | undefined; count: number } | undefined;
+  let cost: number | undefined;
   try {
     if (!/anvil/.test(String(window.type))) throw new Error(`the block opened a ${window.type} window, not an anvil's`);
-    await bot.transfer({ window, itemType: stack.type, metadata: stack.metadata, count, sourceStart: window.inventoryStart, sourceEnd: window.inventoryEnd, destStart: INPUT_SLOT, destEnd: INPUT_SLOT + 1 });
-    const cost = await offerRename(ctx, window, stack, name, costs);
+    // The chosen stack itself, by its slot: a transfer by item type would take the first stack of the type, which may already have the name.
+    await bot.moveSlotItem(stack.slot - bot.inventory.inventoryStart + window.inventoryStart, INPUT_SLOT);
+    cost = await offerRename(ctx, window, stack, name, costs);
     if (!creative && cost !== undefined && levelBefore < cost) {
       throw new Error(`renaming the ${stack.name} costs ${levels(cost)} and you have ${levels(levelBefore)}: earn ${levels(cost - levelBefore)} more, then call items.rename again`);
     }
+    if (!open()) throw new Error(`the ${anvil.name} closed before the renamed ${stack.name} could be taken; was it broken?`);
     await within(OPEN_TIMEOUT_MS, `taking the renamed ${stack.name}`, bot.putAway(OUTPUT_SLOT), () => {});
-    await poll(ctx, SETTLE_POLLS, () => !window.slots[INPUT_SLOT] && renamed().length > before);
-    // The server answers a click it refused after the click resolves; one more look catches that.
-    await ctx.sleep(POLL_MS);
-    const after = renamed();
-    if (after.length <= before) throw new Error(`the ${stack.name} did not come out of the anvil renamed to ${JSON.stringify(name)}: the inventory holds no ${stack.name} with that name, so nothing was renamed`);
-    const whole = after.find((i) => i.count === count);
-    if (!whole) throw new Error(`the renamed ${stack.name} holds ${after.map((i) => i.count).join(", ")}, not the ${count} it had before`);
-    result = { cost, count: whole.count };
   } catch (error) {
     failure = { error };
   }
-  let returned: unknown;
+  let cleanup: unknown;
   try {
-    if (window.slots[INPUT_SLOT]) await within(OPEN_TIMEOUT_MS, `returning the ${stack.name} from the anvil`, bot.putAway(INPUT_SLOT), () => {});
+    if (open() && window.slots[INPUT_SLOT]) await within(OPEN_TIMEOUT_MS, `returning the ${stack.name} from the anvil`, bot.putAway(INPUT_SLOT), () => {});
   } catch (error) {
-    returned = error;
-  } finally {
-    bot._client.off("craft_progress_bar", onBar);
-    bot.closeWindow(window);
-    syncNames(bot, window);
+    cleanup = error;
+  }
+  bot._client.off("craft_progress_bar", onBar);
+  if (open()) bot.closeWindow(window);
+  // Mineflayer's copy at close is not what the server holds: it takes a stack that differs from the old one
+  // only in its name for unchanged, and when the server closed the anvil itself (it broke) the stack can sit
+  // elsewhere than the window showed. `_syncWindow` (Mineflayer 4.39, untyped) sends a click the server
+  // always answers with the full inventory, which replaces `bot.inventory`.
+  try {
+    const sync = (bot as typeof bot & { _syncWindow(window: typeof bot.inventory): Promise<void> })._syncWindow(bot.inventory);
+    await within(OPEN_TIMEOUT_MS, "reading the inventory back from the server", sync, () => {});
+  } catch (error) {
+    cleanup ??= error;
   }
   if (failure) {
     const message = failure.error instanceof Error ? failure.error.message : String(failure.error);
-    if (returned) throw new Error(`${message}; the ${stack.name} could not be taken back out of the anvil either: ${returned instanceof Error ? returned.message : String(returned)}`);
+    if (cleanup) throw new Error(`${message}; then ${cleanup instanceof Error ? cleanup.message : String(cleanup)}`);
     throw failure.error;
   }
-  if (returned || !result) throw returned ?? new Error(`the ${stack.name} was not renamed`);
-  return result;
+  if (cleanup) throw cleanup;
+  return cost;
 }
 
 export const rename = defineRoutine(
   {
     name: "items.rename",
-    description: `Rename the first stack of \`item\` in the inventory to \`name\` (1-${MAX_NAME_LENGTH} characters; spaces are fine) at an anvil within reach (${REACH} blocks; this never walks, so go there first, for example move.to). The cost is experience levels, usually 1 or more; an error names the cost and your level. Returns { item, name, count, levelsSpent }.`,
+    description: `Rename the first stack of \`item\` in the inventory that does not already have \`name\` to \`name\` (1-${MAX_NAME_LENGTH} characters; spaces are fine) at an anvil within reach (${REACH} blocks; this never walks, so go there first, for example move.to). The cost is experience levels, usually 1 or more; an error names the cost and your level. When every stack of \`item\` already has \`name\`, this returns at once, spending nothing. Returns { item, name, count: how many were renamed, levelsSpent }.`,
     args: z.object({
       item: z.string().min(1),
       name: z
@@ -237,13 +217,23 @@ export const rename = defineRoutine(
     const { bot } = ctx;
     const itemName = item.replace(/^minecraft:/, "");
     if (!bot.registry.itemsByName[itemName]) throw new Error(`unknown item "${item}": give an item name such as "diamond_sword" (inventory.list shows what you carry)`);
-    const stack = bot.inventory.items().find((i) => i.name === itemName);
-    if (!stack) throw new Error(`no ${itemName} in the inventory (inventory.list shows what you carry)`);
+    const stacks = bot.inventory.items().filter((i) => i.name === itemName);
+    if (stacks.length === 0) throw new Error(`no ${itemName} in the inventory (inventory.list shows what you carry)`);
+    const stack = stacks.find((i) => customNameOf(i) !== name);
+    if (!stack) return { item: itemName, name, count: stacks[0]!.count, levelsSpent: 0 };
     const anvil = anvilWithinReach(ctx);
-    if (customNameOf(stack) === name) return { item: itemName, name, count: stack.count, levelsSpent: 0 };
     const creative = bot.game.gameMode === "creative";
     const levelBefore = bot.experience.level;
-    const { cost, count } = await renameAtAnvil(ctx, anvil, stack, name, levelBefore, creative);
+    const named = () =>
+      bot.inventory
+        .items()
+        .filter((i) => i.name === itemName && customNameOf(i) === name)
+        .reduce((n, i) => n + i.count, 0);
+    const namedBefore = named();
+    const cost = await renameAtAnvil(ctx, anvil, stack, name, levelBefore, creative);
+    // The inventory is the server's now: the renamed items may have joined a stack that had the name, or split.
+    const count = named() - namedBefore;
+    if (count <= 0) throw new Error(`the ${itemName} did not come out of the anvil renamed to ${JSON.stringify(name)}: the inventory holds no more ${itemName} with that name than before, so nothing was renamed`);
     // The experience packet comes with the taken item; levelsSpent is what the level shows once it has.
     if (!creative && cost) await poll(ctx, SETTLE_POLLS, () => bot.experience.level !== levelBefore);
     return { item: itemName, name, count, levelsSpent: levelBefore - bot.experience.level };
