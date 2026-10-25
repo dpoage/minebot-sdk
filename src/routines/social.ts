@@ -331,19 +331,24 @@ function signToEdit(ctx: RoutineContext, pos: Vec3): Block {
   return block;
 }
 
+/** Whether right-clicking a sign with `item` in the main hand acts on the sign instead of opening its editor: honeycomb waxes it for good, dyes and ink sacs recolor or glow its text, and a hanging sign item on a hanging sign tries to hang another sign there. An empty hand or any other item opens the editor. */
+function actsOnSign(item: string | undefined, block: string): boolean {
+  return item !== undefined && (item === "honeycomb" || item === "ink_sac" || item === "glow_ink_sac" || /_dye$/.test(item) || (/_hanging_sign$/.test(item) && /_hanging_sign$/.test(block)));
+}
+
 /**
- * Runs `work` with an empty main hand. The 26.1 server opens a sign's editor only for a bare click: it lets the held item act on the sign first, so
- * honeycomb waxes it, dyes and ink sacs recolor or glow its text, and a hanging sign in hand on a hanging sign tries to hang another sign there
- * instead of opening the editor. The held stack is set aside for the duration — the hand switched to an empty hotbar slot, or the stack moved into
- * an empty main-grid slot — and restored afterwards, with the selected hotbar slot back where it was.
+ * Runs `work` with a main hand the 26.1 server will open the editor of `block` for. The hand that works is used as it is: first the current one, then
+ * a hotbar slot that is empty or holds a stack that does not act on the sign, and otherwise the held stack moved into an empty main-grid slot and
+ * back. Every path restores the selected hotbar slot and every stack to where it was, and the sign is never waxed or recolored.
  */
-async function withEmptyHand<T>(ctx: RoutineContext, work: () => Promise<T>): Promise<T> {
+async function withWritableHand<T>(ctx: RoutineContext, block: Block, work: () => Promise<T>): Promise<T> {
   const { bot } = ctx;
-  if (!bot.heldItem) return work();
-  const emptyHotbar = Array.from({ length: 9 }, (_, i) => bot.inventory.slots[HOTBAR_START + i]).findIndex((stack) => !stack);
-  if (emptyHotbar >= 0) {
+  if (!actsOnSign(bot.heldItem?.name, block.name)) return work();
+  const hotbar = Array.from({ length: 9 }, (_, i) => bot.inventory.slots[HOTBAR_START + i]);
+  const usable = hotbar.findIndex((stack, i) => i !== bot.quickBarSlot && (!stack || !actsOnSign(stack.name, block.name)));
+  if (usable >= 0) {
     const original = bot.quickBarSlot;
-    bot.setQuickBarSlot(emptyHotbar);
+    bot.setQuickBarSlot(usable);
     try {
       return await work();
     } finally {
@@ -353,7 +358,8 @@ async function withEmptyHand<T>(ctx: RoutineContext, work: () => Promise<T>): Pr
   const heldSlot = HOTBAR_START + bot.quickBarSlot;
   const mainGridFree = bot.inventory.slots.slice(9, HOTBAR_START).findIndex((stack) => !stack);
   if (mainGridFree < 0) {
-    throw new Error(`the main hand holds ${bot.heldItem.name}, which can stop the server opening the sign's editor, and the inventory has no free slot to set it aside in. Free one slot (inventory.toss), then call again.`);
+    const held = [...new Set(hotbar.filter((stack): stack is Item => stack !== null).map((stack) => stack.name))];
+    throw new Error(`every hotbar stack holds one of ${JSON.stringify(held)}, which acts on the ${block.name} instead of opening its editor, and the inventory has no free slot to set one aside in. Free one hotbar slot (inventory.toss), then call again.`);
   }
   await bot.moveSlotItem(heldSlot, 9 + mainGridFree);
   try {
@@ -388,7 +394,7 @@ export const sign = defineRoutine(
   {
     name: "social.sign",
     description:
-      "Write `lines` (1 to 4 strings, each at most 45 characters as the server counts them — an emoji counts as 2; about 15 characters show per line, so keep lines short) on the existing sign at `at` ({x,y,z} or [x,y,z]). `side`: \"front\" (default) or \"back\". The sign must already stand there (place it with place.place, e.g. item \"oak_sign\") and be within 4.5 blocks of the bot; walk closer first with move.to. A waxed sign cannot be written. Lines you leave out end up empty. Whatever the main hand holds is set aside while writing — an empty hand is the only click that opens every sign's editor — and restored afterwards, so the sign is never waxed or recolored. Returns { at, side, lines } with the four lines read back from the sign, and throws if the sign does not show what was written.",
+      "Write `lines` (1 to 4 strings, each at most 45 characters as the server counts them — an emoji counts as 2; about 15 characters show per line, so keep lines short) on the existing sign at `at` ({x,y,z} or [x,y,z]). `side`: \"front\" (default) or \"back\". The sign must already stand there (place it with place.place, e.g. item \"oak_sign\") and be within 4.5 blocks of the bot; walk closer first with move.to. A waxed sign cannot be written. Lines you leave out end up empty. The write uses a main hand the server will open the editor for: an ordinary held item or an empty hand is used as it is, while honeycomb, a dye, an ink sac, or a hanging sign item on a hanging sign — each of which would act on the sign instead of opening its editor — is set aside for the write and the hotbar is put back exactly as it was, so the sign is never waxed or recolored. It throws only when every hotbar stack is one of those and no inventory slot is free, naming the stacks. Returns { at, side, lines } with the four lines read back from the sign, and throws if the sign does not show what was written.",
     args: z.object({
       at: Position,
       lines: z
@@ -408,7 +414,7 @@ export const sign = defineRoutine(
     const { bot } = ctx;
     const pos = toVec3(at).floored();
     const block = signToEdit(ctx, pos);
-    await withEmptyHand(ctx, async () => {
+    await withWritableHand(ctx, block, async () => {
       await openEditor(ctx, block);
       bot.updateSign(block, lines.join("\n"), side === "back");
     });

@@ -56,9 +56,9 @@ interface SignOptions extends Pick<HarnessOptions, "inventory" | "equipment" | "
 }
 
 /**
- * The harness bot has no sign editor. This gives it the members the routine reaches for, and plays the server's part: only a bare click opens a
- * sign's editor (`signOpen`); the server lets the held item act on the sign first, so honeycomb waxes it, a dye or an ink sac changes its text, and
- * a hanging sign in hand on a hanging sign tries to hang another sign there and opens nothing.
+ * The harness bot has no sign editor. This gives it the members the routine reaches for, and plays the server's part: the server lets the held item
+ * act on the sign first, so honeycomb waxes it, a dye or an ink sac changes its text, and a hanging sign in hand on a hanging sign tries to hang
+ * another sign there and opens nothing; a bare hand or any other item opens the editor (`signOpen`).
  */
 function signWorld(options: SignOptions = {}) {
   const at = options.at ?? SIGN_AT;
@@ -221,21 +221,23 @@ describe("social.sign: errors say the cause and the fix", () => {
   });
 });
 
-describe("social.sign: whatever the main hand holds never reaches the sign", () => {
-  const heldCases: { held: string; block: string }[] = [
-    ...APPLICATORS.map((held) => ({ held, block: "oak_sign" })),
-    { held: "oak_hanging_sign", block: "oak_wall_hanging_sign" },
-    { held: "oak_hanging_sign", block: "oak_hanging_sign" },
-    { held: "bread", block: "oak_sign" },
+describe("social.sign: the write uses a hand the server will open the editor for", () => {
+  const heldCases: { held: string; block: string; hand: string }[] = [
+    ...APPLICATORS.map((held) => ({ held, block: "oak_sign", hand: "bread" })),
+    { held: "oak_hanging_sign", block: "oak_wall_hanging_sign", hand: "bread" },
+    { held: "oak_hanging_sign", block: "oak_hanging_sign", hand: "bread" },
+    { held: "bread", block: "oak_sign", hand: "bread" },
+    { held: "oak_sign", block: "oak_sign", hand: "oak_sign" },
+    { held: "dirt", block: "oak_wall_hanging_sign", hand: "dirt" },
   ];
-  for (const { held, block } of heldCases) {
-    it(`${held} in the main hand on a ${block}: written with a bare click, unwaxed and uncolored, and the hand restored`, async () => {
+  for (const { held, block, hand } of heldCases) {
+    it(`${held} in the main hand on a ${block}: the sign is used with ${hand} in hand, written, unwaxed and uncolored, and everything restored`, async () => {
       const world = signWorld({ block, inventory: { [held]: 1, bread: 2 }, equipment: { hand: held } });
       assert.equal(world.h.bot.heldItem?.name, held);
       const heldBefore = world.h.count(held);
       const result = await world.h.run(social.sign, { at: world.at, lines: ["board"] });
       assert.deepEqual(result.lines, ["board", "", "", ""]);
-      assert.deepEqual(world.hands, [undefined], "the editor only opens for a bare click");
+      assert.deepEqual(world.hands, [hand], "an item that acts on the sign is never the hand the sign is used with");
       assert.equal(world.entity.value.is_waxed.value, 0);
       assert.equal(world.entity.value.front_text.value.color.value, "black");
       assert.equal(world.entity.value.front_text.value.has_glowing_text.value, 0);
@@ -245,19 +247,52 @@ describe("social.sign: whatever the main hand holds never reaches the sign", () 
     });
   }
 
-  it("a full hotbar: the held stack waits in the main grid and comes back to its slot", async () => {
-    const stuff = { honeycomb: 1, bread: 1, apple: 1, stick: 1, coal: 1, dirt: 1, cobblestone: 1, sand: 1, gravel: 1 };
+  it("all 36 slots hold the held item: an ordinary item still opens the editor, so the sign is written with nothing set aside", async () => {
+    for (const [item, count] of [
+      ["dirt", 2304],
+      ["oak_sign", 576],
+    ] as const) {
+      const world = signWorld({ inventory: { [item]: count }, equipment: { hand: item } });
+      const result = await world.h.run(social.sign, { at: world.at, lines: ["full"] });
+      assert.deepEqual(result.lines, ["full", "", "", ""]);
+      assert.deepEqual(world.hands, [item], "the held item is used as it is");
+      assert.equal(world.h.bot.quickBarSlot, 0);
+      assert.equal(world.h.count(item), count);
+    }
+  });
+
+  it("every hotbar stack acts on the sign, with the main grid free: the held stack waits there and comes back to its slot", async () => {
+    const stuff = { honeycomb: 1, ink_sac: 1, glow_ink_sac: 1, red_dye: 1, blue_dye: 1, green_dye: 1, black_dye: 1, white_dye: 1, yellow_dye: 1 };
     const world = signWorld({ inventory: stuff, equipment: { hand: "honeycomb" } });
     const slot = world.h.bot.quickBarSlot;
     await world.h.run(social.sign, { at: world.at, lines: ["x"] });
-    assert.deepEqual(world.hands, [undefined], "the editor only opens for a bare click");
+    assert.deepEqual(world.hands, [undefined], "the held stack is moved out of the hand entirely");
     assert.equal(world.h.bot.quickBarSlot, slot);
     assert.equal(world.h.bot.heldItem?.name, "honeycomb");
     const inv = world.h.bot.inventory as unknown as { slots: (Item | null)[] };
     assert.ok(inv.slots.slice(9, 36).every((stack) => stack === null), "the main grid is empty again");
   });
 
-  it("no free slot anywhere: says to free one, and touches nothing", async () => {
+  it("a full inventory whose held stack acts on the sign: another hotbar stack stands in and the hand is restored", async () => {
+    const world = signWorld({ block: "oak_wall_hanging_sign", inventory: { oak_hanging_sign: 1, dirt: 2240 }, equipment: { hand: "oak_hanging_sign" } });
+    const result = await world.h.run(social.sign, { at: world.at, lines: ["swap"] });
+    assert.deepEqual(result.lines, ["swap", "", "", ""]);
+    assert.deepEqual(world.hands, ["dirt"], "an ordinary hotbar stack is switched to for the write");
+    assert.equal(world.h.bot.quickBarSlot, 0, "the selected hotbar slot is restored");
+    assert.equal(world.h.bot.heldItem?.name, "oak_hanging_sign");
+  });
+
+  it("36 slots of honeycomb: no choice opens the editor, so it throws naming it and touches nothing", async () => {
+    const world = signWorld({ inventory: { honeycomb: 2304 }, equipment: { hand: "honeycomb" } });
+    await assert.rejects(
+      world.h.run(social.sign, { at: world.at, lines: ["x"] }),
+      /every hotbar stack holds one of \["honeycomb"\], which acts on the oak_sign instead of opening its editor.*no free slot to set one aside in.*Free one hotbar slot \(inventory\.toss\)/,
+    );
+    assert.deepEqual([world.hands.length, world.updates.length], [0, 0]);
+    assert.equal(world.entity.value.is_waxed.value, 0);
+  });
+
+  it("a full inventory whose whole hotbar acts on the sign: throws naming every stack, and touches nothing", async () => {
     const filler = [
       "honeycomb", "ink_sac", "glow_ink_sac", "white_dye", "light_gray_dye", "gray_dye", "black_dye", "brown_dye", "red_dye",
       "orange_dye", "yellow_dye", "lime_dye", "green_dye", "cyan_dye", "light_blue_dye", "blue_dye", "purple_dye", "magenta_dye",
@@ -265,7 +300,10 @@ describe("social.sign: whatever the main hand holds never reaches the sign", () 
       "spruce_log", "stone", "granite", "diorite", "andesite", "iron_ingot",
     ];
     const world = signWorld({ inventory: Object.fromEntries(filler.map((name) => [name, 1])), equipment: { hand: "honeycomb" } });
-    await assert.rejects(world.h.run(social.sign, { at: world.at, lines: ["x"] }), /no free slot to set it aside.*[Ff]ree one slot \(inventory\.toss\)/);
+    await assert.rejects(
+      world.h.run(social.sign, { at: world.at, lines: ["x"] }),
+      /every hotbar stack holds one of \["honeycomb","ink_sac","glow_ink_sac","white_dye","light_gray_dye","gray_dye","black_dye","brown_dye","red_dye"\].*no free slot to set one aside in/,
+    );
     assert.deepEqual([world.hands.length, world.updates.length], [0, 0]);
     assert.equal(world.entity.value.is_waxed.value, 0);
   });
