@@ -435,6 +435,9 @@ export const sign = defineRoutine(
 const BOOK_PAGES_MAX = 100;
 const BOOK_PAGE_MAX = 1024;
 const BOOK_TITLE_MAX = 32;
+/** The slots `book: "first"` searches, in order: the main grid (window slots 9-35), then the hotbar (36-44). The off-hand (45) is not searched. */
+const BOOK_SLOTS_FROM = 9;
+const BOOK_SLOTS_TO = 45;
 
 /** Mineflayer implements `bot.signBook` but leaves it out of its typings. */
 type SigningBot = Bot & { signBook(slot: number, pages: string[], author: string, title: string): Promise<void> };
@@ -464,11 +467,35 @@ function describeBook(contents: BookContents | undefined): string {
   return `a ${contents.item}${signed} with ${contents.pages.length} page${contents.pages.length === 1 ? "" : "s"} ${JSON.stringify(contents.pages).slice(0, 200)}`;
 }
 
+/** The custom name a stack carries (the component reads as `{ type: "string", value }`), or undefined when it has none. */
+function bookName(stack: Item): string | undefined {
+  const raw: unknown = stack.customName;
+  const name = typeof raw === "string" ? raw : field(raw, "value");
+  return typeof name === "string" && name !== "" ? name : undefined;
+}
+
+/** Every writable_book in the inventory in the order `book: "first"` counts them: the main grid before the hotbar. */
+function writableBooks(bot: Bot): { stack: Item; slot: number }[] {
+  const found: { stack: Item; slot: number }[] = [];
+  for (let slot = BOOK_SLOTS_FROM; slot < BOOK_SLOTS_TO; slot++) {
+    const stack = bot.inventory.slots[slot];
+    if (stack?.name === "writable_book") found.push({ stack, slot });
+  }
+  return found;
+}
+
+/** A book as the errors name it: by the custom name it carries when it has one, with how many pages it holds. */
+function bookLabel(stack: Item): string {
+  const name = bookName(stack);
+  const pages = bookContents(stack)?.pages.length ?? 0;
+  return `${name === undefined ? "the unnamed book and quill" : `the book and quill named ${JSON.stringify(name)}`} (${pages} page${pages === 1 ? "" : "s"})`;
+}
+
 export const book = defineRoutine(
   {
     name: "social.book",
     description:
-      "Write `pages` (1 to 100 strings, each 1 to 1024 characters as the server counts them — an emoji counts as 2) into the first writable_book (book and quill) in the inventory, replacing what it held. A writable_book is made from a book, an ink_sac and a feather. Without `title` the book stays a writable_book that can be written again (a ledger). With `title` (1 to 32 characters, counted the same way) the book is signed: it becomes a written_book with you as the author, and can never be edited again. Returns { item, title?, pages } where pages is the count read back, and throws if the book does not hold what was written.",
+      "Write `pages` (1 to 100 strings, each 1 to 1024 characters as the server counts them — an emoji counts as 2) into a writable_book (book and quill) in the inventory, replacing what it held. A writable_book is made from a book, an ink_sac and a feather. `book`: \"new\" (default) writes into a BLANK writable_book (no pages, or only empty pages) and never touches one that holds writing: if none is blank it throws and names the fix (craft a book and quill, or pass book: \"first\") and which book \"first\" would rewrite. \"first\" rewrites the first unsigned writable_book in slot order — the main inventory grid first, then the hotbar (the off-hand is not searched); e.g. a renamed 'Ledger' in the main grid and a blank book in the hotbar: \"first\" picks 'Ledger', \"new\" picks the blank one. Without `title` the book stays a writable_book that can be written again (a ledger). With `title` (1 to 32 characters, counted the same way) the book is signed: it becomes a written_book with you as the author, and can never be edited again. Returns { item, title?, name?, pages } where pages is the count read back and name is the custom name of the book that was written, when it had one, and throws if the book does not hold what was written.",
     args: z.object({
       pages: z
         .array(serverChars(BOOK_PAGE_MAX, `a book page holds at most ${BOOK_PAGE_MAX} characters as the server counts them (an emoji counts as 2): split this text over more pages`).min(1, "a book page cannot be empty: give every page some text"))
@@ -477,24 +504,34 @@ export const book = defineRoutine(
       title: serverChars(BOOK_TITLE_MAX, `a book title holds at most ${BOOK_TITLE_MAX} characters as the server counts them (an emoji counts as 2): shorten the title`)
         .refine((title) => title.trim() !== "", "the book title is blank: give a title of 1 to 32 characters, or leave `title` out to keep the book editable")
         .optional(),
+      book: z.enum(["new", "first"]).default("new"),
     }),
-    returns: z.object({ item: z.enum(["writable_book", "written_book"]), title: z.string().optional(), pages: z.number().int() }),
+    returns: z.object({ item: z.enum(["writable_book", "written_book"]), title: z.string().optional(), name: z.string().optional(), pages: z.number().int() }),
   },
-  async (ctx, { pages, title }) => {
+  async (ctx, { pages, title, book: which }) => {
     const { bot } = ctx;
-    const stack = bot.inventory.items().find((item) => item.name === "writable_book");
-    if (!stack) {
+    const books = writableBooks(bot);
+    const first = books[0];
+    if (!first) {
       throw new Error("the inventory holds no writable_book (book and quill) to write in. Craft one first (craft.craft: book + ink_sac + feather), or pick one up, then call social.book again.");
     }
-    // Mineflayer moves the book to the hotbar to edit it and back afterwards, and updates the stack's own `slot` on the way: the slot to read back is where it started.
-    const slot = stack.slot;
+    const chosen = which === "first" ? first : books.find(({ stack }) => (bookContents(stack)?.pages ?? []).every((text) => text === ""));
+    if (!chosen) {
+      throw new Error(
+        `no blank book and quill to write in: all ${books.length} writable_book${books.length === 1 ? "" : "s"} in the inventory hold writing, and book: "new" never overwrites writing. Craft a new book and quill (craft.craft: book + ink_sac + feather) and call again, or pass book: "first" to rewrite one — "first" would rewrite ${bookLabel(first.stack)} in slot ${first.slot} (slot order: the main inventory grid, then the hotbar; the off-hand is not searched).`,
+      );
+    }
+    const { stack, slot } = chosen;
+    const name = bookName(stack);
     const wanted = title === undefined ? ("writable_book" as const) : ("written_book" as const);
+    const done = { item: wanted, ...(title !== undefined && { title }), ...(name !== undefined && { name }), pages: pages.length };
     const holdsWritten = (contents: BookContents | undefined) =>
       contents?.item === wanted && contents.pages.length === pages.length && contents.pages.every((text, i) => text === (title === undefined ? pages[i] : asNbtRead(pages[i] ?? ""))) && (title === undefined || (contents.title === title && contents.author === bot.username));
 
     // A server sends nothing back for an edit that changes nothing, so a book that already holds these pages is done.
-    if (title === undefined && holdsWritten(bookContents(stack))) return { item: wanted, pages: pages.length };
+    if (title === undefined && holdsWritten(bookContents(stack))) return done;
 
+    // Mineflayer moves the book to the hotbar to edit it and back afterwards, and updates the stack's own `slot` on the way: the slot to read back is where it started.
     // Mineflayer 4.39 always implements signBook; only its typings leave it out.
     const signer = bot as SigningBot;
     try {
@@ -506,7 +543,7 @@ export const book = defineRoutine(
 
     for (let waited = 0; ; waited += 50) {
       const kept = bookContents(bot.inventory.slots[slot]);
-      if (holdsWritten(kept)) return { item: wanted, ...(title !== undefined && { title }), pages: pages.length };
+      if (holdsWritten(kept)) return done;
       if (waited >= READBACK_MS) {
         throw new Error(`slot ${slot} holds ${describeBook(kept)} instead of the ${wanted} that was written: the server kept something else or did not take the edit. Check the inventory and call again.`);
       }

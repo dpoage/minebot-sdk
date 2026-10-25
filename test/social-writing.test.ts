@@ -342,6 +342,10 @@ interface BookOptions {
   /** The slot the book starts in (a grid slot makes Mineflayer move it to the hotbar and back). */
   slot?: number;
   holds?: readonly string[];
+  /** The custom name the book carries. */
+  named?: string;
+  /** More writable_books, each in its own slot. */
+  others?: readonly { slot: number; holds?: readonly string[]; named?: string }[];
   /** What the server does with an edit. */
   server?: "keeps" | "drops" | "other-author" | "other-title" | "trims";
   noBook?: boolean;
@@ -351,11 +355,14 @@ function bookWorld(options: BookOptions = {}) {
   const h = createHarness({ inventory: options.noBook ? { bread: 1, book: 1, feather: 1 } : { bread: 1 } });
   const inv = h.bot.inventory as unknown as { make(name: string, count: number): Item; set(slot: number, item: Item | null): void; slots: (Item | null)[] };
   const slot = options.slot ?? 10;
-  if (!options.noBook) {
+  const put = (at: number, holds: readonly string[] = [], named?: string) => {
     const stack = inv.make("writable_book", 1);
-    Object.assign(stack, { componentMap: new Map([["writable_book_content", writableContent(options.holds ?? [])]]) });
-    inv.set(slot, stack);
-  }
+    Object.assign(stack, { componentMap: new Map([["writable_book_content", writableContent(holds)]]) });
+    if (named !== undefined) stack.customName = { type: "string", value: named } as unknown as string;
+    inv.set(at, stack);
+  };
+  if (!options.noBook) put(slot, options.holds, options.named);
+  for (const other of options.others ?? []) put(other.slot, other.holds, other.named);
   const calls: { call: "writeBook" | "signBook"; slot: number; pages: string[]; author?: string; title?: string }[] = [];
   Object.assign(h.bot, {
     async writeBook(at: number, pages: string[]) {
@@ -418,27 +425,115 @@ describe("social.book: the book holds what was written", () => {
 
   it("a book that already holds these pages is done without an edit the server would never answer", async () => {
     const { h, calls } = bookWorld({ holds: ["same", "pages"] });
-    assert.deepEqual(await h.run(social.book, { pages: ["same", "pages"] }), { item: "writable_book", pages: 2 });
+    assert.deepEqual(await h.run(social.book, { pages: ["same", "pages"], book: "first" }), { item: "writable_book", pages: 2 });
     assert.equal(calls.length, 0);
   });
 
   it("the same pages with a title still sign the book", async () => {
     const { h, calls } = bookWorld({ holds: ["same"] });
-    await h.run(social.book, { pages: ["same"], title: "T" });
+    await h.run(social.book, { pages: ["same"], title: "T", book: "first" });
     assert.equal(calls.length, 1);
   });
 
-  it("writes into the first writable_book, and rewrites a ledger with new pages", async () => {
+  it('book: "first" rewrites a ledger with new pages', async () => {
     const { h, held } = bookWorld({ slot: 12, holds: ["old"] });
-    await h.run(social.book, { pages: ["new 1", "new 2"] });
+    await h.run(social.book, { pages: ["new 1", "new 2"], book: "first" });
     assert.deepEqual(pagesOf(held(12)), ["new 1", "new 2"]);
+  });
+});
+
+describe("social.book: the default writes a blank book and never changes one that holds writing", () => {
+  it("the incident: a ledger, then a signed contract, land in two different books", async () => {
+    const { h, calls, held } = bookWorld({ slot: 10, others: [{ slot: 11 }] });
+    assert.deepEqual(await h.run(social.book, { pages: ["ledger entry"] }), { item: "writable_book", pages: 1 });
+    assert.deepEqual(await h.run(social.book, { pages: ["the contract"], title: "Contract" }), { item: "written_book", title: "Contract", pages: 1 });
+    assert.deepEqual(calls.map(({ call, slot }) => [call, slot]), [["writeBook", 10], ["signBook", 11]]);
+    assert.equal(held(10)?.name, "writable_book");
+    assert.deepEqual(pagesOf(held(10)), ["ledger entry"]);
+    assert.equal(held(11)?.name, "written_book");
+  });
+
+  it('book: "new" is the default: naming it changes nothing', async () => {
+    const { h, calls } = bookWorld({ slot: 10, holds: ["writing"], others: [{ slot: 12 }] });
+    await h.run(social.book, { pages: ["p"], book: "new" });
+    assert.deepEqual(calls.map(({ slot }) => slot), [12]);
+  });
+
+  it("a book of only empty pages is blank; a page of spaces is writing", async () => {
+    const empty = bookWorld({ slot: 10, holds: ["", ""], others: [{ slot: 11 }] });
+    await empty.h.run(social.book, { pages: ["p"] });
+    assert.deepEqual(empty.calls.map(({ slot }) => slot), [10]);
+    const spaces = bookWorld({ slot: 10, holds: ["   "], others: [{ slot: 11 }] });
+    await spaces.h.run(social.book, { pages: ["p"] });
+    assert.deepEqual(spaces.calls.map(({ slot }) => slot), [11]);
+  });
+
+  it("every book holds writing: throws naming the fix and the book first would rewrite, and changes nothing", async () => {
+    const { h, calls, held } = bookWorld({ slot: 12, holds: ["debts", "owed"], named: "Ledger", others: [{ slot: 40, holds: ["x"] }] });
+    await assert.rejects(
+      h.run(social.book, { pages: ["p"], title: "Contract" }),
+      /no blank book and quill.*all 2 writable_books.*craft\.craft: book \+ ink_sac \+ feather.*book: "first".*the book and quill named "Ledger" \(2 pages\) in slot 12.*main inventory grid, then the hotbar/,
+    );
+    assert.equal(calls.length, 0);
+    assert.deepEqual(pagesOf(held(12)), ["debts", "owed"]);
+    assert.deepEqual(pagesOf(held(40)), ["x"]);
+  });
+
+  it("an unnamed book that holds writing is named as unnamed, with its page count", async () => {
+    const { h } = bookWorld({ holds: ["only page"] });
+    await assert.rejects(h.run(social.book, { pages: ["p"] }), /would rewrite the unnamed book and quill \(1 page\) in slot 10/);
+  });
+
+  it("a book and quill in the off-hand is not searched", async () => {
+    const { h, calls } = bookWorld({ noBook: true, others: [{ slot: 45 }] });
+    await assert.rejects(h.run(social.book, { pages: ["p"] }), /no writable_book/);
+    assert.equal(calls.length, 0);
+  });
+});
+
+describe('social.book: book: "first" rewrites the first unsigned writable_book, main grid before hotbar', () => {
+  const boundary = () => bookWorld({ slot: 12, holds: ["debts"], named: "Ledger", others: [{ slot: 36 }] });
+
+  it("boundary: a renamed Ledger in the main grid and a blank book in the hotbar: first picks the Ledger and returns its name", async () => {
+    const { h, calls, held } = boundary();
+    assert.deepEqual(await h.run(social.book, { pages: ["new debts"], book: "first" }), { item: "writable_book", name: "Ledger", pages: 1 });
+    assert.deepEqual(calls.map(({ slot }) => slot), [12]);
+    assert.deepEqual(pagesOf(held(12)), ["new debts"]);
+  });
+
+  it("boundary: the default picks the blank hotbar book and returns no name", async () => {
+    const { h, calls, held } = boundary();
+    assert.deepEqual(await h.run(social.book, { pages: ["fresh"] }), { item: "writable_book", pages: 1 });
+    assert.deepEqual(calls.map(({ slot }) => slot), [36]);
+    assert.deepEqual(pagesOf(held(12)), ["debts"]);
+  });
+
+  it("first with a title signs the first book and returns its name", async () => {
+    const { h, calls } = boundary();
+    assert.deepEqual(await h.run(social.book, { pages: ["done"], title: "Contract", book: "first" }), { item: "written_book", title: "Contract", name: "Ledger", pages: 1 });
+    assert.deepEqual(calls.map(({ call, slot }) => [call, slot]), [["signBook", 12]]);
+  });
+
+  it("the lowest slot wins inside the main grid and inside the hotbar", async () => {
+    const grid = bookWorld({ slot: 30, others: [{ slot: 9 }, { slot: 20 }] });
+    await grid.h.run(social.book, { pages: ["p"], book: "first" });
+    assert.deepEqual(grid.calls.map(({ slot }) => slot), [9]);
+    const bar = bookWorld({ slot: 44, others: [{ slot: 38 }] });
+    await bar.h.run(social.book, { pages: ["p"], book: "first" });
+    assert.deepEqual(bar.calls.map(({ slot }) => slot), [38]);
+  });
+
+  it("an argument other than new or first is refused", async () => {
+    const { h, calls } = bookWorld();
+    await assert.rejects(h.run(social.book, { pages: ["p"], book: "last" } as never), /book/);
+    assert.equal(calls.length, 0);
   });
 });
 
 describe("social.book: a write the server did not keep is an error", () => {
   it("a server that takes the edit and leaves the book unchanged: names what the book holds", async () => {
     const { h } = bookWorld({ server: "drops", holds: ["old page"] });
-    await assert.rejects(h.run(social.book, { pages: ["new page"] }), /slot 10 holds a writable_book with 1 page \["old page"\] instead of the writable_book that was written/);
+    await assert.rejects(h.run(social.book, { pages: ["new page"], book: "first" }), /slot 10 holds a writable_book with 1 page \["old page"\] instead of the writable_book that was written/);
   });
 
   it("a signing the server did not take: says the book is still a writable_book", async () => {
@@ -489,7 +584,7 @@ describe("social.book: errors say the cause and the fix", () => {
   });
 
   it("the page and title limits count characters as the server does: an emoji counts as 2", async () => {
-    const { h, calls } = bookWorld();
+    const { h, calls } = bookWorld({ others: [{ slot: 11 }] });
     const emoji = "\u{1F600}";
     const refuse = (args: Record<string, unknown>, message: RegExp) => assert.rejects(h.run(social.book, args as never), message);
     await h.run(social.book, { pages: [emoji.repeat(512)] });

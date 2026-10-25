@@ -3663,7 +3663,7 @@
       },
       {
         "name": "book",
-        "description": "Write `pages` (1 to 100 strings, each 1 to 1024 characters as the server counts them — an emoji counts as 2) into the first writable_book (book and quill) in the inventory, replacing what it held. A writable_book is made from a book, an ink_sac and a feather. Without `title` the book stays a writable_book that can be written again (a ledger). With `title` (1 to 32 characters, counted the same way) the book is signed: it becomes a written_book with you as the author, and can never be edited again. Returns { item, title?, pages } where pages is the count read back, and throws if the book does not hold what was written.",
+        "description": "Write `pages` (1 to 100 strings, each 1 to 1024 characters as the server counts them — an emoji counts as 2) into a writable_book (book and quill) in the inventory, replacing what it held. A writable_book is made from a book, an ink_sac and a feather. `book`: \"new\" (default) writes into a BLANK writable_book (no pages, or only empty pages) and never touches one that holds writing: if none is blank it throws and names the fix (craft a book and quill, or pass book: \"first\") and which book \"first\" would rewrite. \"first\" rewrites the first unsigned writable_book in slot order — the main inventory grid first, then the hotbar (the off-hand is not searched); e.g. a renamed 'Ledger' in the main grid and a blank book in the hotbar: \"first\" picks 'Ledger', \"new\" picks the blank one. Without `title` the book stays a writable_book that can be written again (a ledger). With `title` (1 to 32 characters, counted the same way) the book is signed: it becomes a written_book with you as the author, and can never be edited again. Returns { item, title?, name?, pages } where pages is the count read back and name is the custom name of the book that was written, when it had one, and throws if the book does not hold what was written.",
         "args": {
           "$schema": "https://json-schema.org/draft/2020-12/schema",
           "type": "object",
@@ -3681,6 +3681,14 @@
             "title": {
               "type": "string",
               "maxLength": 32
+            },
+            "book": {
+              "default": "new",
+              "type": "string",
+              "enum": [
+                "new",
+                "first"
+              ]
             }
           },
           "required": [
@@ -3699,6 +3707,9 @@
               ]
             },
             "title": {
+              "type": "string"
+            },
+            "name": {
               "type": "string"
             },
             "pages": {
