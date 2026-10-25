@@ -6,7 +6,7 @@
     "routines": [
       {
         "name": "to",
-        "description": "Walk within `range` blocks of `position` ({x,y,z} or [x,y,z]) and stop. Throws, after stopping pathfinding, when `timeoutMs` passes, when 12 s go by with no progress (no movement, digging, or nearby block change: 'stuck at ...'), or when the walk ends farther than `range` ('could not reach ...'). Returns where the player then stands.",
+        "description": "Walk within `range` blocks of `position` ({x,y,z} or [x,y,z]) and stop; the feet, or the block above them, within `range` counts as there. Throws, after stopping pathfinding, when `timeoutMs` passes, when 12 s go by with no progress (no movement, digging, or nearby block change: 'stuck at ...'), or when the pathfinder ends with no way within `range` ('could not reach ...'). Returns where the player stands once stopped.",
         "args": {
           "$schema": "https://json-schema.org/draft/2020-12/schema",
           "type": "object",
@@ -2114,7 +2114,7 @@
       },
       {
         "name": "collectDrops",
-        "description": "Walk over each dropped item within `radius` (default 8) once to pick it up. Returns { reached, unreachable }: how many drops it reached and the positions it could not reach.",
+        "description": "Walk over each position within `radius` (default 8) where dropped items lie, once, to pick them up. Returns { reached, unreachable }: how many such positions it reached (several stacks in one block count once) and the positions it could not reach.",
         "args": {
           "$schema": "https://json-schema.org/draft/2020-12/schema",
           "type": "object",

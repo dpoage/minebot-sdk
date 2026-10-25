@@ -18,11 +18,24 @@ interface GatherResult {
 }
 
 const MAX_FAILURES = 12;
+// Survival players dig blocks up to 4.5 blocks from the eyes (to the block's centre, as bucket.ts measures it).
+const DIG_REACH = 4.5;
+const EYE_HEIGHT = 1.62;
+
+/** Walks within 3 blocks of `target`. A walk that fails where `target` is in dig reach anyway, as the top log of a tall trunk, is no failure. */
+async function walkToDig(ctx: RoutineContext, target: Vec3): Promise<void> {
+  try {
+    await move.to(ctx, { position: target, range: 3, timeoutMs: 45_000 });
+  } catch (err) {
+    if (ctx.signal.aborted || ctx.bot.entity.position.offset(0, EYE_HEIGHT, 0).distanceTo(target.offset(0.5, 0.5, 0.5)) > DIG_REACH) throw err;
+    ctx.log(`gather: digging ${target} from here, in reach though the walk failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
 
 /**
- * Walks over each distinct drop within `radius`, once. `failed` holds the floored positions (`x,y,z`)
- * a walk already failed on; those are not tried again, and new failures are added. Returns how many
- * drops it reached and which it could not.
+ * Walks over each floored position within `radius` where drops lie, once. `failed` holds the positions
+ * (`x,y,z`) a walk already failed on; those are not tried again, and new failures are added. Returns how
+ * many positions it reached and which it could not.
  */
 async function pickUpDrops(ctx: RoutineContext, failed: Set<string>, radius = 8): Promise<{ reached: number; unreachable: Point[] }> {
   await ctx.sleep(400);
@@ -68,7 +81,7 @@ async function gatherBlocks(ctx: RoutineContext, pattern: NamePattern, count: nu
       break;
     }
     try {
-      await move.to(ctx, { position: target, range: 3, timeoutMs: 45_000 });
+      await walkToDig(ctx, target);
       await dig.dig(ctx, { at: target });
       dug++;
       await pickUpDrops(ctx, failedDrops);
@@ -106,7 +119,7 @@ export const gather = defineRoutine(
 export const collectDrops = defineRoutine(
   {
     name: "gatherer.collectDrops",
-    description: "Walk over each dropped item within `radius` (default 8) once to pick it up. Returns { reached, unreachable }: how many drops it reached and the positions it could not reach.",
+    description: "Walk over each position within `radius` (default 8) where dropped items lie, once, to pick them up. Returns { reached, unreachable }: how many such positions it reached (several stacks in one block count once) and the positions it could not reach.",
     args: z.object({ radius: z.number().positive().default(8) }),
     returns: z.object({ reached: z.number(), unreachable: z.array(Point) }),
   },

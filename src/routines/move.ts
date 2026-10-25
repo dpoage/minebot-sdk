@@ -44,19 +44,65 @@ function watchProgress(bot: RoutineContext["bot"], target: Vec3): { stalled: Pro
   };
 }
 
+type PathStatus = "success" | "partial" | "noPath" | "timeout";
+
+/**
+ * Listens for how the pathfinder ends `goal`. Its `goto` resolves on any empty path, also one found while
+ * the search goes on ('partial'); the search then continues and the player may yet walk. `afterGoto()`,
+ * called once `goto` has resolved, waits for that search to end. It settles with "reached" when the
+ * pathfinder reported the goal reached, or with the final status of an empty path (no way closer); it
+ * rejects as `goto` does when the search fails with a path, the path is stopped, or the goal is replaced.
+ * A `goto` that resolved with no path update at all (a stub) counts as ended where the player stands.
+ */
+function watchPathEnd(bot: RoutineContext["bot"], goal: object): { afterGoto: () => Promise<"reached" | PathStatus | undefined>; stop: () => void } {
+  const end = Promise.withResolvers<"reached" | PathStatus>();
+  end.promise.catch(() => {}); // while `goto` runs, it reports the same failures
+  let outcome: "reached" | PathStatus | undefined;
+  let searching = false;
+  const finish = (how: "reached" | PathStatus) => {
+    outcome ??= how;
+    end.resolve(how);
+  };
+  const onReached = (reached: unknown) => {
+    if (reached === goal) finish("reached");
+  };
+  const onUpdate = ({ status, path }: { status: PathStatus; path: unknown[] }) => {
+    searching = status === "partial" && path.length === 0;
+    if (path.length === 0 && status !== "partial") finish(status);
+    else if (status === "noPath") end.reject(new Error("No path to the goal!"));
+    else if (status === "timeout") end.reject(new Error("Took to long to decide path to goal!"));
+  };
+  const onStop = () => end.reject(new Error("Path was stopped before it could be completed! Thus, the desired goal was not reached."));
+  const onGoal = (next: unknown) => {
+    if (next !== goal) end.reject(new Error("The goal was changed before it could be completed!"));
+  };
+  bot.on("goal_reached", onReached);
+  bot.on("path_update", onUpdate);
+  bot.on("path_stop", onStop);
+  bot.on("goal_updated", onGoal);
+  return {
+    afterGoto: () => (outcome === undefined && searching ? end.promise : Promise.resolve(outcome)),
+    stop: () => {
+      bot.off("goal_reached", onReached);
+      bot.off("path_update", onUpdate);
+      bot.off("path_stop", onStop);
+      bot.off("goal_updated", onGoal);
+    },
+  };
+}
+
 /**
  * Runs a pathfinder goal with a time limit and a progress watchdog. When the executor keeps resetting
  * with "stuck", retries without diagonal moves: the planner allows diagonal steps up out of a pit that
  * clip a tall block at the corner, and the executor then replans the same failing step forever.
- * `goto` also resolves, without the goal reached, when the pathfinder finds an empty path; the player's
- * position is then checked against the goal.
+ * When the pathfinder ends without reporting the goal reached (an empty path: no way closer), the
+ * player's position is checked against the goal. Pathfinding is stopped on every failure.
  */
 async function pathTo(ctx: RoutineContext, goal: InstanceType<typeof goals.GoalNear>, timeoutMs: number): Promise<void> {
   const { bot } = ctx;
   const normal = bot.pathfinder.movements;
   const target = new Vec3(goal.x, goal.y, goal.z);
   let stuck = 0;
-  let arrived = false;
   const onReset = (reason: string) => {
     if (reason !== "stuck" || ++stuck !== STUCK_RESETS_BEFORE_FALLBACK) return;
     const straight = new Movements(bot);
@@ -64,25 +110,27 @@ async function pathTo(ctx: RoutineContext, goal: InstanceType<typeof goals.GoalN
     ctx.log("pathfinding: stuck on a diagonal step; retrying without diagonal moves");
     bot.pathfinder.setMovements(straight);
   };
-  const onArrived = (reached: unknown) => {
-    if (reached === goal) arrived = true;
-  };
   bot.on("path_reset", onReset);
-  bot.on("goal_reached", onArrived);
+  const end = watchPathEnd(bot, goal);
   const watch = watchProgress(bot, target);
+  let ended: "reached" | PathStatus | undefined;
   try {
-    await within(timeoutMs, "pathfinding", Promise.race([bot.pathfinder.goto(goal), watch.stalled]), () => bot.pathfinder.setGoal(null));
+    const walk = bot.pathfinder.goto(goal).then(end.afterGoto);
+    ended = await within(timeoutMs, "pathfinding", Promise.race([walk, watch.stalled]), () => bot.pathfinder.setGoal(null));
   } finally {
     watch.stop();
-    bot.off("goal_reached", onArrived);
+    end.stop();
     bot.off("path_reset", onReset);
     if (bot.pathfinder.movements !== normal) bot.pathfinder.setMovements(normal);
+    if (ended !== "reached" && bot.pathfinder.goal === goal) bot.pathfinder.setGoal(null);
   }
-  if (arrived) return;
+  if (ended === "reached") return;
   const feet = bot.entity.position.floored();
-  // As the pathfinder's own goal check: standing on a half-height block also counts the cell above the feet.
+  // As the pathfinder's own end-of-path check, the cell above the feet also counts (for standing on a half-height block).
   const near = (p: Vec3) => p.distanceSquared(target) <= goal.rangeSq;
-  if (!near(feet) && !near(feet.offset(0, 1, 0))) throw new Error(`could not reach ${target}: stopped at ${feet}, ${feet.distanceTo(target).toFixed(1)} blocks away`);
+  if (near(feet) || near(feet.offset(0, 1, 0))) return;
+  const why = ended === "timeout" ? "the path search ran out of time" : "the pathfinder found no way closer from here";
+  throw new Error(`could not reach ${target}: stopped at ${feet}, ${feet.distanceTo(target).toFixed(1)} blocks away; ${why}`);
 }
 
 /** Walks within `range` blocks of `target` and returns where the player then stands. */
@@ -94,7 +142,7 @@ async function walkTo(ctx: RoutineContext, target: Vec3, range: number, timeoutM
 export const to = defineRoutine(
   {
     name: "move.to",
-    description: "Walk within `range` blocks of `position` ({x,y,z} or [x,y,z]) and stop. Throws, after stopping pathfinding, when `timeoutMs` passes, when 12 s go by with no progress (no movement, digging, or nearby block change: 'stuck at ...'), or when the walk ends farther than `range` ('could not reach ...'). Returns where the player then stands.",
+    description: "Walk within `range` blocks of `position` ({x,y,z} or [x,y,z]) and stop; the feet, or the block above them, within `range` counts as there. Throws, after stopping pathfinding, when `timeoutMs` passes, when 12 s go by with no progress (no movement, digging, or nearby block change: 'stuck at ...'), or when the pathfinder ends with no way within `range` ('could not reach ...'). Returns where the player stands once stopped.",
     args: z.object({
       position: Position,
       range: z.number().min(0).default(1),

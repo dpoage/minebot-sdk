@@ -134,4 +134,36 @@ describe("move.to end-of-walk distance", () => {
     };
     assert.deepEqual(await h.run(move.to, { position: [10, 64, 0], range: 0 }), { x: 11, y: 64, z: 0 });
   });
+
+  /**
+   * A harness whose pathfinder behaves as the plugin's `goto` does when A* has only a partial result yet: it sets
+   * the goal, reports an empty 'partial' path, and resolves. The search goes on; `then` plays its end on a later turn.
+   */
+  function searchingHarness(then: (h: Harness, goal: unknown) => void) {
+    const h = createHarness();
+    const pathfinder = h.bot.pathfinder as unknown as { goal: unknown; goto: (goal: unknown) => Promise<void> };
+    pathfinder.goto = async (goal) => {
+      pathfinder.goal = goal;
+      h.bot.emit("path_update", { status: "partial", path: [] } as never);
+      setImmediate(() => then(h, goal));
+    };
+    return { h, pathfinder };
+  }
+
+  it("waits past an empty path found while the search goes on, and resolves when the walk then arrives", async () => {
+    const { h } = searchingHarness((h, goal) => {
+      h.teleport([10.5, 64, 0.5]);
+      h.bot.emit("goal_reached", goal as never);
+    });
+    assert.deepEqual(await h.run(move.to, { position: [10, 64, 0], range: 1 }), { x: 10, y: 64, z: 0 });
+  });
+
+  it("throws once the search ends with no way closer, naming why, and stops pathfinding first", async () => {
+    const { h, pathfinder } = searchingHarness((h) => h.bot.emit("path_update", { status: "timeout", path: [] } as never));
+    await assert.rejects(
+      h.run(move.to, { position: [10, 64, 0], range: 1 }),
+      /^Error: could not reach \(10, 64, 0\): stopped at \(0, 64, 0\), 10\.0 blocks away; the path search ran out of time$/,
+    );
+    assert.equal(pathfinder.goal, null, "the goal was cleared");
+  });
 });
