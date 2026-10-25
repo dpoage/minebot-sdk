@@ -518,7 +518,7 @@ export const book = defineRoutine(
     const chosen = which === "first" ? first : books.find(({ stack }) => (bookContents(stack)?.pages ?? []).every((text) => text === ""));
     if (!chosen) {
       throw new Error(
-        `no blank book and quill to write in: all ${books.length} writable_book${books.length === 1 ? "" : "s"} in the inventory hold writing, and book: "new" never overwrites writing. Craft a new book and quill (craft.craft: book + ink_sac + feather) and call again, or pass book: "first" to rewrite one — "first" would rewrite ${bookLabel(first.stack)} in slot ${first.slot} (slot order: the main inventory grid, then the hotbar; the off-hand is not searched).`,
+        `no blank book and quill to write in: ${books.length === 1 ? "the only writable_book in the inventory holds" : `all ${books.length} writable_books in the inventory hold`} writing, and book: "new" never overwrites writing. Craft a new book and quill (craft.craft: book + ink_sac + feather) and call again, or pass book: "first" to rewrite one — "first" would rewrite ${bookLabel(first.stack)} in slot ${first.slot} (slot order: the main inventory grid, then the hotbar; the off-hand is not searched).`,
       );
     }
     const { stack, slot } = chosen;

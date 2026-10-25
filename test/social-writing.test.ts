@@ -481,7 +481,7 @@ describe("social.book: the default writes a blank book and never changes one tha
 
   it("an unnamed book that holds writing is named as unnamed, with its page count", async () => {
     const { h } = bookWorld({ holds: ["only page"] });
-    await assert.rejects(h.run(social.book, { pages: ["p"] }), /would rewrite the unnamed book and quill \(1 page\) in slot 10/);
+    await assert.rejects(h.run(social.book, { pages: ["p"] }), /the only writable_book in the inventory holds writing.*would rewrite the unnamed book and quill \(1 page\) in slot 10/);
   });
 
   it("a book and quill in the off-hand is not searched", async () => {
