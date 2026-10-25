@@ -6,7 +6,7 @@
     "routines": [
       {
         "name": "to",
-        "description": "Walk within `range` blocks of `position` ({x,y,z} or [x,y,z]) and stop. Gives up (and stops pathfinding) after `timeoutMs`. Returns where the player then stands.",
+        "description": "Walk within `range` blocks of `position` ({x,y,z} or [x,y,z]) and stop; the feet, or the block above them, within `range` counts as there. Throws, after stopping pathfinding, when `timeoutMs` passes, when 12 s go by with no progress (no movement, digging, or nearby block change: 'stuck at ...'), or when the pathfinder ends without a way within `range`, finding none or running out of search time ('could not reach ...'). Returns where the player stands once stopped.",
         "args": {
           "$schema": "https://json-schema.org/draft/2020-12/schema",
           "type": "object",
@@ -313,7 +313,7 @@
     "routines": [
       {
         "name": "place",
-        "description": "Place one block of `item` at `at` ({x,y,z} or [x,y,z]), walking close and digging out a different solid block first. Needs a solid neighbor to place against. Returns false if the block was already there, true otherwise.",
+        "description": "Place one block of `item` at `at` ({x,y,z} or [x,y,z]), digging out a different solid block first. Needs a solid neighbor to place against; it walks closer only when no neighbor's face is within 5 blocks of the eyes. It prefers a face on a plain block, and sneaks when it places against a block like a crafting table or chest, so no window opens. The bot steps out of the cell first for a block with a collision box; nothing is refused up front for other bodies. Throws, naming the cause, when the block did not end up in every cell it needs: a creature, player, boat or minecart in the way, a door's cell above or a bed's cell ahead not free. Returns false if the block was already there, true once it is in place (a torch or sign that went on a wall counts).",
         "args": {
           "$schema": "https://json-schema.org/draft/2020-12/schema",
           "type": "object",
@@ -499,7 +499,7 @@
     "routines": [
       {
         "name": "craft",
-        "description": "Craft at least `count` (default 1) more of `item` from the inventory. A recipe that needs a crafting table uses one within 4 blocks, and the call fails when there is none. Returns how many were made.",
+        "description": "Craft at least `count` (default 1) more of `item` from the inventory. A recipe that needs a crafting table uses one within 4 blocks, and the call fails when there is none. Returns how many the inventory gained once the result settled, and fails when that is none: when the inventory has no room for the result, the error says it fell at the bot's feet and how to recover it, and otherwise the error names the recipe's inputs.",
         "args": {
           "$schema": "https://json-schema.org/draft/2020-12/schema",
           "type": "object",
@@ -2083,6 +2083,160 @@
     ]
   },
   {
+    "name": "trade",
+    "description": "List and buy the offers of the nearest villager or wandering trader: walk to it, open its trade window, read its offers or trade, and say what the inventory gained and lost.",
+    "uses": [
+      "move"
+    ],
+    "routines": [
+      {
+        "name": "offers",
+        "description": "Walk to within 2 blocks of the nearest villager or wandering trader within `radius` (default 8), read its offers, and close the window. Returns [{ index, give: [{ item, count }], get: { item, count }, uses, maxUses, disabled }]: `give` is one or two inputs, with the count the merchant charges you now (demand and reputation included), `get` is what you receive, and `disabled` is true when the offer is sold out or switched off by the merchant. Fails when there is no merchant within `radius`, or the nearest opens no window (a nitwit, a baby, or a villager without a profession).",
+        "args": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "radius": {
+              "default": 8,
+              "type": "number",
+              "exclusiveMinimum": 0
+            }
+          }
+        },
+        "returns": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "index": {
+                "type": "number"
+              },
+              "give": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "item": {
+                      "type": "string"
+                    },
+                    "count": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "item",
+                    "count"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "get": {
+                "type": "object",
+                "properties": {
+                  "item": {
+                    "type": "string"
+                  },
+                  "count": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "item",
+                  "count"
+                ],
+                "additionalProperties": false
+              },
+              "uses": {
+                "type": "number"
+              },
+              "maxUses": {
+                "type": "number"
+              },
+              "disabled": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "index",
+              "give",
+              "get",
+              "uses",
+              "maxUses",
+              "disabled"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      {
+        "name": "buy",
+        "description": "Walk to within 2 blocks of the nearest villager or wandering trader within `radius` (default 8) and make offer number `index` (from trade.offers) up to `times` times (default 1). Returns { traded, gave: { item: count }, got: { item: count }, shortfall? } measured from the inventory, so it is what actually changed. It makes only the trades whose output and leftover inputs fit in the inventory, so nothing is dropped. When fewer than `times` trades happened (the offer ran out of uses, the inventory ran short of inputs or of room, the merchant closed the window), `shortfall` names why; a window the server closes part way still reports the trades it made, with the inventory as the server has it. Fails, naming the cause and the counts, when no trade happens (the offer is sold out, an input is missing, the inventory has no room for the output, there is no such offer), and when the inventory changed by anything other than whole trades.",
+        "args": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "index": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "times": {
+              "default": 1,
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            },
+            "radius": {
+              "default": 8,
+              "type": "number",
+              "exclusiveMinimum": 0
+            }
+          },
+          "required": [
+            "index"
+          ]
+        },
+        "returns": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "traded": {
+              "type": "number"
+            },
+            "gave": {
+              "type": "object",
+              "propertyNames": {
+                "type": "string"
+              },
+              "additionalProperties": {
+                "type": "number"
+              }
+            },
+            "got": {
+              "type": "object",
+              "propertyNames": {
+                "type": "string"
+              },
+              "additionalProperties": {
+                "type": "number"
+              }
+            },
+            "shortfall": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "traded",
+            "gave",
+            "got"
+          ],
+          "additionalProperties": false
+        }
+      }
+    ]
+  },
+  {
     "name": "gatherer",
     "description": "Collect resources: walk to matching blocks, dig them with the right tool, pick up the drops.",
     "uses": [
@@ -2162,7 +2316,7 @@
       },
       {
         "name": "collectDrops",
-        "description": "Walk over dropped items within `radius` (default 8) to pick them up. Returns how many drops it tried to reach.",
+        "description": "Walk over each position within `radius` (default 8) where dropped items lie, once, to pick them up; a drop still falling gets up to 2 s to land, and one still in mid-air then is left out. Returns { reached, unreachable }: how many such positions it reached (several stacks in one block count once) and the positions it could not reach.",
         "args": {
           "$schema": "https://json-schema.org/draft/2020-12/schema",
           "type": "object",
@@ -2176,7 +2330,40 @@
         },
         "returns": {
           "$schema": "https://json-schema.org/draft/2020-12/schema",
-          "type": "number"
+          "type": "object",
+          "properties": {
+            "reached": {
+              "type": "number"
+            },
+            "unreachable": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "x": {
+                    "type": "number"
+                  },
+                  "y": {
+                    "type": "number"
+                  },
+                  "z": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "x",
+                  "y",
+                  "z"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": [
+            "reached",
+            "unreachable"
+          ],
+          "additionalProperties": false
         }
       }
     ]
@@ -2196,7 +2383,7 @@
     "routines": [
       {
         "name": "make",
-        "description": "Make sure the inventory holds at least `count` (default 1) of `item`, crafting intermediate items (planks, sticks, tables) as needed and finding or placing a crafting table. An item that a furnace makes (iron_ingot, glass, stone, charcoal, cooked food) is smelted from the matching input the inventory holds, at a furnace within 32 blocks, else one placed from the inventory, else one crafted from 8 cobblestone; fuel is coal, charcoal, planks, or logs from the inventory. Fails with the missing raw material, which you must gather. Returns the count held.",
+        "description": "Make sure the inventory holds at least `count` (default 1) of `item`, crafting intermediate items (planks, sticks, tables) as needed and finding or placing a crafting table. An item that a furnace makes (iron_ingot, glass, stone, charcoal, cooked food) is smelted from the matching input the inventory holds, at a furnace within 32 blocks, else one placed from the inventory, else one crafted from 8 cobblestone; fuel is coal, charcoal, planks, or logs from the inventory. Fails with the missing raw material, which you must gather, or, when a crafted item found no room in the inventory, with where it fell. Returns the count held.",
         "args": {
           "$schema": "https://json-schema.org/draft/2020-12/schema",
           "type": "object",
@@ -2225,7 +2412,7 @@
   },
   {
     "name": "builder",
-    "description": "Place blocks and build structures from blueprints. Blueprints: { palette: { '#': 'oak_planks' }, layers: [layer, ...] }; layers go bottom to top, rows run along +z, characters along +x, '.' or space skips.",
+    "description": "Place blocks and build structures from blueprints, and make blueprints. Blueprints: { palette: { '#': 'oak_planks' }, layers: [layer, ...] }; layers go bottom to top, rows run along +z, characters along +x, '.' or space skips; the palette value 'air' digs the cell out. line, arc, fill, box and combine return a blueprint with its origin in world coordinates, which build and check take as they are.",
     "uses": [
       "move",
       "sense",
@@ -2236,7 +2423,7 @@
     "routines": [
       {
         "name": "materials",
-        "description": "Block counts the `blueprint` needs, e.g. { oak_planks: 24 }.",
+        "description": "Block counts the `blueprint` needs, e.g. { oak_planks: 24 }. 'air' cells need none.",
         "args": {
           "$schema": "https://json-schema.org/draft/2020-12/schema",
           "type": "object",
@@ -2297,7 +2484,7 @@
       },
       {
         "name": "build",
-        "description": "Build the `blueprint` with its first layer's first row's first character at `origin`. Skips blocks already correct, places bottom-up. Fails up front on missing materials unless `partial`. Returns { placed, alreadyCorrect, failed }.",
+        "description": "Build the `blueprint` with its first layer's first row's first character at `origin`; the result of line, arc, fill, box or combine is both at once: `await builder.build(ctx, await builder.box(ctx, {...}))`. Skips cells already correct. Digs out 'air' cells first, top down, and again when sand or gravel falls back in (they count as placed); a cell the bot cannot get within 4.5 blocks of the eyes to dig is failed, naming where the walk ended; then places blocks bottom-up, each once something solid touches it. Before returning it reads every 'air' cell again, after water or lava beside one has had time to flow: a cell that sand, gravel or a fluid filled is in failed, naming it. Fails up front on missing materials unless `partial`. Returns { placed, alreadyCorrect, failed }, each cell counted in exactly one.",
         "args": {
           "$schema": "https://json-schema.org/draft/2020-12/schema",
           "type": "object",
@@ -2451,7 +2638,7 @@
       },
       {
         "name": "check",
-        "description": "Compare the world with the `blueprint` at `origin`: { correct, total, mismatches (first 20) }.",
+        "description": "Compare the world with the `blueprint` at `origin` (a shape's result is both): { correct, total, mismatches (first 20) }. An 'air' cell is correct when it holds air or cave_air; a block's cell also when it holds the form placing that block gives against a wall (wall_torch for torch, oak_wall_sign for oak_sign) or bamboo_sapling for bamboo.",
         "args": {
           "$schema": "https://json-schema.org/draft/2020-12/schema",
           "type": "object",
@@ -2595,6 +2782,890 @@
             "correct",
             "total",
             "mismatches"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "line",
+        "description": "A straight one-block line of `block` from `from` to `to` ({x,y,z} or [x,y,z]), ends included: a blueprint with its origin in world coordinates, which builder.build and builder.check take as they are. The same cells whichever end is `from`.",
+        "args": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "from": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "x": {
+                      "type": "number"
+                    },
+                    "y": {
+                      "type": "number"
+                    },
+                    "z": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "x",
+                    "y",
+                    "z"
+                  ]
+                },
+                {
+                  "type": "array",
+                  "prefixItems": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "number"
+                    }
+                  ],
+                  "items": false,
+                  "minItems": 3,
+                  "maxItems": 3
+                }
+              ]
+            },
+            "to": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "x": {
+                      "type": "number"
+                    },
+                    "y": {
+                      "type": "number"
+                    },
+                    "z": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "x",
+                    "y",
+                    "z"
+                  ]
+                },
+                {
+                  "type": "array",
+                  "prefixItems": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "number"
+                    }
+                  ],
+                  "items": false,
+                  "minItems": 3,
+                  "maxItems": 3
+                }
+              ]
+            },
+            "block": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "from",
+            "to",
+            "block"
+          ]
+        },
+        "returns": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "origin": {
+              "type": "object",
+              "properties": {
+                "x": {
+                  "type": "number"
+                },
+                "y": {
+                  "type": "number"
+                },
+                "z": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "x",
+                "y",
+                "z"
+              ],
+              "additionalProperties": false
+            },
+            "blueprint": {
+              "type": "object",
+              "properties": {
+                "palette": {
+                  "type": "object",
+                  "propertyNames": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1
+                  },
+                  "additionalProperties": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "layers": {
+                  "minItems": 1,
+                  "type": "array",
+                  "items": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      }
+                    ]
+                  }
+                }
+              },
+              "required": [
+                "palette",
+                "layers"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "origin",
+            "blueprint"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "arc",
+        "description": "An arch of `block` from `from` to `to` ({x,y,z} or [x,y,z]), ends included: the parabola in the vertical plane through both that passes through the point `rise` blocks above their midpoint (default: half the horizontal distance, rounded; 0 is a straight line, negative sags). A blueprint with its origin in world coordinates, which builder.build and builder.check take as they are. The same cells whichever end is `from`. `from` and `to` need different x or z unless rise is 0.",
+        "args": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "from": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "x": {
+                      "type": "number"
+                    },
+                    "y": {
+                      "type": "number"
+                    },
+                    "z": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "x",
+                    "y",
+                    "z"
+                  ]
+                },
+                {
+                  "type": "array",
+                  "prefixItems": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "number"
+                    }
+                  ],
+                  "items": false,
+                  "minItems": 3,
+                  "maxItems": 3
+                }
+              ]
+            },
+            "to": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "x": {
+                      "type": "number"
+                    },
+                    "y": {
+                      "type": "number"
+                    },
+                    "z": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "x",
+                    "y",
+                    "z"
+                  ]
+                },
+                {
+                  "type": "array",
+                  "prefixItems": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "number"
+                    }
+                  ],
+                  "items": false,
+                  "minItems": 3,
+                  "maxItems": 3
+                }
+              ]
+            },
+            "rise": {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            },
+            "block": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "from",
+            "to",
+            "block"
+          ]
+        },
+        "returns": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "origin": {
+              "type": "object",
+              "properties": {
+                "x": {
+                  "type": "number"
+                },
+                "y": {
+                  "type": "number"
+                },
+                "z": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "x",
+                "y",
+                "z"
+              ],
+              "additionalProperties": false
+            },
+            "blueprint": {
+              "type": "object",
+              "properties": {
+                "palette": {
+                  "type": "object",
+                  "propertyNames": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1
+                  },
+                  "additionalProperties": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "layers": {
+                  "minItems": 1,
+                  "type": "array",
+                  "items": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      }
+                    ]
+                  }
+                }
+              },
+              "required": [
+                "palette",
+                "layers"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "origin",
+            "blueprint"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "fill",
+        "description": "Every cell of the cuboid between corners `from` and `to` ({x,y,z} or [x,y,z], any order, both included) set to `block`; 'air' clears the volume. A blueprint with its origin in world coordinates, which builder.build and builder.check take as they are.",
+        "args": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "from": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "x": {
+                      "type": "number"
+                    },
+                    "y": {
+                      "type": "number"
+                    },
+                    "z": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "x",
+                    "y",
+                    "z"
+                  ]
+                },
+                {
+                  "type": "array",
+                  "prefixItems": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "number"
+                    }
+                  ],
+                  "items": false,
+                  "minItems": 3,
+                  "maxItems": 3
+                }
+              ]
+            },
+            "to": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "x": {
+                      "type": "number"
+                    },
+                    "y": {
+                      "type": "number"
+                    },
+                    "z": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "x",
+                    "y",
+                    "z"
+                  ]
+                },
+                {
+                  "type": "array",
+                  "prefixItems": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "number"
+                    }
+                  ],
+                  "items": false,
+                  "minItems": 3,
+                  "maxItems": 3
+                }
+              ]
+            },
+            "block": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "from",
+            "to",
+            "block"
+          ]
+        },
+        "returns": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "origin": {
+              "type": "object",
+              "properties": {
+                "x": {
+                  "type": "number"
+                },
+                "y": {
+                  "type": "number"
+                },
+                "z": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "x",
+                "y",
+                "z"
+              ],
+              "additionalProperties": false
+            },
+            "blueprint": {
+              "type": "object",
+              "properties": {
+                "palette": {
+                  "type": "object",
+                  "propertyNames": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1
+                  },
+                  "additionalProperties": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "layers": {
+                  "minItems": 1,
+                  "type": "array",
+                  "items": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      }
+                    ]
+                  }
+                }
+              },
+              "required": [
+                "palette",
+                "layers"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "origin",
+            "blueprint"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "box",
+        "description": "A hollow room between corners `from` and `to` ({x,y,z} or [x,y,z], any order, both included): `wall` on the four sides, the inside cleared ('air'), `floor` on the bottom layer and `roof` on the top layer when given (otherwise those layers are open and part of the inside). Needs 2 free layers inside, so with a floor and a roof it must be 4 blocks high. `door`: { side: 'north' (-z) | 'south' (+z) | 'east' (+x) | 'west' (-x), block? } cuts a doorway in the middle of that side, 2 high from the floor, which needs the side to be 3 blocks long: open air, or `block` (e.g. 'spruce_door') in its lower cell. A blueprint with its origin in world coordinates, which builder.build and builder.check take as they are.",
+        "args": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "from": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "x": {
+                      "type": "number"
+                    },
+                    "y": {
+                      "type": "number"
+                    },
+                    "z": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "x",
+                    "y",
+                    "z"
+                  ]
+                },
+                {
+                  "type": "array",
+                  "prefixItems": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "number"
+                    }
+                  ],
+                  "items": false,
+                  "minItems": 3,
+                  "maxItems": 3
+                }
+              ]
+            },
+            "to": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "x": {
+                      "type": "number"
+                    },
+                    "y": {
+                      "type": "number"
+                    },
+                    "z": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "x",
+                    "y",
+                    "z"
+                  ]
+                },
+                {
+                  "type": "array",
+                  "prefixItems": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "number"
+                    }
+                  ],
+                  "items": false,
+                  "minItems": 3,
+                  "maxItems": 3
+                }
+              ]
+            },
+            "wall": {
+              "type": "string",
+              "minLength": 1
+            },
+            "floor": {
+              "type": "string",
+              "minLength": 1
+            },
+            "roof": {
+              "type": "string",
+              "minLength": 1
+            },
+            "door": {
+              "type": "object",
+              "properties": {
+                "side": {
+                  "type": "string",
+                  "enum": [
+                    "north",
+                    "south",
+                    "east",
+                    "west"
+                  ]
+                },
+                "block": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "side"
+              ]
+            }
+          },
+          "required": [
+            "from",
+            "to",
+            "wall"
+          ]
+        },
+        "returns": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "origin": {
+              "type": "object",
+              "properties": {
+                "x": {
+                  "type": "number"
+                },
+                "y": {
+                  "type": "number"
+                },
+                "z": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "x",
+                "y",
+                "z"
+              ],
+              "additionalProperties": false
+            },
+            "blueprint": {
+              "type": "object",
+              "properties": {
+                "palette": {
+                  "type": "object",
+                  "propertyNames": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1
+                  },
+                  "additionalProperties": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "layers": {
+                  "minItems": 1,
+                  "type": "array",
+                  "items": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      }
+                    ]
+                  }
+                }
+              },
+              "required": [
+                "palette",
+                "layers"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "origin",
+            "blueprint"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "combine",
+        "description": "Merge `parts`, each a { blueprint, origin } (what line, arc, fill, box and builder-style blueprints give) into one blueprint with its origin in world coordinates; where parts overlap the later part wins, so a later 'air' cuts a doorway through an earlier wall.",
+        "args": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "parts": {
+              "minItems": 1,
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "blueprint": {
+                    "type": "object",
+                    "properties": {
+                      "palette": {
+                        "type": "object",
+                        "propertyNames": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 1
+                        },
+                        "additionalProperties": {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      },
+                      "layers": {
+                        "minItems": 1,
+                        "type": "array",
+                        "items": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    },
+                    "required": [
+                      "palette",
+                      "layers"
+                    ]
+                  },
+                  "origin": {
+                    "anyOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "x": {
+                            "type": "number"
+                          },
+                          "y": {
+                            "type": "number"
+                          },
+                          "z": {
+                            "type": "number"
+                          }
+                        },
+                        "required": [
+                          "x",
+                          "y",
+                          "z"
+                        ]
+                      },
+                      {
+                        "type": "array",
+                        "prefixItems": [
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "number"
+                          }
+                        ],
+                        "items": false,
+                        "minItems": 3,
+                        "maxItems": 3
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "blueprint",
+                  "origin"
+                ]
+              }
+            }
+          },
+          "required": [
+            "parts"
+          ]
+        },
+        "returns": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "origin": {
+              "type": "object",
+              "properties": {
+                "x": {
+                  "type": "number"
+                },
+                "y": {
+                  "type": "number"
+                },
+                "z": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "x",
+                "y",
+                "z"
+              ],
+              "additionalProperties": false
+            },
+            "blueprint": {
+              "type": "object",
+              "properties": {
+                "palette": {
+                  "type": "object",
+                  "propertyNames": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1
+                  },
+                  "additionalProperties": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "layers": {
+                  "minItems": 1,
+                  "type": "array",
+                  "items": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      }
+                    ]
+                  }
+                }
+              },
+              "required": [
+                "palette",
+                "layers"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "origin",
+            "blueprint"
           ],
           "additionalProperties": false
         }

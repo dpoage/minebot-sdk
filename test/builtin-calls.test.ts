@@ -86,7 +86,7 @@ describe("POST /call of a built-in routine", () => {
     await using({ stateFiles: { "routines/arm.ts": ARM } }, async (body) => {
       await body.ok("POST", "/bind", { kind: "action", name: "arm", routine: "arm" });
       assert.equal(runOf(await body.request("POST", "/call", { name: "arm" })).status, "ok");
-      const run = runOf(await body.request("POST", "/call", { name: "move.to", args: { position: [9, 70, 9] } }));
+      const run = runOf(await body.request("POST", "/call", { name: "move.to", args: { position: [2, 64, 2] } }));
       assert.deepEqual([run.status, run.result], ["ok", { x: 1, y: 64, z: 2 }]);
       assert.deepEqual(runOf(await body.request("POST", "/call", { name: "inventory.list" })).result, {});
       const failed = runOf(await body.request("POST", "/call", { name: "move.to", args: { position: "nowhere" } }));
@@ -98,7 +98,7 @@ describe("POST /call of a built-in routine", () => {
   it("answers 404 naming every dotted name that is not an offered built-in routine, and no run happens", async () => {
     await using({ init: { builtins: ["gatherer"] } }, async (body) => {
       const withheld = BUILTIN_MODULES.filter((module) => !["move", "sense", "dig", "inventory", "items", "gatherer"].includes(module.name));
-      assert.equal(withheld.length, 12);
+      assert.equal(withheld.length, 13);
       for (const name of [...withheld.flatMap((module) => Object.keys(module.routines).map((routine) => `${module.name}.${routine}`)), "move.nope", "nope.to", "move.to.again", "move.constructor", "Move.to"]) {
         const answer = await body.request("POST", "/call", { name });
         assert.deepEqual([answer.status, answer.body], [404, { error: `no built-in routine "${name}"` }], name);

@@ -26,7 +26,7 @@ export { biomeAt };
 export { isHostile };
 export { burnTicks, pickFuel, SMELT_TICKS, smeltInputs, smeltOutput, withoutReserved };
 export { within, type Within };
-export type { Bot, Chest, Furnace } from "mineflayer";
+export type { Bot, Chest, Furnace, Villager } from "mineflayer";
 export type { Block } from "prismarine-block";
 export type { Item } from "prismarine-item";
 export type { Entity } from "prismarine-entity";
