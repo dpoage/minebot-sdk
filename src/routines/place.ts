@@ -8,6 +8,8 @@ export const uses = [] as const;
 const REACH = 4.5;
 /** The server accepts faces somewhat farther than `REACH` (5.3 and 5.6 were accepted, 6.2 refused); the bot walks only when no face is this close. */
 const MAX_REACH = 5.0;
+/** The server takes a placement against a block whose box is this close to the eyes (`REACH` plus 1 of slack), and ignores one farther. */
+const SERVER_REACH = 5.5;
 const EYE_HEIGHT = 1.62;
 /** Longest wait for the server's block updates to show a placement: the second half of a door arrives after the first. */
 const SETTLE_MS = 1_000;
@@ -228,6 +230,7 @@ async function placeAt(ctx: RoutineContext, pos: Vec3, item: string): Promise<bo
   const nothingSolid = `nothing solid next to ${pos} to place against. Place a block beside, below, or above it first.`;
   let faces = facesAround(ctx, pos);
   if (faces.length === 0) throw new Error(nothingSolid);
+  let walkEnd: Vec3 | null = null;
   if (usable(faces).length === 0) {
     const far = faces.reduce((a, b) => (b.distance < a.distance ? b : a));
     try {
@@ -238,6 +241,8 @@ async function placeAt(ctx: RoutineContext, pos: Vec3, item: string): Promise<bo
         `could not walk close enough to place ${name} at ${pos}: ${cause}. The nearest face to place against is ${describeFace(far)}; it has to be within ${MAX_REACH}. Walk to a spot next to ${pos} first (move.to), building a way there if there is none, and call again.`,
       );
     }
+    // The pathfinder can end a walk where it began, without an error, when it finds no way closer.
+    walkEnd = bot.entity.position.floored();
     faces = facesAround(ctx, pos);
   }
   // Clear anything but air and fluids, including thin blocks like leaf_litter or short_grass
@@ -252,8 +257,18 @@ async function placeAt(ctx: RoutineContext, pos: Vec3, item: string): Promise<bo
     faces = facesAround(ctx, pos);
   }
   if (faces.length === 0) throw new Error(nothingSolid);
-  // The server accepts some faces past MAX_REACH (one 5.6 away was), so with none closer the nearest is still tried.
+  // With no face within MAX_REACH the nearest is still tried, if its block is within SERVER_REACH.
   const [face = faces.reduce((a, b) => (b.distance < a.distance ? b : a))] = usable(faces);
+  if (face.distance > MAX_REACH) {
+    const eyes = bot.entity.position.offset(0, EYE_HEIGHT, 0);
+    const box = face.reference.position;
+    const closest = new Vec3(Math.min(Math.max(eyes.x, box.x), box.x + 1), Math.min(Math.max(eyes.y, box.y), box.y + 1), Math.min(Math.max(eyes.z, box.z), box.z + 1));
+    if (eyes.distanceTo(closest) > SERVER_REACH) {
+      throw new Error(
+        `no block next to ${pos} has a face within ${MAX_REACH} blocks of the bot's eyes${walkEnd ? `, and the walk toward it ended at ${walkEnd}` : ""}: the nearest is ${describeFace(face)}. Walk next to ${pos} (move.to), building a way there if there is none, and call again.`,
+      );
+    }
+  }
   const tooFar = face.distance > MAX_REACH ? ` That face is more than ${MAX_REACH} blocks from the eyes: move next to ${pos} (move.to) and call again.` : "";
 
   const stack = bot.inventory.items().find((i) => i.name === name);

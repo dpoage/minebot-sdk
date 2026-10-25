@@ -206,9 +206,10 @@ describe("place.place: the face it places against", () => {
     assert.equal(h.count("cobblestone"), 2);
   });
 
-  it("still tries the nearest face when walking does not bring one within 5 blocks: the server takes some farther ones", async () => {
-    const h = sky([{ name: "stone", at: [0, 59, 0] }]);
-    // A walk that ends where it began: the pathfinder stopped early.
+  // From (2.7, 64.62, 0.5) the top face of the stone below the target is 5.1 blocks from the eyes, the stone's box 4.9.
+  it("still tries the nearest face when walking does not bring one within 5 blocks, if the server could take it", async () => {
+    const h = sky([{ name: "stone", at: [0, 59, 0] }], [2.7, 63, 0.5]);
+    // A walk that ends where it began: the pathfinder found no way closer.
     h.bot.pathfinder.goto = async () => {};
     const seen = serverPlaces(h, "cobblestone");
     assert.equal(await h.run(place.place, { at: [0, 60, 0], item: "cobblestone" }), true);
@@ -216,13 +217,25 @@ describe("place.place: the face it places against", () => {
   });
 
   it("says the face was more than 5 blocks away, and to move next to the target, when the server refuses it", async () => {
-    const h = sky([{ name: "stone", at: [0, 59, 0] }]);
+    const h = sky([{ name: "stone", at: [0, 59, 0] }], [2.7, 63, 0.5]);
     h.bot.pathfinder.goto = async () => {};
     await assert.rejects(
       h.run(place.place, { at: [0, 60, 0], item: "cobblestone" }),
-      /^Error: could not place cobblestone at \(0, 60, 0\) against stone at \(0, 59, 0\), its top face, 5\.6 blocks from the eyes: .* That face is more than 5 blocks from the eyes: move next to \(0, 60, 0\) \(move\.to\) and call again\./,
+      /^Error: could not place cobblestone at \(0, 60, 0\) against stone at \(0, 59, 0\), its top face, 5\.1 blocks from the eyes: .* That face is more than 5 blocks from the eyes: move next to \(0, 60, 0\) \(move\.to\) and call again\./,
     );
     assert.equal(h.count("cobblestone"), 2);
+  });
+
+  it("sends nothing the server would ignore: past 5.5 from the eyes to the block, it throws naming the walk's end and the nearest face", async () => {
+    // From (0.5, 65.62, 0.5) the stone's top face, straight below, is 5.6 away.
+    const h = sky([{ name: "stone", at: [0, 59, 0] }]);
+    h.bot.pathfinder.goto = async () => {};
+    const seen = spyOnPlacements(h);
+    await assert.rejects(
+      h.run(place.place, { at: [0, 60, 0], item: "cobblestone" }),
+      /^Error: no block next to \(0, 60, 0\) has a face within 5 blocks of the bot's eyes, and the walk toward it ended at \(0, 64, 0\): the nearest is stone at \(0, 59, 0\), its top face, 5\.6 blocks from the eyes\. Walk next to \(0, 60, 0\) \(move\.to\), building a way there if there is none, and call again\./,
+    );
+    assert.deepEqual(seen, []);
   });
 
   it("says so when the cell has no solid neighbor at all", async () => {
