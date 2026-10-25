@@ -2035,6 +2035,160 @@
     ]
   },
   {
+    "name": "trade",
+    "description": "List and buy the offers of the nearest villager or wandering trader: walk to it, open its trade window, read its offers or trade, and say what the inventory gained and lost.",
+    "uses": [
+      "move"
+    ],
+    "routines": [
+      {
+        "name": "offers",
+        "description": "Walk to within 2 blocks of the nearest villager or wandering trader within `radius` (default 8), read its offers, and close the window. Returns [{ index, give: [{ item, count }], get: { item, count }, uses, maxUses, disabled }]: `give` is one or two inputs, with the count the merchant charges you now (demand and reputation included), `get` is what you receive, and `disabled` is true when the offer is sold out or switched off by the merchant. Fails when there is no merchant within `radius`, or the nearest opens no window (a nitwit, a baby, or a villager without a profession).",
+        "args": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "radius": {
+              "default": 8,
+              "type": "number",
+              "exclusiveMinimum": 0
+            }
+          }
+        },
+        "returns": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "index": {
+                "type": "number"
+              },
+              "give": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "item": {
+                      "type": "string"
+                    },
+                    "count": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "item",
+                    "count"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "get": {
+                "type": "object",
+                "properties": {
+                  "item": {
+                    "type": "string"
+                  },
+                  "count": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "item",
+                  "count"
+                ],
+                "additionalProperties": false
+              },
+              "uses": {
+                "type": "number"
+              },
+              "maxUses": {
+                "type": "number"
+              },
+              "disabled": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "index",
+              "give",
+              "get",
+              "uses",
+              "maxUses",
+              "disabled"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      {
+        "name": "buy",
+        "description": "Walk to within 2 blocks of the nearest villager or wandering trader within `radius` (default 8) and make offer number `index` (from trade.offers) up to `times` times (default 1). Returns { traded, gave: { item: count }, got: { item: count }, shortfall? } measured from the inventory, so it is what actually changed. It makes only the trades whose output and leftover inputs fit in the inventory, so nothing is dropped. When fewer than `times` trades happened (the offer ran out of uses, the inventory ran short of inputs or of room, the merchant closed the window), `shortfall` names why; a window the server closes part way still reports the trades it made, with the inventory as the server has it. Fails, naming the cause and the counts, when no trade happens (the offer is sold out, an input is missing, the inventory has no room for the output, there is no such offer), and when the inventory changed by anything other than whole trades.",
+        "args": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "index": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "times": {
+              "default": 1,
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            },
+            "radius": {
+              "default": 8,
+              "type": "number",
+              "exclusiveMinimum": 0
+            }
+          },
+          "required": [
+            "index"
+          ]
+        },
+        "returns": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "traded": {
+              "type": "number"
+            },
+            "gave": {
+              "type": "object",
+              "propertyNames": {
+                "type": "string"
+              },
+              "additionalProperties": {
+                "type": "number"
+              }
+            },
+            "got": {
+              "type": "object",
+              "propertyNames": {
+                "type": "string"
+              },
+              "additionalProperties": {
+                "type": "number"
+              }
+            },
+            "shortfall": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "traded",
+            "gave",
+            "got"
+          ],
+          "additionalProperties": false
+        }
+      }
+    ]
+  },
+  {
     "name": "gatherer",
     "description": "Collect resources: walk to matching blocks, dig them with the right tool, pick up the drops.",
     "uses": [

@@ -98,7 +98,7 @@ describe("POST /call of a built-in routine", () => {
   it("answers 404 naming every dotted name that is not an offered built-in routine, and no run happens", async () => {
     await using({ init: { builtins: ["gatherer"] } }, async (body) => {
       const withheld = BUILTIN_MODULES.filter((module) => !["move", "sense", "dig", "inventory", "items", "gatherer"].includes(module.name));
-      assert.equal(withheld.length, 12);
+      assert.equal(withheld.length, 13);
       for (const name of [...withheld.flatMap((module) => Object.keys(module.routines).map((routine) => `${module.name}.${routine}`)), "move.nope", "nope.to", "move.to.again", "move.constructor", "Move.to"]) {
         const answer = await body.request("POST", "/call", { name });
         assert.deepEqual([answer.status, answer.body], [404, { error: `no built-in routine "${name}"` }], name);

@@ -55,7 +55,7 @@ describe("tier removal", () => {
   it("keeps the modules of the offer and what they use, and deletes every other module file", () => {
     const tree = copyOfTree();
     const all = modulesLeft(tree);
-    assert.equal(all.length, 18);
+    assert.equal(all.length, 19);
     const run = remove(tree, "--bot=agent", "--builtins=gatherer", "--wiki=off", "--no-milestones");
     assert.equal(run.status, 0, run.stderr);
     assert.deepEqual(modulesLeft(tree).sort(), [...GATHERER_CLOSURE].sort());
@@ -70,7 +70,7 @@ describe("tier removal", () => {
     assert.deepEqual(modulesLeft(raw), []);
     const full = copyOfTree();
     assert.equal(remove(full, "--wiki=off").status, 0);
-    assert.equal(modulesLeft(full).length, 18);
+    assert.equal(modulesLeft(full).length, 19);
   });
 
   it("takes the last of a repeated flag, as the body does", () => {
@@ -135,7 +135,7 @@ describe("tier removal", () => {
   it("serves a body that offers everything the pages as they are in the repository", () => {
     const tree = copyOfTree();
     assert.equal(remove(tree).status, 0);
-    assert.equal(modulesLeft(tree).length, 18);
+    assert.equal(modulesLeft(tree).length, 19);
     assertServes(tree, FULL_VIEW);
   });
 
@@ -154,7 +154,7 @@ describe("tier removal", () => {
     for (const flags of [["--builtins=nosuch", "--wiki=off"], ["--builtins=none,gatherer"], ["--wiki=sometimes"], ["--no-such-flag"], ["--builtins=gatherer", "--no-milestones", "--milestones=m.json"]]) {
       const tree = copyOfTree();
       assert.notEqual(remove(tree, ...flags).status, 0, flags.join(" "));
-      assert.equal(modulesLeft(tree).length, 18, `${flags.join(" ")} removed nothing`);
+      assert.equal(modulesLeft(tree).length, 19, `${flags.join(" ")} removed nothing`);
     }
     const notBody = copyOfTree();
     const run = spawnSync(process.execPath, ["--conditions=minebot-sdk:source", path.join(notBody, "bench/tier/remove.ts"), "status", "--wiki=off"], { encoding: "utf8" });
@@ -168,7 +168,7 @@ describe("tier removal", () => {
       const locked = copyOfTree();
       chmodSync(path.join(locked, "src/routines"), 0o555);
       assert.notEqual(remove(locked, "--builtins=none", "--wiki=off").status, 0);
-      assert.equal(modulesLeft(locked).length, 18);
+      assert.equal(modulesLeft(locked).length, 19);
     }
   });
 });
