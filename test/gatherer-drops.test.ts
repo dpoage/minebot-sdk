@@ -5,6 +5,7 @@ import { describe, it } from "node:test";
 import { createHarness, type Harness } from "minebot-sdk/testing";
 import { Vec3 } from "minebot-sdk/routine";
 import * as gatherer from "../src/routines/gatherer.ts";
+import * as items from "../src/routines/items.ts";
 
 const TUCKED = { name: "item", item: "oak_log", at: [5.5, 64.25, 4.5] } as const;
 const ROOF = { name: "stone", from: [5, 65, 4], to: [5, 65, 4] } as const;
@@ -66,7 +67,8 @@ describe("gatherer drops", () => {
   });
 
   it("collectDrops leaves out a drop that still hangs in mid-air after 2 s: no walk, neither reached nor unreachable", async () => {
-    const h = createHarness({ position: [0.5, 64, 0.5], entities: [{ name: "item", item: "oak_log", at: [7.5, 68, 0.5] }] });
+    const h = createHarness({ position: [0.5, 64, 0.5], entities: [{ name: "item", item: "oak_log", at: [3.5, 68, 0.5] }] });
+    assert.deepEqual(await h.run(items.drops, {}), [{ x: 3, y: 68, z: 0 }], "the drop is within the default radius");
     assert.deepEqual(await h.run(gatherer.collectDrops, {}), { reached: 0, unreachable: [] });
     assert.equal(h.calls.filter((c) => c.kit === "move" && c.action === "to").length, 0);
   });
