@@ -45,42 +45,59 @@ function watchProgress(bot: RoutineContext["bot"], target: Vec3): { stalled: Pro
 }
 
 type PathStatus = "success" | "partial" | "noPath" | "timeout";
+type PathOutcome = "reached" | "noPath" | "timeout" | "ended";
 
 /**
- * Listens for how the pathfinder ends `goal`. Its `goto` resolves on any empty path, also one found while
- * the search goes on ('partial'); the search then continues and the player may yet walk. `afterGoto()`,
- * called once `goto` has settled, waits for that search to end. It settles with "reached" when the
- * pathfinder reported the goal reached, or with the status that ended the search without it: "noPath" or
- * "timeout" (`goto` rejects on those when a partial path came with them), or "success" with an empty path.
- * It rejects as `goto` does when the path is stopped or the goal is replaced. A `goto` that settled with
- * no path update at all (a stub) counts as ended where the player stands.
+ * Watches the pathfinder's own report of how `goal` ends, in event order. Its `goto` resolves on any empty
+ * path, also one found while the search goes on ('partial'), after which the search continues and the
+ * player may yet walk — so `goto` resolving is not an outcome; only one that reports no path update at all
+ * (a stub) ends the walk as "ended", where the player stands. Otherwise the walk ends as "reached" when
+ * the pathfinder reports the goal reached, or with the status of the update that ended the search without
+ * the goal: "noPath" or "timeout", or "ended" for a 'success' with an empty path (the player is then
+ * checked against `range`). While updates still flow — any 'partial', or a path to walk — it keeps
+ * waiting, bounded by the progress watchdog and `timeoutMs`. A goal replaced or a path stopped rejects as
+ * `goto` does, one turn later, so a stop this walk triggers itself (the watchdog, the timeout) still names
+ * itself; once another goal took over, later updates are not this goal's and are ignored.
  */
-function watchPathEnd(bot: RoutineContext["bot"], goal: object): { afterGoto: () => Promise<"reached" | PathStatus | undefined>; stop: () => void } {
-  const end = Promise.withResolvers<"reached" | PathStatus>();
-  end.promise.catch(() => {}); // while `goto` runs, it reports the same failures
-  let outcome: "reached" | PathStatus | undefined;
-  let searching = false;
-  const finish = (how: "reached" | PathStatus) => {
-    outcome ??= how;
-    end.resolve(how);
-  };
+function watchPathEnd(bot: RoutineContext["bot"], goal: object): { outcome: Promise<PathOutcome>; gotoSettled: (err: unknown) => void; stop: () => void } {
+  const done = Promise.withResolvers<PathOutcome>();
+  done.promise.catch(() => {}); // a walk that ends another way never sees the rejection
+  let sawUpdate = false;
+  let foreign = false;
+  const fail = (message: string) => queueMicrotask(() => done.reject(new Error(message)));
   const onReached = (reached: unknown) => {
-    if (reached === goal) finish("reached");
+    if (reached === goal) done.resolve("reached");
   };
   const onUpdate = ({ status, path }: { status: PathStatus; path: unknown[] }) => {
-    searching = status === "partial" && path.length === 0;
-    if (status === "noPath" || status === "timeout" || (status === "success" && path.length === 0)) finish(status);
+    sawUpdate = true;
+    if (foreign) return;
+    if (status === "noPath" || status === "timeout") done.resolve(status);
+    else if (status === "success" && path.length === 0) done.resolve("ended");
   };
-  const onStop = () => end.reject(new Error("Path was stopped before it could be completed! Thus, the desired goal was not reached."));
+  const onStop = () => {
+    foreign = true;
+    fail("Path was stopped before it could be completed! Thus, the desired goal was not reached.");
+  };
   const onGoal = (next: unknown) => {
-    if (next !== goal) end.reject(new Error("The goal was changed before it could be completed!"));
+    if (next === goal) return;
+    foreign = true;
+    fail("The goal was changed before it could be completed!");
   };
   bot.on("goal_reached", onReached);
   bot.on("path_update", onUpdate);
   bot.on("path_stop", onStop);
   bot.on("goal_updated", onGoal);
   return {
-    afterGoto: () => (outcome === undefined && searching ? end.promise : Promise.resolve(outcome)),
+    outcome: done.promise,
+    // `goto` reports the same ends through its promise: fold its 'NoPath'/'Timeout' into the statuses, let
+    // its other failures (a replaced goal, a stopped path) through, and end only a goto that said nothing.
+    gotoSettled: (err: unknown) => {
+      if (err === undefined) {
+        if (!sawUpdate) done.resolve("ended");
+      } else if (err instanceof Error && err.name === "NoPath") done.resolve("noPath");
+      else if (err instanceof Error && err.name === "Timeout") done.resolve("timeout");
+      else done.reject(err);
+    },
     stop: () => {
       bot.off("goal_reached", onReached);
       bot.off("path_update", onUpdate);
@@ -112,13 +129,15 @@ async function pathTo(ctx: RoutineContext, goal: InstanceType<typeof goals.GoalN
   bot.on("path_reset", onReset);
   const end = watchPathEnd(bot, goal);
   const watch = watchProgress(bot, target);
-  let ended: "reached" | PathStatus | undefined;
+  let ended: PathOutcome | undefined;
   try {
-    // `goto` rejects a search that ended without the goal ("NoPath", "Timeout"); the watcher holds its status.
-    const walk = bot.pathfinder.goto(goal).then(end.afterGoto, (err: unknown) =>
-      err instanceof Error && (err.name === "NoPath" || err.name === "Timeout") ? end.afterGoto() : Promise.reject(err),
+    // `goto` resolving is not an outcome (it resolves on any empty path, also a partial one); the watcher
+    // takes its failures, ends a goto that said nothing, and settles on the pathfinder's own report.
+    void bot.pathfinder.goto(goal).then(
+      () => end.gotoSettled(undefined),
+      (err: unknown) => end.gotoSettled(err),
     );
-    ended = await within(timeoutMs, "pathfinding", Promise.race([walk, watch.stalled]), () => bot.pathfinder.setGoal(null));
+    ended = await within(timeoutMs, "pathfinding", Promise.race([end.outcome, watch.stalled]), () => bot.pathfinder.setGoal(null));
   } finally {
     watch.stop();
     end.stop();

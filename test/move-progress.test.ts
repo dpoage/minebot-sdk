@@ -1,10 +1,16 @@
-// move.to's progress watchdog and its end-of-walk distance check (mb-jfa.5). The harness pathfinder teleports,
-// so these tests replace `goto` with one that never finishes (a stalled player) or one that finishes where it
-// stands (an empty path), and drive the watchdog's clock with mock timers. The live behavior is probed on the dev server.
+// move.to's progress watchdog and its path-end settlement (mb-jfa.5). The harness pathfinder teleports, so
+// these tests replace `goto` with stubs that replay the plugin's event stream (path_update, goal_reached) —
+// once with the plugin's own lib/goto.js — and drive the watchdog's clock with mock timers. The live
+// behavior is probed on the dev server.
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it, mock } from "node:test";
 import { createHarness, type Harness } from "minebot-sdk/testing";
 import * as move from "../src/routines/move.ts";
+import { createRequire } from "node:module";
+
+const require = createRequire(import.meta.url);
+/** The plugin's own `goto`, whose settling rules the stubs replay. */
+const realGoto = require("mineflayer-pathfinder/lib/goto.js") as (bot: unknown, goal: unknown) => Promise<void>;
 
 const settle = () => {
   const { promise, resolve } = Promise.withResolvers<void>();
@@ -113,7 +119,8 @@ describe("move.to progress watchdog", () => {
 });
 
 describe("move.to end-of-walk distance", () => {
-  it("throws when the pathfinder finishes farther than `range`, as it does for an empty path", async () => {
+  it("throws when a `goto` that reports nothing at all ends the walk farther than `range`", async () => {
+    // The plugin's `goto` always reports its searches; a stub that resolves silently ends where the player stands.
     const h = createHarness();
     (h.bot.pathfinder as unknown as { goto: () => Promise<void> }).goto = async () => {};
     await assert.rejects(h.run(move.to, { position: [10, 64, 0], range: 1 }), /could not reach \(10, 64, 0\): stopped at \(0, 64, 0\), 10\.0 blocks away/);
@@ -186,5 +193,120 @@ describe("move.to end-of-walk distance", () => {
       });
       assert.equal(pathfinder.goal, null, `${status}: the goal was cleared`);
     }
+  });
+
+  /**
+   * A harness whose `goto` plays `script` with the goal set and then resolves. Under load the plugin's
+   * `goto` settles an empty 'partial' path while the same synchronous batch (physics catching up overdue
+   * ticks) reports the path the search went on to find.
+   */
+  function batchHarness(script: (h: Harness) => void) {
+    const h = createHarness();
+    const pathfinder = h.bot.pathfinder as unknown as { goal: unknown; goto: (goal: object) => Promise<void> };
+    pathfinder.goto = (goal) => {
+      pathfinder.goal = goal;
+      script(h);
+      return Promise.resolve();
+    };
+    return { h, pathfinder };
+  }
+
+  /** Runs `move.to` toward (10, 64, 0); `settled()` says "pending" while the walk waits. */
+  function runTo(h: Harness, range = 1) {
+    let settled: unknown = "pending";
+    const done = h.run(move.to, { position: [10, 64, 0], range });
+    void done.then(
+      (value) => {
+        settled = { ok: value };
+      },
+      (err: unknown) => {
+        settled = err;
+      },
+    );
+    return { done, settled: () => settled };
+  }
+
+  it("keeps waiting through an empty partial followed by a non-empty partial in one batch, and resolves on goal_reached", async () => {
+    const { h, pathfinder } = batchHarness((h) => {
+      h.bot.emit("path_update", { status: "partial", path: [] } as never);
+      h.bot.emit("path_update", { status: "partial", path: [{ x: 5, y: 64, z: 0 }] } as never);
+    });
+    const walk = runTo(h);
+    await settle();
+    await settle();
+    assert.equal(walk.settled(), "pending", "a batch that ends on a walkable path is not an end, whatever `goto` made of its first update");
+    h.teleport([10.5, 64, 0.5]);
+    h.bot.emit("goal_reached", pathfinder.goal as never);
+    assert.deepEqual(await walk.done, { x: 10, y: 64, z: 0 });
+  });
+
+  it("waits through a reachable goal's whole search — empty partial, non-empty partial, non-empty success — across ticks", async () => {
+    const { h, pathfinder } = batchHarness((h) => {
+      h.bot.emit("path_update", { status: "partial", path: [] } as never);
+      setImmediate(() => {
+        h.bot.emit("path_update", { status: "partial", path: [{ x: 5, y: 64, z: 0 }] } as never);
+        h.bot.emit("path_update", { status: "success", path: [{ x: 5, y: 64, z: 0 }, { x: 10, y: 64, z: 0 }] } as never);
+      });
+    });
+    const walk = runTo(h);
+    await settle();
+    await settle();
+    assert.equal(walk.settled(), "pending", "a path to walk is not an end");
+    h.teleport([10.5, 64, 0.5]);
+    h.bot.emit("goal_reached", pathfinder.goal as never);
+    assert.deepEqual(await walk.done, { x: 10, y: 64, z: 0 });
+  });
+
+  it("throws could-not-reach, naming no way, when the search ends 'noPath' with an empty path", async () => {
+    const { h, pathfinder } = batchHarness((h) => h.bot.emit("path_update", { status: "noPath", path: [] } as never));
+    await assert.rejects(
+      h.run(move.to, { position: [10, 64, 0], range: 1 }),
+      /^Error: could not reach \(10, 64, 0\): stopped at \(0, 64, 0\), 10\.0 blocks away; the pathfinder found no way there from here$/,
+    );
+    assert.equal(pathfinder.goal, null, "the goal was cleared");
+  });
+
+  it("throws could-not-reach when the search ends 'success' with an empty path and the player is outside range", async () => {
+    const { h } = batchHarness((h) => h.bot.emit("path_update", { status: "success", path: [] } as never));
+    await assert.rejects(
+      h.run(move.to, { position: [10, 64, 0], range: 1 }),
+      /^Error: could not reach \(10, 64, 0\): stopped at \(0, 64, 0\), 10\.0 blocks away; the pathfinder found no way there from here$/,
+    );
+  });
+
+  it("resolves when the search ends 'success' with an empty path and the player is already within range", async () => {
+    const { h } = batchHarness((h) => {
+      h.teleport([10.5, 64, 0.5]);
+      h.bot.emit("path_update", { status: "success", path: [] } as never);
+    });
+    assert.deepEqual(await h.run(move.to, { position: [10, 64, 0], range: 1 }), { x: 10, y: 64, z: 0 });
+  });
+
+  it("keeps waiting when the plugin's own `goto` (lib/goto.js) resolves an empty partial that the same batch supersedes", async () => {
+    const h = createHarness();
+    const bot = h.bot as unknown as {
+      emit: (event: string, ...args: unknown[]) => void;
+      pathfinder: { goto: (goal: unknown) => Promise<void>; setGoal: (goal: unknown) => void };
+    };
+    let goal: unknown;
+    const { pathfinder } = bot;
+    pathfinder.setGoal = (next) => {
+      goal = next;
+      bot.emit("goal_updated", next, false);
+    };
+    let gotoDone: Promise<void> | undefined;
+    pathfinder.goto = (next) => (gotoDone = realGoto(bot, next));
+    const walk = runTo(h);
+    await settle();
+    // The load case: `goto` settles the empty partial while the same synchronous batch walks on.
+    bot.emit("path_update", { status: "partial", path: [] });
+    bot.emit("path_update", { status: "partial", path: [{ x: 5, y: 64, z: 0 }] });
+    // `goto` resolves on its own timer; move.to's handler for that runs before this await returns.
+    await gotoDone;
+    await settle();
+    assert.equal(walk.settled(), "pending", "`goto` resolving is not the walk's end");
+    h.teleport([10.5, 64, 0.5]);
+    bot.emit("goal_reached", goal);
+    assert.deepEqual(await walk.done, { x: 10, y: 64, z: 0 });
   });
 });
