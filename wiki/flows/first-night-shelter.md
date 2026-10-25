@@ -32,7 +32,7 @@ You need 10 cobblestone, or any other solid block. A wooden pickaxe digs cobbles
 
    Each `placeBlock` needs a solid block to click on, so the order matters: floor, lower ring, upper ring, roof. Observed: all four sides at both heights and the roof block were solid when it finished, and 6 of 16 cobblestone were left. The box has no opening; leave none, because a mob that climbs walls uses any gap it fits through (`mechanics/spider-climbing`).
 
-   <!-- builtins:builder -->
+<!-- builtins:builder -->
    `builder.box` and `builder.build` build the box as one block. `builder.box` makes a blueprint of a hollow room between two corners, and `builder.build` places it in the right order, bottom layer first. This room is 3 blocks wide, long, and high. It has a full ring of walls at two heights and a roof over all 9 cells, so it costs 25 cobblestone, not 10. The corners are at your feet minus 1 and plus 1 on x and z, and the roof is 2 blocks above your feet:
 
    ```ts
@@ -48,7 +48,7 @@ You need 10 cobblestone, or any other solid block. A wooden pickaxe digs cobbles
    ```
 
    Check that you hold the cobblestone and that `failed` is empty. You still decide where to stand, when to start, and what to do when a cell fails.
-   <!-- /builtins:builder -->
+<!-- /builtins:builder -->
 3. **Wait.** Stay inside until the night ends:
 
    ```ts

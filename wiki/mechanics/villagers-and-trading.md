@@ -43,5 +43,5 @@ minebot call trade.offers
 minebot call trade.buy --args '{"index":0,"times":2}'
 ```
 
-`trade.offers` returns `[{ index, give, get, uses, maxUses, disabled }]`, where `give` is the price the merchant charges you now, with demand and reputation included. `trade.buy` makes offer `index` up to `times` times and returns `{ traded, gave, got, shortfall? }`, measured from the inventory. It trades only as often as the output fits in the inventory, so nothing drops, and `shortfall` says why it made fewer trades than you asked for.
+`trade.offers` returns `[{ index, give, get, uses, maxUses, disabled }]`, where `give` is the price the merchant charges you now, with demand and reputation included. `trade.buy` makes offer `index` up to `times` times and returns `{ traded, gave, got, shortfall? }`, measured from the inventory. It trades only as often as the output fits in the inventory, so nothing drops. When it makes some trades but fewer than you asked for, `shortfall` says why. When it makes none, it throws and names the cause (for a full inventory: `did not trade: the inventory has no room ...`).
 <!-- /builtins:trade -->
