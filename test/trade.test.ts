@@ -1,8 +1,11 @@
-// trade.offers and trade.buy over the harness's fake bot with a merchant window that behaves as Mineflayer's
-// does: `openVillager` asserts the villager entity type, `trade` moves the inventory trade by trade. The harness
-// has no merchant windows of its own, so the window is set up here; walking up to a real villager and a real
-// wandering trader is probed on a dev server.
+// trade.offers and trade.buy over the harness's fake bot with a merchant window whose server side behaves
+// as the vanilla server's does: `openVillager` asserts the villager entity type (Mineflayer's guard), selecting
+// an offer moves the inputs into the trade slots, a click on the output makes one trade at the price charged,
+// and what the trade slots and the cursor hold when the window closes goes back to the inventory or onto the
+// ground. The harness has no merchant windows of its own, so the window is set up here; walking up to a real
+// villager and a real wandering trader is probed on a dev server.
 import assert from "node:assert/strict";
+import { EventEmitter } from "node:events";
 import { describe, it } from "node:test";
 import { setImmediate as nextTick } from "node:timers/promises";
 import type { Entity, Item } from "minebot-sdk/routine";
@@ -24,77 +27,234 @@ interface Listed {
 interface FakeMerchant {
   /** What `bot.openVillager` was given, in order. */
   opened: Entity[];
+  /** Windows the routine closed. */
   closed: number;
-  /** Trades the fake window performs, by call. */
-  tradeCalls: { index: number; times: number | undefined }[];
+  /** Offers selected in the window, in order: an offer is only traded after it is selected. */
+  selected: number[];
+  /** What the server dropped on the ground for want of room in the inventory. */
+  dropped: Record<string, number>;
 }
 
 interface Faults {
-  /** The window throws after this many trades of a call, as a server that closes the window mid-way does. */
-  failAfter?: number;
-  /** The server takes this much more of an item than the offer says, after the trades. */
-  alsoTakes?: [string, number];
+  /** The server closes the window once it has made this many trades, as when the merchant is hurt or walks off. */
+  closeAfter?: number;
+  /** The server stops offering the output once it has made this many trades, and says nothing. */
+  refuseAfter?: number;
+  /** The server takes this much more of an item when the window closes. */
+  takesOnClose?: [string, number];
+  /** Runs after the server handles each click, with the trades made so far. */
+  onClick?: (made: number) => void;
 }
 
-/** The inventory the harness keeps, as the fake window moves items through it. */
+/** The inventory the harness keeps, as the fake server moves items through it. */
 interface Stock {
+  readonly slots: (Item | null)[];
   make(name: string, count: number): Item;
-  add(type: number, count: number): number;
   remove(type: number, count: number): number;
-  items(): Item[];
+  set(slot: number, item: Item | null): void;
 }
 
-/** Gives the harness's bot a villager window over `listed`, with Mineflayer's own checks on the entity type and on `trade`. */
+/** The merchant window's slots 3-38 are the player's inventory, which the inventory numbers 9-44. */
+const INVENTORY_OFFSET = 6;
+const PLAYER_START = 3;
+const PLAYER_END = 39;
+
+/** Gives the harness's bot a villager window over `listed`, with a server side that trades as the vanilla server does. */
 function merchantWindow(h: Harness, listed: readonly Listed[], faults: Faults = {}): FakeMerchant {
   const stock = h.bot.inventory as unknown as Stock;
+  const bot = h.bot as unknown as EventEmitter & Record<string, unknown>;
+  const client = h.bot._client as unknown as EventEmitter & { write: (name: string, packet: Record<string, number>) => void };
   const villagerId = h.bot.registry.entitiesByName.villager!.id;
-  const seen: FakeMerchant = { opened: [], closed: 0, tradeCalls: [] };
-  const stack = (name: string, count: number) => stock.make(name, count);
-  const trades = listed.map((offer) => {
-    const input = stack(offer.give[0], offer.give[1]);
-    return {
-      inputItem1: input,
-      inputItem2: offer.give2 ? stack(offer.give2[0], offer.give2[1]) : null,
-      hasItem2: offer.give2 !== undefined,
-      outputItem: stack(offer.get[0], offer.get[1]),
-      realPrice: offer.charged ?? offer.give[1],
-      nbTradeUses: offer.uses ?? 0,
-      maximumNbTradeUses: offer.maxUses ?? 8,
-      tradeDisabled: offer.disabled ?? false,
-    };
-  });
-  const bot = h.bot as unknown as Record<string, unknown>;
+  const seen: FakeMerchant = { opened: [], closed: 0, selected: [], dropped: {} };
+  const copy = (item: Item | null | undefined, count = item?.count ?? 0): Item | null => (item && count > 0 ? stock.make(item.name, count) : null);
+  const trades = listed.map((offer) => ({
+    inputItem1: stock.make(offer.give[0], offer.give[1]),
+    inputItem2: offer.give2 ? stock.make(offer.give2[0], offer.give2[1]) : null,
+    hasItem2: offer.give2 !== undefined,
+    outputItem: stock.make(offer.get[0], offer.get[1]),
+    realPrice: offer.charged ?? offer.give[1],
+    nbTradeUses: offer.uses ?? 0,
+    maximumNbTradeUses: offer.maxUses ?? 8,
+    tradeDisabled: offer.disabled ?? false,
+  }));
+
+  // The server's side of the open window.
+  let slots: (Item | null)[] = [];
+  let cursor: Item | null = null;
+  let selected = -1;
+  let open = false;
+  let made = 0;
+  let window: (EventEmitter & { id: number; slots: (Item | null)[]; selectedItem: Item | null }) | undefined;
+
+  const drop = (item: Item) => {
+    seen.dropped[item.name] = (seen.dropped[item.name] ?? 0) + item.count;
+  };
+  /** Moves `item` into the player's slots as a quick move does, onto stacks of it first; returns what found no room. */
+  const toPlayer = (item: Item): Item | null => {
+    let left = item.count;
+    for (let s = PLAYER_START; s < PLAYER_END && left > 0; s++) {
+      const there = slots[s];
+      if (!there || there.type !== item.type || there.count >= there.stackSize) continue;
+      const n = Math.min(left, there.stackSize - there.count);
+      there.count += n;
+      left -= n;
+    }
+    for (let s = PLAYER_START; s < PLAYER_END && left > 0; s++) {
+      if (slots[s]) continue;
+      const n = Math.min(left, item.stackSize);
+      slots[s] = copy(item, n);
+      left -= n;
+    }
+    return copy(item, left);
+  };
+  const refreshOutput = () => {
+    const offer = trades[selected];
+    const [a, b] = slots;
+    const paid = offer && a?.type === offer.inputItem1.type && a.count >= offer.realPrice && (!offer.inputItem2 || (b?.type === offer.inputItem2.type && b.count >= offer.inputItem2.count));
+    const selling = offer && !offer.tradeDisabled && offer.nbTradeUses < offer.maximumNbTradeUses && !(faults.refuseAfter !== undefined && made >= faults.refuseAfter);
+    slots[2] = paid && selling ? copy(offer.outputItem) : null;
+  };
+  const pay = (slot: number, count: number) => {
+    const item = slots[slot]!;
+    item.count -= count;
+    if (item.count === 0) slots[slot] = null;
+  };
+  /** Fills trade slot `slot` with `type` from the player's slots, up to a stack. */
+  const fill = (slot: number, type: number) => {
+    for (let s = PLAYER_START; s < PLAYER_END; s++) {
+      const item = slots[s];
+      if (!item || item.type !== type) continue;
+      const has = slots[slot]?.count ?? 0;
+      const n = Math.min(item.stackSize - has, item.count);
+      if (n <= 0) return;
+      slots[slot] = copy(item, has + n);
+      item.count -= n;
+      if (item.count === 0) slots[s] = null;
+    }
+  };
+  const select = (index: number) => {
+    seen.selected.push(index);
+    selected = index;
+    for (const slot of [0, 1]) {
+      const item = slots[slot];
+      if (!item) continue;
+      slots[slot] = toPlayer(item);
+      if (slots[slot]) return;
+    }
+    const offer = trades[index]!;
+    fill(0, offer.inputItem1.type);
+    if (offer.inputItem2) fill(1, offer.inputItem2.type);
+    refreshOutput();
+  };
+  const click = (slot: number, button: number, mode: number) => {
+    if (mode === 5) return; // the end of a drag that never started
+    assert.equal(button, 0, `click with button ${button}`);
+    if (mode === 1) {
+      assert.ok(slot === 0 || slot === 1, `quick move on slot ${slot}`);
+      slots[slot] = slots[slot] ? toPlayer(slots[slot]) : null;
+      refreshOutput();
+      return;
+    }
+    assert.equal(mode, 0, `click mode ${mode}`);
+    if (slot === -999) {
+      if (cursor) drop(cursor);
+      cursor = null;
+      return;
+    }
+    if (slot === 2) {
+      const output = slots[2];
+      if (!output || (cursor && (cursor.type !== output.type || cursor.count + output.count > cursor.stackSize))) return;
+      cursor = copy(output, (cursor?.count ?? 0) + output.count);
+      const offer = trades[selected]!;
+      pay(0, offer.realPrice);
+      if (offer.inputItem2) pay(1, offer.inputItem2.count);
+      offer.nbTradeUses++;
+      made++;
+      refreshOutput();
+      return;
+    }
+    const there = slots[slot] ?? null;
+    if (!cursor) {
+      cursor = there;
+      slots[slot] = null;
+    } else if (!there) {
+      slots[slot] = cursor;
+      cursor = null;
+    } else if (there.type === cursor.type) {
+      const n = Math.min(cursor.count, there.stackSize - there.count);
+      there.count += n;
+      cursor.count -= n;
+      if (cursor.count === 0) cursor = null;
+    } else {
+      slots[slot] = cursor;
+      cursor = there;
+    }
+    if (slot < 2) refreshOutput();
+  };
+  /** The server ends the session: the trade slots and the cursor go back to the inventory, or onto the ground. */
+  const finish = () => {
+    open = false;
+    for (const item of [slots[0], slots[1], cursor]) {
+      const left = item && toPlayer(item);
+      if (left) drop(left);
+    }
+    slots[0] = slots[1] = slots[2] = cursor = null;
+    for (let s = PLAYER_START; s < PLAYER_END; s++) stock.set(s + INVENTORY_OFFSET, copy(slots[s]));
+    if (faults.takesOnClose) stock.remove(stock.make(faults.takesOnClose[0], 1).type, faults.takesOnClose[1]);
+  };
+
+  client.write = (name, packet) => {
+    assert.ok(open, `${name} sent with no trade window open`);
+    if (name === "select_trade") return select(packet.slot!);
+    assert.equal(name, "window_click", `unexpected packet ${name}`);
+    click(packet.slot!, packet.mouseButton!, packet.mode!);
+    faults.onClick?.(made);
+    if (faults.closeAfter !== undefined && made >= faults.closeAfter) {
+      finish();
+      bot.currentWindow = null;
+      bot.emit("windowClose", window);
+      return;
+    }
+    // The answer to a click whose state id the server does not have: the whole window, a moment later.
+    setImmediate(() => {
+      if (!open || !window) return;
+      window.slots = slots.map((item) => copy(item));
+      window.selectedItem = copy(cursor);
+      bot.emit(`setWindowItems:${window.id}`);
+    });
+  };
   bot.openVillager = async (entity: Entity) => {
     // Mineflayer's guard, verbatim in effect.
     assert.strictEqual((entity as Entity & { entityType: number }).entityType, villagerId);
     seen.opened.push(entity);
-    const player = stock.items();
-    return {
+    slots = [null, null, null];
+    for (let s = PLAYER_START; s < PLAYER_END; s++) slots.push(copy(stock.slots[s + INVENTORY_OFFSET]));
+    cursor = null;
+    selected = -1;
+    made = 0;
+    open = true;
+    // Mineflayer's offer listener, which only the window's close event removes.
+    const onTrades = () => {};
+    client.on("trade_list", onTrades);
+    const opened = Object.assign(new EventEmitter(), {
       id: 1,
+      type: "minecraft:merchant",
       trades,
-      slots: [null, null, null, ...player, ...Array<null>(36 - player.length).fill(null)],
-      inventoryStart: 3,
-      inventoryEnd: 39,
+      slots: slots.map((item) => copy(item)),
+      selectedItem: null as Item | null,
+      inventoryStart: PLAYER_START,
+      inventoryEnd: PLAYER_END,
       close: async () => {
         seen.closed++;
+        bot.currentWindow = null;
+        if (open) finish();
+        opened.emit("close");
       },
-    };
-  };
-  bot.trade = async (_window: unknown, index: number, times: number | undefined) => {
-    seen.tradeCalls.push({ index, times });
-    const chosen = trades[index]!;
-    const count = times || chosen.maximumNbTradeUses - chosen.nbTradeUses;
-    assert.ok(chosen.maximumNbTradeUses - chosen.nbTradeUses > 0, "trade blocked");
-    assert.ok(chosen.maximumNbTradeUses - chosen.nbTradeUses >= count);
-    for (let i = 0; i < count; i++) {
-      if (i === faults.failAfter) throw new Error("the window was closed by the server");
-      const inputs: [Item, number][] = [[chosen.inputItem1, chosen.realPrice]];
-      if (chosen.inputItem2) inputs.push([chosen.inputItem2, chosen.inputItem2.count]);
-      for (const [item, n] of inputs) assert.equal(stock.remove(item.type, n), n, `Not enough ${item.name} to trade`);
-      stock.add(chosen.outputItem.type, chosen.outputItem.count);
-      chosen.nbTradeUses++;
-    }
-    if (faults.alsoTakes) stock.remove(stack(faults.alsoTakes[0], 1).type, faults.alsoTakes[1]);
+    });
+    opened.once("close", () => client.off("trade_list", onTrades));
+    window = opened;
+    bot.currentWindow = opened;
+    return opened;
   };
   return seen;
 }
@@ -105,11 +265,28 @@ function spawnMerchant(h: Harness, kind: "villager" | "wandering_trader", at: [n
   return Object.assign(entity, { entityType: h.bot.registry.entitiesByName[kind]!.id });
 }
 
+/** A merchant whose window never opens, as a nitwit's: Mineflayer's open waits for a window and for an offer list. Resolves once the open starts. */
+function silentMerchant(h: Harness): Promise<void> {
+  const bot = h.bot as unknown as EventEmitter & Record<string, unknown>;
+  const started = Promise.withResolvers<void>();
+  bot.openVillager = () => {
+    bot.on("windowOpen", () => {});
+    (h.bot._client as unknown as EventEmitter).on("trade_list", () => {});
+    started.resolve();
+    return Promise.withResolvers().promise;
+  };
+  return started.promise;
+}
+
+/** The listeners an open leaves on the bot and its client: Mineflayer's window and offer listeners. */
+const openListeners = (h: Harness) => ({ windowOpen: h.bot.listenerCount("windowOpen"), trade_list: (h.bot._client as unknown as EventEmitter).listenerCount("trade_list") });
+
 /** The entity's state, for a comparison before and after. */
 const stateOf = (entity: Entity): string => JSON.stringify(entity);
 
 const EMERALD_FOR_BREAD: Listed = { give: ["emerald", 1], get: ["bread", 3] };
 const WHEAT_FOR_EMERALD: Listed = { give: ["wheat", 20], get: ["emerald", 1] };
+const SWORD: Listed = { give: ["emerald", 3], get: ["iron_sword", 1] };
 
 describe("trade.offers", () => {
   it("lists the offers of a villager: inputs at the price charged, the output, the uses, and whether it is sold out", async () => {
@@ -128,8 +305,9 @@ describe("trade.offers", () => {
       { index: 3, give: [{ item: "emerald", count: 1 }], get: { item: "clock", count: 1 }, uses: 1, maxUses: 1, disabled: true },
     ]);
     assert.equal(window.closed, 1, "the window is closed");
-    assert.deepEqual(window.tradeCalls, []);
+    assert.deepEqual(window.selected, []);
     assert.equal(h.count("emerald"), 3, "reading offers changes nothing");
+    assert.deepEqual(openListeners(h), { windowOpen: 0, trade_list: 0 });
   });
 
   it("opens a wandering trader without changing the shared entity: the opener gets a villager-typed view, the entity keeps its own type and fields", async () => {
@@ -170,10 +348,10 @@ describe("trade.offers", () => {
     assert.equal(window.opened.length, 1);
   });
 
-  it("fails naming the merchant and why when it opens no trade window, as a nitwit does", async (t) => {
+  it("fails naming the merchant and why when it opens no trade window, as a nitwit does, and leaves no listener behind for the next merchant", async (t) => {
     const h = createHarness();
     spawnMerchant(h, "villager", [3.5, 64, 0.5]);
-    (h.bot as unknown as Record<string, unknown>).openVillager = () => Promise.withResolvers().promise;
+    silentMerchant(h);
     t.mock.timers.enable({ apis: ["setTimeout"] });
     const result = assert.rejects(h.run(trade.offers), /^Error: the villager at 3,64,0 opened no trade window within 8 s \(a nitwit, a baby, .* does not trade;.*\); trade works on the nearest merchant/);
     for (let i = 0; i < 20; i++) {
@@ -181,6 +359,22 @@ describe("trade.offers", () => {
       t.mock.timers.tick(1_000);
     }
     await result;
+    t.mock.timers.reset();
+    assert.deepEqual(openListeners(h), { windowOpen: 0, trade_list: 0 }, "the open's window and offer listeners are gone");
+    merchantWindow(h, [EMERALD_FOR_BREAD]);
+    assert.deepEqual(await h.run(trade.offers), [{ index: 0, give: [{ item: "emerald", count: 1 }], get: { item: "bread", count: 3 }, uses: 0, maxUses: 8, disabled: false }]);
+  });
+
+  it("stops waiting for the window when the run is stopped, and leaves no listener behind", async () => {
+    const h = createHarness();
+    spawnMerchant(h, "villager", [3.5, 64, 0.5]);
+    const opening = silentMerchant(h);
+    const stopped = new Error("stopped by the test");
+    const run = h.run(trade.offers);
+    await opening;
+    h.abort(stopped);
+    await assert.rejects(run, (error) => error === stopped);
+    assert.deepEqual(openListeners(h), { windowOpen: 0, trade_list: 0 });
   });
 });
 
@@ -191,9 +385,11 @@ describe("trade.buy", () => {
     const window = merchantWindow(h, [EMERALD_FOR_BREAD]);
     assert.deepEqual(await h.run(trade.buy, { index: 0, times: 3 }), { traded: 3, gave: { emerald: 3 }, got: { bread: 9 } });
     assert.deepEqual(h.inventory, { emerald: 7, bread: 9 });
-    assert.deepEqual(window.tradeCalls, [{ index: 0, times: 3 }]);
+    assert.deepEqual(window.selected, [0]);
     assert.equal(window.closed, 1);
     assert.deepEqual(await h.run(trade.buy, { index: 0 }), { traded: 1, gave: { emerald: 1 }, got: { bread: 3 } });
+    assert.deepEqual(window.dropped, {});
+    assert.deepEqual(openListeners(h), { windowOpen: 0, trade_list: 0 });
   });
 
   it("reports both inputs of a two-input offer", async () => {
@@ -217,7 +413,7 @@ describe("trade.buy", () => {
     const window = merchantWindow(h, [WHEAT_FOR_EMERALD, { give: ["emerald", 5], give2: ["paper", 24], get: ["bookshelf", 1] }]);
     await assert.rejects(h.run(trade.buy, { index: 0 }), /offer 0 .*needs 20 wheat per trade, and the inventory lacks 8 wheat \(it holds 12 wheat\)/);
     await assert.rejects(h.run(trade.buy, { index: 1 }), /needs 5 emerald and 24 paper per trade, and the inventory lacks 5 emerald and 24 paper \(it holds 0 emerald and 0 paper\)/);
-    assert.deepEqual(window.tradeCalls, [], "nothing was offered to the server");
+    assert.deepEqual(window.selected, [], "nothing was offered to the server");
     assert.equal(window.closed, 2, "the window is closed on a refusal too");
     assert.deepEqual(h.inventory, { wheat: 12 });
   });
@@ -236,12 +432,86 @@ describe("trade.buy", () => {
     assert.deepEqual(h.inventory, { wheat: 4, emerald: 2 });
   });
 
+  it("tops the trade slots up to the price charged when it is above the listed one, so every planned trade happens", async () => {
+    // Listed 20, charged 40: after one trade the 24 wheat left in the trade slot covers the listed price but not the charged one.
+    const h = createHarness({ inventory: { wheat: 128 } });
+    spawnMerchant(h, "villager", [3.5, 64, 0.5]);
+    const window = merchantWindow(h, [{ give: ["wheat", 20], charged: 40, get: ["emerald", 1] }]);
+    assert.deepEqual(await h.run(trade.buy, { index: 0, times: 3 }), { traded: 3, gave: { wheat: 120 }, got: { emerald: 3 } });
+    assert.deepEqual(h.inventory, { wheat: 8, emerald: 3 });
+    assert.deepEqual(window.dropped, {});
+  });
+
+  it("refuses up front, naming the full inventory, when one trade's output and the inputs it leaves cannot fit; nothing is traded or dropped", async () => {
+    const h = createHarness({ inventory: { dirt: 35 * 64, emerald: 64 } });
+    spawnMerchant(h, "villager", [3.5, 64, 0.5]);
+    const window = merchantWindow(h, [SWORD]);
+    await assert.rejects(
+      h.run(trade.buy, { index: 0, times: 3 }),
+      /^Error: offer 0 of the villager at 3,64,0 did not trade: the inventory has no room for the 1 iron_sword a trade gives beside the 61 emerald the trade leaves in the trade slots \(36 of 36 slots hold 2240 dirt and 64 emerald when the window opened\); make room with inventory\.toss or by storing items in a chest, then trade again$/,
+    );
+    assert.deepEqual(h.inventory, { dirt: 2240, emerald: 64 });
+    assert.deepEqual(window.dropped, {});
+  });
+
+  it("makes the trades that fit and names the room as the shortfall, dropping nothing", async () => {
+    const h = createHarness({ inventory: { dirt: 34 * 64, emerald: 9 } });
+    spawnMerchant(h, "villager", [3.5, 64, 0.5]);
+    const window = merchantWindow(h, [SWORD]);
+    assert.deepEqual(await h.run(trade.buy, { index: 0, times: 3 }), {
+      traded: 1,
+      gave: { emerald: 3 },
+      got: { iron_sword: 1 },
+      shortfall:
+        "only 1 of 3 trades completed: the inventory has no room for the 1 iron_sword a trade gives beside the 3 emerald the trade leaves in the trade slots (35 of 36 slots hold 2176 dirt and 9 emerald when the window opened); make room with inventory.toss or by storing items in a chest, then trade again",
+    });
+    assert.deepEqual(h.inventory, { dirt: 2176, emerald: 6, iron_sword: 1 });
+    assert.deepEqual(window.dropped, {});
+  });
+
+  it("reports every trade of a nearly full inventory as completed when the outputs fit, counting room on stacks of the output", async () => {
+    const h = createHarness({ inventory: { dirt: 31 * 64, emerald: 4 } });
+    spawnMerchant(h, "wandering_trader", [3.5, 64, 0.5]);
+    const window = merchantWindow(h, [{ give: ["emerald", 1], get: ["blue_ice", 1] }]);
+    assert.deepEqual(await h.run(trade.buy, { index: 0, times: 2 }), { traded: 2, gave: { emerald: 2 }, got: { blue_ice: 2 } });
+    assert.deepEqual(h.inventory, { dirt: 1984, emerald: 2, blue_ice: 2 });
+    assert.deepEqual(window.dropped, {});
+
+    // Every slot full: the outputs go onto the blue ice stack, the emeralds left over back into their own slot.
+    const full = createHarness({ inventory: { dirt: 34 * 64, blue_ice: 10, emerald: 4 } });
+    spawnMerchant(full, "wandering_trader", [3.5, 64, 0.5]);
+    const fullWindow = merchantWindow(full, [{ give: ["emerald", 1], get: ["blue_ice", 1] }]);
+    assert.deepEqual(await full.run(trade.buy, { index: 0, times: 2 }), { traded: 2, gave: { emerald: 2 }, got: { blue_ice: 2 } });
+    assert.deepEqual(full.inventory, { dirt: 2176, blue_ice: 12, emerald: 2 });
+    assert.deepEqual(fullWindow.dropped, {});
+  });
+
+  it("stops trading when the run is stopped, puts the cursor and the trade slots back, and closes the window", async () => {
+    const h = createHarness({ inventory: { emerald: 10 } });
+    spawnMerchant(h, "villager", [3.5, 64, 0.5]);
+    const stopped = new Error("stopped by the test");
+    let aborted = false;
+    const window = merchantWindow(h, [EMERALD_FOR_BREAD], {
+      onClick: (made) => {
+        if (made === 2 && !aborted) {
+          aborted = true;
+          h.abort(stopped);
+        }
+      },
+    });
+    await assert.rejects(h.run(trade.buy, { index: 0, times: 6 }), (error) => error === stopped);
+    assert.deepEqual(h.inventory, { emerald: 8, bread: 6 }, "two trades, and everything back in the inventory");
+    assert.deepEqual(window.dropped, {});
+    assert.equal(window.closed, 1);
+    assert.deepEqual(openListeners(h), { windowOpen: 0, trade_list: 0 });
+  });
+
   it("returns the trades it made with a shortfall when the offer runs out of uses first", async () => {
     const h = createHarness({ inventory: { emerald: 20 } });
     spawnMerchant(h, "villager", [3.5, 64, 0.5]);
     const window = merchantWindow(h, [{ ...EMERALD_FOR_BREAD, uses: 6, maxUses: 8 }]);
     assert.deepEqual(await h.run(trade.buy, { index: 0, times: 5 }), { traded: 2, gave: { emerald: 2 }, got: { bread: 6 }, shortfall: "the offer had 2 uses left" });
-    assert.deepEqual(window.tradeCalls, [{ index: 0, times: 2 }]);
+    assert.deepEqual(window.selected, [0]);
     await assert.rejects(h.run(trade.buy, { index: 0 }), /offer 0 .* is sold out \(8 of 8 uses spent\); a villager restocks .* a wandering trader never does/);
   });
 
@@ -267,50 +537,53 @@ describe("trade.buy", () => {
     await assert.rejects(h.run(trade.buy, { index: 1 }), /offer 1 .* is disabled by the merchant/);
     await assert.rejects(h.run(trade.buy, { index: 2 }), /has 2 offers, numbered 0 to 1, not an offer 2; trade\.offers lists them/);
     await assert.rejects(h.run(trade.buy, { index: -1 }), /arguments/);
-    assert.deepEqual(window.tradeCalls, []);
+    assert.deepEqual(window.selected, []);
     assert.equal(window.closed, 2);
   });
 
-  it("keeps the trades that happened when the window fails part way: a shortfall carrying the cause", async () => {
+  it("keeps the trades that happened when the merchant closes the window part way: a shortfall carrying the cause", async () => {
     const h = createHarness({ inventory: { emerald: 10 } });
     spawnMerchant(h, "villager", [3.5, 64, 0.5]);
-    merchantWindow(h, [EMERALD_FOR_BREAD], { failAfter: 2 });
+    const window = merchantWindow(h, [EMERALD_FOR_BREAD], { closeAfter: 2 });
     assert.deepEqual(await h.run(trade.buy, { index: 0, times: 4 }), {
       traded: 2,
       gave: { emerald: 2 },
       got: { bread: 6 },
-      shortfall: "only 2 of 4 trades completed: the window was closed by the server",
+      shortfall: "only 2 of 4 trades completed: the merchant closed the trade window",
     });
+    assert.deepEqual(h.inventory, { emerald: 8, bread: 6 });
+    assert.deepEqual(window.dropped, {});
+    assert.deepEqual(openListeners(h), { windowOpen: 0, trade_list: 0 }, "a window the server closed lets Mineflayer's listener go too");
   });
 
-  it("fails naming the cause when no trade happened despite the window's answer", async () => {
+  it("fails naming the cause when no trade happened", async () => {
     const h = createHarness({ inventory: { emerald: 10 } });
     spawnMerchant(h, "villager", [3.5, 64, 0.5]);
-    const window = merchantWindow(h, [EMERALD_FOR_BREAD], { failAfter: 0 });
-    await assert.rejects(h.run(trade.buy, { index: 0, times: 2 }), /offer 0 of the villager at .* did not trade: the window was closed by the server/);
-    assert.equal(window.closed, 1);
+    merchantWindow(h, [EMERALD_FOR_BREAD], { closeAfter: 0 });
+    await assert.rejects(h.run(trade.buy, { index: 0, times: 2 }), /^Error: offer 0 of the villager at .* did not trade: the merchant closed the trade window$/);
     assert.equal(h.count("emerald"), 10);
   });
 
   it("fails with the measured change when the inventory changed by anything but whole trades", async () => {
     const h = createHarness({ inventory: { emerald: 10 } });
     spawnMerchant(h, "villager", [3.5, 64, 0.5]);
-    merchantWindow(h, [EMERALD_FOR_BREAD], { alsoTakes: ["emerald", 1] });
+    merchantWindow(h, [EMERALD_FOR_BREAD], { takesOnClose: ["emerald", 1] });
     await assert.rejects(
       h.run(trade.buy, { index: 0, times: 2 }),
-      /was traded, but the inventory changed by -3 emerald, \+6 bread, which is not a whole number of its trades \(one trade changes it by -1 emerald, \+3 bread\)/,
+      /was traded, but the inventory changed by -3 emerald, \+6 bread, which is not a whole number of its trades \(one trade changes it by -1 emerald, \+3 bread\); inventory\.list shows/,
     );
   });
 
-  it("reads the outcome from the inventory, not from the number of trades it asked for", async () => {
-    // A server that completes 1 of the 3 trades and says nothing: the window call returns, the inventory shows one.
+  it("returns the trades the server made when it stops offering the output, not the number asked for", async () => {
     const h = createHarness({ inventory: { emerald: 10 } });
     spawnMerchant(h, "villager", [3.5, 64, 0.5]);
-    const window = merchantWindow(h, [EMERALD_FOR_BREAD]);
-    const tradeOnce = h.bot.trade;
-    (h.bot as unknown as Record<string, unknown>).trade = (w: never, index: number) => tradeOnce(w, index, 1);
-    const result = await h.run(trade.buy, { index: 0, times: 3 });
-    assert.deepEqual(result, { traded: 1, gave: { emerald: 1 }, got: { bread: 3 }, shortfall: "only 1 of 3 trades completed (the inventory may be full)" });
-    assert.equal(window.tradeCalls.length, 1);
+    merchantWindow(h, [EMERALD_FOR_BREAD], { refuseAfter: 1 });
+    assert.deepEqual(await h.run(trade.buy, { index: 0, times: 3 }), {
+      traded: 1,
+      gave: { emerald: 1 },
+      got: { bread: 3 },
+      shortfall: "only 1 of 3 trades completed: the merchant offered nothing for the 9 emerald in the trade slots",
+    });
+    assert.deepEqual(h.inventory, { emerald: 9, bread: 3 });
   });
 });
