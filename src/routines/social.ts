@@ -1,10 +1,10 @@
-// The social routines: talk to, wait for, follow, and hand items to other players, and speak with the body (look, nod, shake, wave, crouch,
-// jump, present) — calling the move and inventory primitives, with the pathfinder's follow goal for tagging along.
-import { defineRoutine, type Entity, goals, type Item, Point, type RoutineContext, z } from "minebot-sdk/routine";
+// The social routines: talk to, wait for, follow, and hand items to other players, speak with the body (look, nod, shake, wave, crouch,
+// jump, present), and leave words in the world (write a sign, write or sign a book) — calling the move and inventory primitives, with the pathfinder's follow goal for tagging along.
+import { type Block, type Bot, defineRoutine, type Entity, goals, type Item, Point, Position, type RoutineContext, toVec3, type Vec3, z } from "minebot-sdk/routine";
 import * as move from "minebot-sdk/routines/move";
 import * as inventory from "minebot-sdk/routines/inventory";
 
-export const description = "Talk to, wait for, follow, and hand items to other players, and gesture at them (look, nod, shake, wave, crouch, jump, hold an item out).";
+export const description = "Talk to, wait for, follow, and hand items to other players, gesture at them (look, nod, shake, wave, crouch, jump, hold an item out), and write words in the world (text on a sign, pages in a book).";
 export const uses = ["move", "sense", "inventory"] as const;
 
 function playerEntity(ctx: RoutineContext, username: string): Entity {
@@ -258,5 +258,246 @@ export const gesture = defineRoutine(
     };
     await beats[kind]();
     return { kind, ...(toward !== undefined && { toward }), ...(wanted && { item: wanted.name }) };
+  },
+);
+
+const SIDES = ["front", "back"] as const;
+type Side = (typeof SIDES)[number];
+
+/** The server's limit per sign line, which Mineflayer's `updateSign` enforces by emitting an error on the bot and sending nothing. */
+const SIGN_LINE_MAX = 45;
+/** Survival players interact with blocks up to 4.5 blocks from the eyes. */
+const REACH = 4.5;
+const EYE_HEIGHT = 1.62;
+const HOTBAR_START = 36;
+/** How long the server gets to open the sign's editor after the bot uses the sign. */
+const EDITOR_WAIT_MS = 3_000;
+/** How long the server gets to show an edit back to the bot, whether a sign's text or a book's contents. */
+const READBACK_MS = 2_000;
+/** What a right click does to a sign instead of opening it for editing: honeycomb waxes it for good, dyes and ink sacs recolor or glow its text. */
+const SIGN_APPLICATOR = /^(?:honeycomb|ink_sac|glow_ink_sac|[a-z_]+_dye)$/;
+
+/** The member `key` of `value` when it is an object that has one, else undefined: how the NBT the server sends is read without trusting its shape. */
+function field(value: unknown, key: string): unknown {
+  return typeof value === "object" && value !== null ? Reflect.get(value, key) : undefined;
+}
+
+/** The text of one NBT text component: a plain string, a tagged string `{ type, value }`, or a compound with a `text` child. */
+function componentText(component: unknown): string {
+  if (typeof component === "string") return component;
+  const payload = field(component, "value");
+  if (typeof payload === "string") return payload;
+  const text = field(field(payload, "text"), "value");
+  return typeof text === "string" ? text : JSON.stringify(payload ?? component);
+}
+
+/** The four lines on one side of a sign as the client holds them, or undefined when the client holds no text for it. */
+function signLines(block: Block, side: Side): string[] | undefined {
+  const messages = field(field(field(field(field(block.entity, "value"), `${side}_text`), "value"), "messages"), "value");
+  const list = field(messages, "value");
+  if (!Array.isArray(list)) return undefined;
+  return Array.from({ length: 4 }, (_, i) => (i < list.length ? componentText(list[i]) : ""));
+}
+
+function isWaxed(block: Block): boolean {
+  const flags = field(field(block.entity, "value"), "is_waxed") ?? field(field(block.entity, "value"), "isWaxed");
+  const flag = field(flags, "value");
+  return flag === 1 || flag === true;
+}
+
+const where = (pos: Point) => `(${pos.x}, ${pos.y}, ${pos.z})`;
+
+/** Mineflayer decodes the NBT the server sends as plain UTF-8, but NBT keeps a character outside the BMP (an emoji) as two surrogates of three bytes each, which it reads as six replacement characters. This is what a correct write of `text` reads as. */
+const asNbtRead = (text: string) => text.replace(/[\u{10000}-\u{10FFFF}]/gu, "\uFFFD".repeat(6));
+
+/**
+ * The sign at `pos` that the bot can reach, with its editor state checked, or a thrown error that names the cause and the fix.
+ * Nothing here touches the world.
+ */
+function signToEdit(ctx: RoutineContext, pos: Vec3): Block {
+  const { bot } = ctx;
+  const block = bot.blockAt(pos);
+  if (!block) throw new Error(`the block at ${where(pos)} is not loaded: walk closer with move.to, then call again.`);
+  if (!/_sign$/.test(block.name)) {
+    throw new Error(`there is no sign at ${where(pos)}: the block there is ${block.name}. Place one first with place.place({ at: { x: ${pos.x}, y: ${pos.y}, z: ${pos.z} }, item: "oak_sign" }), then call social.sign again.`);
+  }
+  if (isWaxed(block)) {
+    throw new Error(`the ${block.name} at ${where(pos)} is waxed, and a waxed sign can never be edited. Break it with dig.dig and place a new one with place.place({ at: { x: ${pos.x}, y: ${pos.y}, z: ${pos.z} }, item: "${block.name}" }).`);
+  }
+  const distance = bot.entity.position.offset(0, EYE_HEIGHT, 0).distanceTo(pos.offset(0.5, 0.5, 0.5));
+  if (distance > REACH) {
+    throw new Error(`the ${block.name} at ${where(pos)} is ${distance.toFixed(1)} blocks from the bot's eyes, and signs can be edited from ${REACH} blocks at most. Walk within reach first with move.to, then call again.`);
+  }
+  return block;
+}
+
+/**
+ * Runs `work` with a main hand that cannot change the sign: using honeycomb, a dye, or an ink sac on a sign waxes, colors, or glows it and
+ * opens no editor. A hand holding one of those is moved to another hotbar slot (an empty one when there is one) for the duration, and moved back.
+ */
+async function withoutApplicatorInHand<T>(ctx: RoutineContext, work: () => Promise<T>): Promise<T> {
+  const { bot } = ctx;
+  if (!bot.heldItem || !SIGN_APPLICATOR.test(bot.heldItem.name)) return work();
+  const hotbar = Array.from({ length: 9 }, (_, i) => bot.inventory.slots[HOTBAR_START + i]);
+  const empty = hotbar.findIndex((stack) => !stack);
+  const free = empty >= 0 ? empty : hotbar.findIndex((stack) => stack && !SIGN_APPLICATOR.test(stack.name));
+  if (free < 0) throw new Error(`the main hand holds ${bot.heldItem.name}, which would change the sign instead of opening it, and every hotbar slot holds honeycomb, dye, or ink: free one hotbar slot (inventory.toss), then call again.`);
+  const original = bot.quickBarSlot;
+  bot.setQuickBarSlot(free);
+  try {
+    return await work();
+  } finally {
+    bot.setQuickBarSlot(original);
+  }
+}
+
+/** Uses the sign so that the server opens its editor for the bot, and resolves once it has. */
+async function openEditor(ctx: RoutineContext, block: Block): Promise<void> {
+  const { bot } = ctx;
+  let open = false;
+  const onOpen = (opened: Block | null) => {
+    if (opened?.position.equals(block.position)) open = true;
+  };
+  bot.on("signOpen", onOpen);
+  try {
+    await bot.activateBlock(block);
+    for (let waited = 0; !open; waited += 50) {
+      if (waited >= EDITOR_WAIT_MS) {
+        throw new Error(`the server did not open the ${block.name} at ${where(block.position)} for editing within ${EDITOR_WAIT_MS / 1000} s: another player may be editing it, the sign may have just been waxed, or this bot may not build here (adventure mode or a protected area). Try again, or choose another sign.`);
+      }
+      await ctx.sleep(50);
+    }
+  } finally {
+    bot.off("signOpen", onOpen);
+  }
+}
+
+export const sign = defineRoutine(
+  {
+    name: "social.sign",
+    description:
+      "Write `lines` (1 to 4 strings, each at most 45 characters; about 15 characters show per line, so keep lines short) on the existing sign at `at` ({x,y,z} or [x,y,z]). `side`: \"front\" (default) or \"back\". The sign must already stand there (place it with place.place, e.g. item \"oak_sign\") and be within 4.5 blocks of the bot; walk closer first with move.to. A waxed sign cannot be written. Lines you leave out end up empty. Honeycomb, dye, or ink in the main hand is set aside while writing, so the sign is never waxed or recolored. Returns { at, side, lines } with the four lines read back from the sign, and throws if the sign does not show what was written.",
+    args: z.object({
+      at: Position,
+      lines: z
+        .array(
+          z
+            .string()
+            .max(SIGN_LINE_MAX, `a sign line holds at most ${SIGN_LINE_MAX} characters: shorten this line (about 15 show per line), or move text onto another line`)
+            .refine((line) => !/[\r\n]/.test(line), "a sign line cannot contain a line break: put each line as its own entry of `lines`"),
+        )
+        .min(1, "give 1 to 4 lines: pass `lines` as an array of strings, e.g. [\"Welcome\", \"to the shop\"]")
+        .max(4, "a sign holds 4 lines at most: pass 4 or fewer entries in `lines`, or write another sign"),
+      side: z.enum(SIDES).default("front"),
+    }),
+    returns: z.object({ at: Point, side: z.enum(SIDES), lines: z.array(z.string()) }),
+  },
+  async (ctx, { at, lines, side }) => {
+    const { bot } = ctx;
+    const pos = toVec3(at).floored();
+    const block = signToEdit(ctx, pos);
+    await withoutApplicatorInHand(ctx, async () => {
+      await openEditor(ctx, block);
+      bot.updateSign(block, lines.join("\n"), side === "back");
+    });
+
+    const wanted = Array.from({ length: 4 }, (_, i) => lines[i] ?? "");
+    for (let waited = 0; ; waited += 50) {
+      const read = bot.blockAt(pos);
+      const kept = read && /_sign$/.test(read.name) ? signLines(read, side) : undefined;
+      if (kept?.every((line, i) => line === asNbtRead(wanted[i] ?? ""))) return { at: { x: pos.x, y: pos.y, z: pos.z }, side, lines: wanted };
+      if (waited >= READBACK_MS) {
+        throw new Error(`the ${side} of the sign at ${where(pos)} shows ${kept ? JSON.stringify(kept) : "no text the bot can read"} instead of ${JSON.stringify(wanted)}: the server kept something else (it may filter some characters) or did not take the edit. Change the text and call again.`);
+      }
+      await ctx.sleep(50);
+    }
+  },
+);
+
+const BOOK_PAGES_MAX = 100;
+const BOOK_PAGE_MAX = 1024;
+const BOOK_TITLE_MAX = 32;
+
+/** Mineflayer implements `bot.signBook` but leaves it out of its typings. */
+type SigningBot = Bot & { signBook(slot: number, pages: string[], author: string, title: string): Promise<void> };
+
+function canSignBooks(bot: Bot): bot is SigningBot {
+  return typeof Reflect.get(bot, "signBook") === "function";
+}
+
+interface BookContents {
+  item: string;
+  title?: string;
+  author?: string;
+  pages: string[];
+}
+
+/** What a book stack holds, as the server reported it (the two item components keep their pages in different shapes), or undefined for any other item. */
+function bookContents(stack: Item | null | undefined): BookContents | undefined {
+  if (!stack || (stack.name !== "writable_book" && stack.name !== "written_book")) return undefined;
+  const components = field(stack, "componentMap");
+  const data = components instanceof Map ? field(components.get(`${stack.name}_content`), "data") : undefined;
+  const list = field(data, "pages");
+  const pages = Array.isArray(list) ? list.map((page) => componentText(field(page, "content"))) : [];
+  if (stack.name === "writable_book") return { item: stack.name, pages };
+  const [title, author] = [field(data, "rawTitle"), field(data, "author")];
+  return { item: stack.name, ...(typeof title === "string" && { title }), ...(typeof author === "string" && { author }), pages };
+}
+
+function describeBook(contents: BookContents | undefined): string {
+  if (!contents) return "no book";
+  const signed = contents.item === "written_book" ? ` titled ${JSON.stringify(contents.title)} by ${JSON.stringify(contents.author)}` : "";
+  return `a ${contents.item}${signed} with ${contents.pages.length} page${contents.pages.length === 1 ? "" : "s"} ${JSON.stringify(contents.pages).slice(0, 200)}`;
+}
+
+export const book = defineRoutine(
+  {
+    name: "social.book",
+    description:
+      "Write `pages` (1 to 100 strings, each 1 to 1024 characters) into the first writable_book (book and quill) in the inventory, replacing what it held. A writable_book is made from a book, an ink_sac and a feather. Without `title` the book stays a writable_book that can be written again (a ledger). With `title` (1 to 32 characters) the book is signed: it becomes a written_book with you as the author, and can never be edited again. Returns { item, title?, pages } where pages is the count read back, and throws if the book does not hold what was written.",
+    args: z.object({
+      pages: z
+        .array(z.string().min(1, "a book page cannot be empty: give every page some text").max(BOOK_PAGE_MAX, `a book page holds at most ${BOOK_PAGE_MAX} characters: split this text over more pages`))
+        .min(1, "a book needs at least 1 page: pass `pages` as an array of strings, e.g. [\"First page\", \"Second page\"]")
+        .max(BOOK_PAGES_MAX, `a book holds at most ${BOOK_PAGES_MAX} pages: pass fewer entries in \`pages\``),
+      title: z
+        .string()
+        .max(BOOK_TITLE_MAX, `a book title holds at most ${BOOK_TITLE_MAX} characters: shorten the title`)
+        .refine((title) => title.trim() !== "", "the book title is blank: give a title of 1 to 32 characters, or leave `title` out to keep the book editable")
+        .optional(),
+    }),
+    returns: z.object({ item: z.enum(["writable_book", "written_book"]), title: z.string().optional(), pages: z.number().int() }),
+  },
+  async (ctx, { pages, title }) => {
+    const { bot } = ctx;
+    const stack = bot.inventory.items().find((item) => item.name === "writable_book");
+    if (!stack) {
+      throw new Error("the inventory holds no writable_book (book and quill) to write in. Craft one first (craft.craft: book + ink_sac + feather), or pick one up, then call social.book again.");
+    }
+    // Mineflayer moves the book to the hotbar to edit it and back afterwards, and updates the stack's own `slot` on the way: the slot to read back is where it started.
+    const slot = stack.slot;
+    const wanted = title === undefined ? ("writable_book" as const) : ("written_book" as const);
+    const holdsWritten = (contents: BookContents | undefined) =>
+      contents?.item === wanted && contents.pages.length === pages.length && contents.pages.every((text, i) => text === (title === undefined ? pages[i] : asNbtRead(pages[i] ?? ""))) && (title === undefined || (contents.title === title && contents.author === bot.username));
+
+    // A server sends nothing back for an edit that changes nothing, so a book that already holds these pages is done.
+    if (title === undefined && holdsWritten(bookContents(stack))) return { item: wanted, pages: pages.length };
+
+    try {
+      if (title === undefined) await bot.writeBook(slot, pages);
+      else if (canSignBooks(bot)) await bot.signBook(slot, pages, bot.username, title);
+      else throw new Error("this bot's Mineflayer has no signBook");
+    } catch (error) {
+      throw new Error(`the server did not confirm the book edit (${error instanceof Error ? error.message : String(error)}): the book was not written. Try again.`, { cause: error });
+    }
+
+    for (let waited = 0; ; waited += 50) {
+      const kept = bookContents(bot.inventory.slots[slot]);
+      if (holdsWritten(kept)) return { item: wanted, ...(title !== undefined && { title }), pages: pages.length };
+      if (waited >= READBACK_MS) {
+        throw new Error(`slot ${slot} holds ${describeBook(kept)} instead of the ${wanted} that was written: the server kept something else or did not take the edit. Check the inventory and call again.`);
+      }
+      await ctx.sleep(50);
+    }
   },
 );
