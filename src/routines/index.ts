@@ -49,7 +49,7 @@ const CATALOG: readonly CatalogEntry[] = [
   entry("place", () => import("./place.ts"), ["place"]),
   entry("inventory", () => import("./inventory.ts"), ["list", "count", "equip", "toss"]),
   entry("craft", () => import("./craft.ts"), ["craft", "table"]),
-  entry("items", () => import("./items.ts"), ["recipes", "drops"]),
+  entry("items", () => import("./items.ts"), ["recipes", "drops", "rename"]),
   entry("furnace", () => import("./furnace.ts"), ["smelt", "take"]),
   entry("container", () => import("./container.ts"), ["list", "deposit", "withdraw"]),
   entry("survival", () => import("./survival.ts"), ["eat", "sleep", "wake", "armor"]),
@@ -61,7 +61,7 @@ const CATALOG: readonly CatalogEntry[] = [
   entry("crafter", () => import("./crafter.ts"), ["make"]),
   entry("builder", () => import("./builder.ts"), ["materials", "build", "check", "line", "arc", "fill", "box", "combine"]),
   entry("explorer", () => import("./explorer.ts"), ["scan", "explore", "remember", "places", "waypoints", "travel", "surface"]),
-  entry("social", () => import("./social.ts"), ["say", "waitForChat", "players", "follow", "give"]),
+  entry("social", () => import("./social.ts"), ["say", "waitForChat", "players", "follow", "give", "gesture", "sign", "book"]),
 ];
 
 // Imported one after the other, in catalog order, so that a module's own imports of the modules it uses evaluate first.

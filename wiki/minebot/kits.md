@@ -31,7 +31,7 @@ A module is either a primitive or a composite. A primitive does one thing. A com
 | `place` | Placing one block, digging out what is in the way. |
 | `inventory` | Listing, counting, equipping, and tossing items. |
 | `craft` | Crafting at a table within reach; finding one. |
-| `items` | Recipe lookups; dropped items on the ground. |
+| `items` | Recipe lookups; dropped items on the ground; renaming an item at an anvil. |
 | `furnace` | Smelting at a furnace within reach: fuel, input, output. |
 | `container` | Listing a chest, barrel, or shulker box; depositing and withdrawing items. |
 | `survival` | Eating the best food, sleeping in a bed and waking, wearing the best armor. |
@@ -45,7 +45,7 @@ A module is either a primitive or a composite. A primitive does one thing. A com
 | `crafter` | move, sense, place, inventory, craft, items, furnace | Crafting chains (`make`), smelting furnace outputs, finding or placing crafting tables and furnaces. |
 | `builder` | move, sense, dig, place, inventory | Building structures from blueprints. |
 | `explorer` | move, sense, dig | Scanning, exploring, remembering places (`remember`, `places`), and climbing out of holes (`surface`). |
-| `social` | move, sense, inventory | Chat, following, and giving items to other players. |
+| `social` | move, sense, inventory | Chat, following, and giving items to other players; gestures (nod, wave, and more); writing a sign or a book. |
 
 ## Find the routine for a job
 

@@ -1,11 +1,13 @@
 // Serves one body's API as MCP tools over stdio. The body endpoint is re-read per call, so body restarts are fine.
 //
-// The default `core` tool set is what an agent needs to drive a body through runs: observe,
-// run, stop, wait, events, and the references. Everything else (notes, status, chat, wiki
-// management) is a ctx member, so `core` leaves those tools out; `full` serves them
-// as tools too. Tools for optional features exist only while the body offers the feature, so an
-// agent does not learn about features its body lacks. `toolPlan` derives the gated tool set from
-// the capability table; the same function is what the capability test turns against every feature.
+// The default `core` tool set is what an agent needs to drive a body through runs: observe, run,
+// stop, wait, events, a finished run's outcome (get_run), chat, and the references. send_chat is core
+// although a run's ctx has bot.chat: while another run holds the slot a new run is refused, but chat is not.
+// Everything else (notes, status, wiki management) is a ctx member, so `core` leaves those tools out;
+// `full` serves them as tools too. Tools for optional features exist only while the body offers the
+// feature, so an agent does not learn about features its body lacks. `toolPlan` derives the gated
+// tool set from the capability table; the same function is what the capability test turns against
+// every feature.
 import { McpServer, type RegisteredTool } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
@@ -271,13 +273,37 @@ export async function serveMcp(bodyName: string, toolSet: ToolSet): Promise<void
     ({ seq }) => call(async (c) => formatRun(await c.runs(seq))),
   );
 
-  const sendChat = server.registerTool(
+  // The limit comes from ChatInput, the schema POST /chat validates with, so the whisper check and the
+  // text below cannot drift from it.
+  const CHAT_LIMIT = ChatInput.shape.message.maxLength!;
+
+  server.registerTool(
     "send_chat",
     {
-      description: "Send a public chat message (or a command such as /msg) as the player.",
-      inputSchema: { message: ChatInput.shape.message },
+      description:
+        "Speak as the player: a public chat `message`, or a whisper to one player by passing `to`. Works while a run is in progress: run_program and call_routine are refused with a busy error then, but send_chat is not. Without `to` a `message` that starts with / is sent as a command; with `to` the whisper is `/msg <to> <message>`, so a leading / is whispered literally and runs no command. Whispering a player who is not online still answers sent; the server's 'No player was found' reply arrives as a system event (see get_events, wait_for).",
+      inputSchema: {
+        message: ChatInput.shape.message.describe(
+          `What to say: 1-${CHAT_LIMIT} characters without \`to\`, and a leading / sends it as a command, e.g. /time set day. With \`to\` the text is whispered as-is — a leading / stays text and runs no command — and must leave room for \`/msg <to> \`: at most ${CHAT_LIMIT} minus that prefix's length, e.g. ${CHAT_LIMIT - 12} characters for a 6-character name.`,
+        ),
+        to: z.string().optional().describe("A player's name (1-16 of letters, digits, and _): whisper so only that player sees the message, sent as /msg. Omit to speak publicly."),
+      },
     },
-    ({ message }) => call(async (c) => json(await c.chat(message))),
+    ({ message, to }) =>
+      call(async (c) => {
+        if (to === undefined) return json(await c.chat(message));
+        // The client composes the whisper as a /msg chat; POST /chat sees plain chat.
+        if (!/^[A-Za-z0-9_]{1,16}$/.test(to)) {
+          throw new Error(`to must be a Minecraft player name: 1-16 of letters, digits, and _, e.g. "ana_1" (got ${JSON.stringify(to)})`);
+        }
+        const prefix = `/msg ${to} `;
+        if (prefix.length + message.length > CHAT_LIMIT) {
+          throw new Error(
+            `"${prefix}" is ${prefix.length} characters, so with Minecraft's ${CHAT_LIMIT}-character chat limit the longest message you can whisper to ${to} is ${CHAT_LIMIT - prefix.length} characters; this message is ${message.length}. Nothing was sent.`,
+          );
+        }
+        return json(await c.chat(prefix + message));
+      }),
   );
 
   server.registerTool(
@@ -489,8 +515,8 @@ export async function serveMcp(bodyName: string, toolSet: ToolSet): Promise<void
   }
 
   for (const tool of [listBuiltins, builtinDocs, builtinSearch, builtinSource, wikiSearch, wikiRead, wikiList, addLesson, callRoutine, bindRoutine, listRoutines, routineSave, routineSource, routineVersions, routineRevert, unbindRoutine]) tool.disable();
-  // Ungated tools outside the core set: a run's context has notes, status(), and bot.chat.
-  if (toolSet !== "full") for (const tool of [status, notesList, notesSet, notesDelete, sendChat]) tool.disable();
+  // Ungated tools outside the core set: a run's context has notes and status().
+  if (toolSet !== "full") for (const tool of [status, notesList, notesSet, notesDelete]) tool.disable();
   await sync();
   await server.connect(new StdioServerTransport());
 }

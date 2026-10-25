@@ -29,7 +29,7 @@ The npm package `minebot-sdk` is the authoring library plus the CLI; the body st
 
 A body is two processes. The supervisor answers health, events, waits, and stop, and forwards every other request to the bot host, which holds the player connection and runs the modules. If the bot host crashes, or the supervisor kills it for a run that does not stop, the supervisor forks a replacement that reconnects as the same player. The restart waits 1 second; each restart in quick succession doubles the wait, up to 60 seconds, and a host that stays up for 60 seconds starts over at 1 second. A restart loses what the old host held in memory, such as `globalThis` and the running run; state on disk stays. The supervisor ends the lost run with an error that says the bot host was restarted.
 
-The MCP server has two tool sets. `core`, the default, serves what an agent needs to act: `observe`, `run_program`, `stop_program`, `wait_for`, `get_events`, `api_reference`, `builtin_docs`, `call_routine`, and `bind_routine`. A run reaches every other operation through `ctx`, except routines: a run cannot bind one, so `call_routine` and `bind_routine` are in the core set, and `builtin_docs` documents what a call can name. The core set keeps the tool list small. `minebot mcp --tools full` also serves notes, status, chat, the other built-in tools (`list_builtins`, `builtin_search`, `builtin_source`), the wiki, and the routine library (`list_routines`, `routine_save`, `routine_source`, `routine_versions`, `routine_revert`, `unbind_routine`) as tools of their own. In both sets, the capability table decides which gated tools appear (`toolPlan` in `src/client/mcp.ts`): the built-in tools need built-ins, `call_routine` needs routines or built-ins, and the routine tools need routines. A tool description mentions reflexes only on a body that has reflexes.
+The MCP server has two tool sets. `core`, the default, serves what an agent needs to act: `observe`, `run_program`, `stop_program`, `get_run`, `wait_for`, `get_events`, `send_chat`, `api_reference`, `builtin_docs`, `call_routine`, and `bind_routine`. A run reaches every other operation through `ctx`, except routines: a run cannot bind one, so `call_routine` and `bind_routine` are in the core set, and `builtin_docs` documents what a call can name. Chat is the other exception: while another run holds the slot a new run is refused, and `send_chat` still speaks. The core set keeps the tool list small. `minebot mcp --tools full` also serves notes, status, the other built-in tools (`list_builtins`, `builtin_search`, `builtin_source`), the wiki, and the routine library (`list_routines`, `routine_save`, `routine_source`, `routine_versions`, `routine_revert`, `unbind_routine`) as tools of their own. In both sets, the capability table decides which gated tools appear (`toolPlan` in `src/client/mcp.ts`): the built-in tools need built-ins, `call_routine` needs routines or built-ins, and the routine tools need routines. A tool description mentions reflexes only on a body that has reflexes.
 
 ## The boundary between the SDK and a harness
 
@@ -84,7 +84,7 @@ Primitive modules do one thing. The routine modules `gatherer`, `crafter`, `buil
 | `place` | `place` |
 | `inventory` | `list`, `count`, `equip`, `toss` |
 | `craft` | `craft`, `table` |
-| `items` | `recipes`, `drops` |
+| `items` | `recipes`, `drops`, `rename` |
 | `furnace` | `smelt`, `take` |
 | `container` | `list`, `deposit`, `withdraw` |
 | `survival` | `eat`, `sleep`, `wake`, `armor` |
