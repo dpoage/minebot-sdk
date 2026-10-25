@@ -259,6 +259,8 @@ async function placeAt(ctx: RoutineContext, pos: Vec3, item: string): Promise<bo
   const stack = bot.inventory.items().find((i) => i.name === name);
   if (!stack) throw new Error(`no ${name} in inventory`);
   await bot.equip(stack, "hand");
+  const heldSlot = bot.heldItem?.slot ?? -1;
+  const heldCount = bot.heldItem?.count;
   const before = bot.blockAt(pos);
   if (!before) throw new Error(`${pos} is not loaded`);
   const where = `${name} at ${pos} against ${describeFace(face)}`;
@@ -278,6 +280,11 @@ async function placeAt(ctx: RoutineContext, pos: Vec3, item: string): Promise<bo
   const problem = await settle(ctx, pos, wanted, before);
   if (problem !== null) {
     throw new Error(`placed ${where}, but ${problem}, not ${name}.${secondCellNote(ctx, pos, name)}${solid ? bodiesNote(ctx, pos, name) : ""}${tooFar} Free the cells the block needs and call again.`);
+  }
+  // The server takes the item from the hand a moment after the block shows. Until the inventory says so, a next call
+  // could pick this stack again, now empty on the server, and place nothing.
+  for (let waited = 0; bot.game.gameMode !== "creative" && bot.inventory.slots[heldSlot]?.count === heldCount && waited < SETTLE_MS; waited += SETTLE_STEP_MS) {
+    await ctx.sleep(SETTLE_STEP_MS);
   }
   return true;
 }

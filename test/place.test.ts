@@ -334,6 +334,22 @@ describe("place.place: every cell holds the block", () => {
     assert.equal(h.count("torch"), 1);
   });
 
+  it("returns only once the server has taken the item from the hand, so a next call does not pick a stack that is empty on the server", async () => {
+    const h = createHarness({ inventory: { cobblestone: 2 } });
+    // The block shows at once; the inventory shows the item taken only once a game tick has passed, as on a real server.
+    h.bot.placeBlock = async (reference, face) => {
+      const at = reference.position.plus(face);
+      h.setBlock([at.x, at.y, at.z], "cobblestone");
+      const held = h.bot.heldItem;
+      if (!held) throw new Error("nothing in hand");
+      const placedAt = h.bot.time.age;
+      const count = held.count;
+      Object.defineProperty(held, "count", { configurable: true, get: () => (h.bot.time.age > placedAt ? count - 1 : count) });
+    };
+    assert.equal(await h.run(place.place, { at: [1, 64, 0], item: "cobblestone" }), true);
+    assert.equal(h.count("cobblestone"), 1, "returned before the inventory showed the item used");
+  });
+
   it("returns true for a pitcher pod: a young pitcher crop fills one cell though it has a lower half", async () => {
     const h = createHarness({ inventory: { pitcher_pod: 1 } });
     serverPlaces(h, "pitcher_crop", { age: 0, half: "lower" });
