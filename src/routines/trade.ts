@@ -107,15 +107,78 @@ function withListeners<T>(emitters: readonly Listened[], start: () => T): { valu
   };
 }
 
+/** The window types a merchant opens: a villager's and a wandering trader's trade window is the same one. */
+const MERCHANT_WINDOW_TYPES: Record<string, true> = { "minecraft:villager": true, "minecraft:merchant": true };
+
+/** A merchant window that can be closed: Mineflayer attaches `close` once the window's contents have arrived, and closing one before that would copy its empty player slots over the inventory. */
+function isMerchantWindow(window: unknown): window is Villager & { close: () => Promise<unknown> } {
+  if (typeof window !== "object" || window === null) return false;
+  if (!MERCHANT_WINDOW_TYPES[String((window as Villager).type)]) return false;
+  return typeof (window as Villager & { close?: unknown }).close === "function";
+}
+
+/** Closes `window` unless it is no longer the open window, so a window another call opened in the meantime is not taken from it. */
+async function closeStrayed(bot: Bot, window: Villager & { close: () => Promise<unknown> }): Promise<void> {
+  if (bot.currentWindow === window) await window.close();
+}
+
 /**
- * Walks to the nearest merchant within `radius` and opens its trade window. Mineflayer's `openVillager`
- * asserts that the entity's type is the villager's, though a wandering trader opens the same merchant
- * window; it is given a view of the merchant that reports the villager type, and the shared entity is
- * not touched. An open that times out or is stopped leaves nothing behind: Mineflayer's open would keep
- * waiting, and its window and offer listeners would take the next merchant's window and offers as theirs.
+ * A merchant window the call that asked for it no longer waits for. A stop or a timeout during the
+ * open removes Mineflayer's own listeners, but its persistent open_window handler still takes a
+ * window the server sends afterwards: nothing closes it, the server keeps the trade session open,
+ * and every later open on that merchant times out while other inventory routines trip over the
+ * window. For LATE_WINDOW_MS after a failed open, a merchant window that opens is closed.
+ */
+interface Watcher {
+  onOpen: (window: unknown) => void;
+  timer: NodeJS.Timeout;
+}
+
+const watchers = new WeakMap<Bot, Watcher>();
+/** Past a round trip by an order of magnitude, inside the two seconds the window lifecycle has after a call ends. */
+const LATE_WINDOW_MS = 1_500;
+
+/** Watches for a merchant window opening after this call failed, and closes it. */
+function watchLateWindow(bot: Bot): void {
+  if (watchers.has(bot)) return;
+  const onOpen = (window: unknown) => {
+    if (!isMerchantWindow(window)) return;
+    stopWatching(bot);
+    void closeStrayed(bot, window).catch(() => undefined);
+  };
+  const timer = setTimeout(() => stopWatching(bot), LATE_WINDOW_MS);
+  watchers.set(bot, { onOpen, timer });
+  bot.on("windowOpen", onOpen);
+  // The open may have lost only the race against the stop or the timeout: the window is already there.
+  const current = bot.currentWindow;
+  if (isMerchantWindow(current)) onOpen(current);
+}
+
+/** Stops watching for a late merchant window: the next open takes the window back. */
+function stopWatching(bot: Bot): void {
+  const watched = watchers.get(bot);
+  if (!watched) return;
+  bot.off("windowOpen", watched.onOpen);
+  clearTimeout(watched.timer);
+  watchers.delete(bot);
+}
+
+/**
+ * Walks to the nearest merchant within `radius` and opens its trade window. This call owns the
+ * merchant window for its whole life: a window still open when it starts is a stray from a call
+ * that ended without closing it, and closing it is what lets the server open this one. Mineflayer's
+ * `openVillager` asserts that the entity's type is the villager's, though a wandering trader opens
+ * the same merchant window; it is given a view of the merchant that reports the villager type, and
+ * the shared entity is not touched. An open that times out or is stopped leaves nothing behind:
+ * Mineflayer's open would keep waiting, and its window and offer listeners would take the next
+ * merchant's window and offers as theirs — and a window the server sends after the call ended is
+ * closed by the watcher this arms.
  */
 async function openMerchant(ctx: RoutineContext, radius: number): Promise<{ merchant: string; window: Villager }> {
   const { bot } = ctx;
+  stopWatching(bot);
+  const stray = bot.currentWindow;
+  if (isMerchantWindow(stray)) await closeStrayed(bot, stray);
   const entity = nearestMerchant(ctx, radius);
   if (!entity) throw new Error(`no villager or wandering trader within ${radius} blocks; walk closer with move.to or pass a larger radius`);
   const { x, y, z: zed } = entity.position;
@@ -123,7 +186,6 @@ async function openMerchant(ctx: RoutineContext, radius: number): Promise<{ merc
   await move.to(ctx, { position: { x, y, z: zed }, range: WALK_RANGE });
   ctx.signal.throwIfAborted();
   const view = Object.create(entity, { entityType: { value: bot.registry.entitiesByName.villager!.id } }) as Entity;
-  const before = bot.currentWindow;
   const opening = withListeners([bot as unknown as Listened, bot._client as unknown as Listened], () => bot.openVillager(view));
   try {
     const expired = () =>
@@ -131,8 +193,7 @@ async function openMerchant(ctx: RoutineContext, radius: number): Promise<{ merc
     return { merchant, window: await bounded(opening.value, OPEN_TIMEOUT_MS, expired, ctx.signal) };
   } catch (error) {
     opening.remove();
-    const late = bot.currentWindow;
-    if (late && late !== before) await bot.closeWindow(late);
+    watchLateWindow(bot);
     throw error;
   }
 }
@@ -389,11 +450,73 @@ class MerchantWindow {
     return { left: totalsOf([window.selectedItem, ...INPUT_SLOTS.map((slot) => window.slots[slot])]), ...(cause !== undefined && { cause }) };
   }
 
-  /** Closes the window, unless the server did; either way Mineflayer's listeners for it go. */
+  /**
+   * Closes the window, unless the server did; either way Mineflayer's listeners for it go. A window
+   * the server closed also hands its player slots to the inventory: Mineflayer's own close does that
+   * for a window the client closes, but its server-close handler does not, and without it the model
+   * keeps the inventory as it was before the window opened.
+   */
   async close(): Promise<void> {
     this.#bot.off("windowClose", this.#onClose);
-    if (this.closed) this.window.emit("close");
-    else await this.window.close();
+    if (this.closed) {
+      this.#copyBack();
+      this.window.emit("close");
+    } else {
+      await this.window.close();
+    }
+  }
+
+  /** Copies the window's player slots into the inventory, as Mineflayer's close of a client-closed window does. */
+  #copyBack(): void {
+    const inventory = this.#bot.inventory;
+    const offset = this.window.inventoryStart - inventory.inventoryStart;
+    for (let i = this.window.inventoryStart; i < this.window.inventoryEnd; i++) {
+      const item = this.window.slots[i];
+      const slot = i - offset;
+      if (item) item.slot = slot;
+      this.#put(slot, item ?? null);
+    }
+  }
+
+  /** Sets an inventory slot through updateSlot, which also tells the held-item tracker; the testing harness's inventory keeps plain slots and no updateSlot. */
+  #put(slot: number, item: Item | null): void {
+    const inventory = this.#bot.inventory;
+    if (Reflect.has(inventory, "updateSlot")) inventory.updateSlot(slot, item as Item);
+    else inventory.slots[slot] = item;
+  }
+
+  /**
+   * Puts what the window still held when the server closed it into the inventory model, as the
+   * server's close does: onto stacks with room, then into empty slots. Returns what fits nowhere,
+   * which the server drops at the bot. Only for a close the server's own syncs never followed: they
+   * place the returned items (and settle an output click whose answer the close cut off) better than
+   * this model can.
+   */
+  modelReturn(): Totals {
+    const inventory = this.#bot.inventory;
+    const dropped: Totals = {};
+    for (const item of [this.window.selectedItem, ...INPUT_SLOTS.map((slot) => this.window.slots[slot])]) {
+      if (!item) continue;
+      let left = item.count;
+      const key = keyOf(item);
+      for (let i = inventory.inventoryStart; left > 0 && i < inventory.inventoryEnd; i++) {
+        const there = inventory.slots[i];
+        if (!there || keyOf(there) !== key || there.count >= there.stackSize) continue;
+        const moved = Math.min(left, there.stackSize - there.count);
+        there.count += moved;
+        left -= moved;
+        this.#put(i, there);
+      }
+      for (let i = inventory.inventoryStart; left > 0 && i < inventory.inventoryEnd; i++) {
+        if (inventory.slots[i]) continue;
+        item.count = Math.min(left, item.stackSize);
+        item.slot = i;
+        left -= item.count;
+        this.#put(i, item);
+      }
+      if (left > 0) dropped[item.name] = (dropped[item.name] ?? 0) + left;
+    }
+    return dropped;
   }
 
   /** Tops trade slot `slot` up from the inventory until it holds `count` of `cost`'s item; false when the inventory has too few. */
@@ -402,7 +525,8 @@ class MerchantWindow {
     for (let moves = 0; (window.slots[slot]?.count ?? 0) < count; moves++) {
       const there = window.slots[slot];
       const source = this.inventory.findIndex((item) => item !== null && (there ? keyOf(item) === keyOf(there) : item.type === cost.type));
-      if (source < 0 || moves === 3) return false;
+      // One move takes a source stack; no real inventory needs more moves than it has stacks to give.
+      if (source < 0 || moves === 40) return false;
       await this.click(window.inventoryStart + source, 0, PICKUP, signal);
       await this.click(slot, 0, PICKUP, signal);
       if (window.selectedItem) await this.click(window.inventoryStart + source, 0, PICKUP, signal);
@@ -483,8 +607,22 @@ async function buyOffer(ctx: RoutineContext, index: number, times: number, radiu
     delta = difference(held, totalsOf(bot.inventory.items()));
     traded = wholeTrades(delta, unit, trades);
   }
+  // A window the server closed takes the cursor and the trade slots with it: the server syncs them
+  // back to the inventory after the close, and when it has not by now, their return is modeled here.
+  let dropped: Totals | undefined;
+  if (merchantWindow.closed && (traded === undefined || traded < made)) {
+    dropped = merchantWindow.modelReturn();
+    delta = difference(held, totalsOf(bot.inventory.items()));
+    traded = wholeTrades(delta, unit, trades);
+  }
+  // What a window the server closed still held came back with it, or found no room and dropped; any other close leaves it in the window for the server to return.
+  const back = merchantWindow.closed
+    ? dropped !== undefined && Object.keys(dropped).length > 0
+      ? `; ${listOf(dropped)} found no room in the inventory and dropped at ${x},${y},${zed}`
+      : ""
+    : stranded;
   if (traded === undefined) {
-    throw new Error(`${what} was traded, but the inventory changed by ${describeChange(delta)}, which is not a whole number of its trades (one trade changes it by ${describeChange(unit)})${stranded}; inventory.list shows what it holds now`);
+    throw new Error(`${what} was traded, but the inventory changed by ${describeChange(delta)}, which is not a whole number of its trades (one trade changes it by ${describeChange(unit)})${back}; inventory.list shows what it holds now`);
   }
   const why = stop ?? (made === 0 ? "the inventory is unchanged" : `the inventory shows ${traded} of the ${made} trades the window made`);
   if (traded === 0) throw new Error(`${what} did not trade: ${why}`);
@@ -514,7 +652,7 @@ export const buy = defineRoutine(
   {
     name: "trade.buy",
     description:
-      "Walk to within 2 blocks of the nearest villager or wandering trader within `radius` (default 8) and make offer number `index` (from trade.offers) up to `times` times (default 1). Returns { traded, gave: { item: count }, got: { item: count }, shortfall? } measured from the inventory, so it is what actually changed. It makes only the trades whose output and leftover inputs fit in the inventory, so nothing is dropped. When fewer than `times` trades happened (the offer ran out of uses, the inventory ran short of inputs or of room), `shortfall` names why. Fails, naming the cause and the counts, when no trade happens (the offer is sold out, an input is missing, the inventory has no room for the output, there is no such offer), and when the inventory changed by anything other than whole trades.",
+      "Walk to within 2 blocks of the nearest villager or wandering trader within `radius` (default 8) and make offer number `index` (from trade.offers) up to `times` times (default 1). Returns { traded, gave: { item: count }, got: { item: count }, shortfall? } measured from the inventory, so it is what actually changed. It makes only the trades whose output and leftover inputs fit in the inventory, so nothing is dropped. When fewer than `times` trades happened (the offer ran out of uses, the inventory ran short of inputs or of room, the merchant closed the window), `shortfall` names why; a window the server closes part way still reports the trades it made, with the inventory as the server has it. Fails, naming the cause and the counts, when no trade happens (the offer is sold out, an input is missing, the inventory has no room for the output, there is no such offer), and when the inventory changed by anything other than whole trades.",
     args: z.object({ index: z.number().int().nonnegative(), times: z.number().int().positive().default(1), radius: z.number().positive().default(8) }),
     returns: z.object({ traded: z.number(), gave: z.record(z.string(), z.number()), got: z.record(z.string(), z.number()), shortfall: z.string().optional() }),
   },

@@ -38,6 +38,10 @@ interface FakeMerchant {
 interface Faults {
   /** The server closes the window once it has made this many trades, as when the merchant is hurt or walks off. */
   closeAfter?: number;
+  /** The server closes the window on the click that follows this many answered trades, so no click is left unanswered. */
+  closeAfterAnswered?: number;
+  /** The server closes the window without syncing anything back, as a connection that drops the close's packets would. */
+  noSyncOnClose?: boolean;
   /** The server stops offering the output once it has made this many trades, and says nothing. */
   refuseAfter?: number;
   /** The server takes this much more of an item when the window closes. */
@@ -85,6 +89,8 @@ function merchantWindow(h: Harness, listed: readonly Listed[], faults: Faults = 
   let open = false;
   let made = 0;
   let window: (EventEmitter & { id: number; slots: (Item | null)[]; selectedItem: Item | null }) | undefined;
+  /** The player slots the server's close moved returned items into: the live server syncs those, and only those, back. */
+  let returnedTo: number[] = [];
 
   const drop = (item: Item) => {
     seen.dropped[item.name] = (seen.dropped[item.name] ?? 0) + item.count;
@@ -98,12 +104,14 @@ function merchantWindow(h: Harness, listed: readonly Listed[], faults: Faults = 
       const n = Math.min(left, there.stackSize - there.count);
       there.count += n;
       left -= n;
+      returnedTo.push(s);
     }
     for (let s = PLAYER_START; s < PLAYER_END && left > 0; s++) {
       if (slots[s]) continue;
       const n = Math.min(left, item.stackSize);
       slots[s] = copy(item, n);
       left -= n;
+      returnedTo.push(s);
     }
     return copy(item, left);
   };
@@ -191,30 +199,52 @@ function merchantWindow(h: Harness, listed: readonly Listed[], faults: Faults = 
     }
     if (slot < 2) refreshOutput();
   };
-  /** The server ends the session: the trade slots and the cursor go back to the inventory, or onto the ground. */
-  const finish = () => {
+  /**
+   * The server ends the session: the trade slots and the cursor go back to the inventory, or onto
+   * the ground. What the client learns depends on who closed: its own close copies the window it
+   * last saw (Mineflayer's close does) and the server syncs what its close changed; a server close
+   * only syncs — Mineflayer's handler for it copies nothing, which is what the routine has to make
+   * up for — and the syncs land after the close, as the live server's do.
+   */
+  const finish = (by: "client" | "server") => {
     open = false;
+    returnedTo = [];
     for (const item of [slots[0], slots[1], cursor]) {
       const left = item && toPlayer(item);
       if (left) drop(left);
     }
     slots[0] = slots[1] = slots[2] = cursor = null;
-    for (let s = PLAYER_START; s < PLAYER_END; s++) stock.set(s + INVENTORY_OFFSET, copy(slots[s]));
-    if (faults.takesOnClose) stock.remove(stock.make(faults.takesOnClose[0], 1).type, faults.takesOnClose[1]);
+    const sync = () => {
+      for (const s of returnedTo) stock.set(s + INVENTORY_OFFSET, copy(slots[s]));
+      if (faults.takesOnClose) stock.remove(stock.make(faults.takesOnClose[0], 1).type, faults.takesOnClose[1]);
+    };
+    if (by === "client") {
+      for (let s = PLAYER_START; s < PLAYER_END; s++) stock.set(s + INVENTORY_OFFSET, copy(window?.slots[s] ?? null));
+      sync();
+    } else if (!faults.noSyncOnClose) {
+      setImmediate(sync);
+    }
   };
-
+  let closing = false;
   client.write = (name, packet) => {
     assert.ok(open, `${name} sent with no trade window open`);
     if (name === "select_trade") return select(packet.slot!);
-    assert.equal(name, "window_click", `unexpected packet ${name}`);
-    click(packet.slot!, packet.mouseButton!, packet.mode!);
-    faults.onClick?.(made);
-    if (faults.closeAfter !== undefined && made >= faults.closeAfter) {
-      finish();
+    if (closing) {
+      finish("server");
       bot.currentWindow = null;
       bot.emit("windowClose", window);
       return;
     }
+    assert.equal(name, "window_click", `unexpected packet ${name}`);
+    click(packet.slot!, packet.mouseButton!, packet.mode!);
+    faults.onClick?.(made);
+    if (faults.closeAfter !== undefined && made >= faults.closeAfter) {
+      finish("server");
+      bot.currentWindow = null;
+      bot.emit("windowClose", window);
+      return;
+    }
+    if (faults.closeAfterAnswered !== undefined && made >= faults.closeAfterAnswered) closing = true;
     // The answer to a click whose state id the server does not have: the whole window, a moment later.
     setImmediate(() => {
       if (!open || !window) return;
@@ -232,6 +262,7 @@ function merchantWindow(h: Harness, listed: readonly Listed[], faults: Faults = 
     cursor = null;
     selected = -1;
     made = 0;
+    closing = false;
     open = true;
     // Mineflayer's offer listener, which only the window's close event removes.
     const onTrades = () => {};
@@ -247,7 +278,7 @@ function merchantWindow(h: Harness, listed: readonly Listed[], faults: Faults = 
       close: async () => {
         seen.closed++;
         bot.currentWindow = null;
-        if (open) finish();
+        if (open) finish("client");
         opened.emit("close");
       },
     });
@@ -365,7 +396,25 @@ describe("trade.offers", () => {
     assert.deepEqual(await h.run(trade.offers), [{ index: 0, give: [{ item: "emerald", count: 1 }], get: { item: "bread", count: 3 }, uses: 0, maxUses: 8, disabled: false }]);
   });
 
-  it("stops waiting for the window when the run is stopped, and leaves no listener behind", async () => {
+  it("stops waiting for the window when the run is stopped, and leaves no listener behind once its late-window watch ends", async (t) => {
+    const h = createHarness();
+    spawnMerchant(h, "villager", [3.5, 64, 0.5]);
+    const opening = silentMerchant(h);
+    const stopped = new Error("stopped by the test");
+    const run = h.run(trade.offers);
+    await opening;
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    h.abort(stopped);
+    await assert.rejects(run, (error) => error === stopped);
+    // The open's own listeners go at once; the watch for a window the server may still send lasts past the run, then goes too.
+    assert.equal((h.bot._client as unknown as EventEmitter).listenerCount("trade_list"), 0);
+    assert.equal(h.bot.listenerCount("windowOpen"), 1, "still watching for a late window");
+    t.mock.timers.tick(2_000);
+    t.mock.timers.reset();
+    assert.deepEqual(openListeners(h), { windowOpen: 0, trade_list: 0 });
+  });
+
+  it("closes a merchant window that opens after a stopped open, and stops watching once it has", async () => {
     const h = createHarness();
     spawnMerchant(h, "villager", [3.5, 64, 0.5]);
     const opening = silentMerchant(h);
@@ -374,7 +423,45 @@ describe("trade.offers", () => {
     await opening;
     h.abort(stopped);
     await assert.rejects(run, (error) => error === stopped);
-    assert.deepEqual(openListeners(h), { windowOpen: 0, trade_list: 0 });
+    const bot = h.bot as unknown as EventEmitter & Record<string, unknown>;
+    const watching = h.bot.listenerCount("windowOpen");
+    // The window the server sends after the open was stopped: Mineflayer's open_window handler takes it, and nothing of the run is waiting for it.
+    let closed = 0;
+    const late = Object.assign(new EventEmitter(), {
+      type: "minecraft:merchant",
+      close: async () => {
+        closed++;
+        bot.currentWindow = null;
+        late.emit("close");
+      },
+    });
+    bot.currentWindow = late;
+    bot.emit("windowOpen", late);
+    await nextTick();
+    assert.equal(closed, 1, "the late window is closed, or the server keeps the trade session and the merchant will not open again");
+    assert.equal(bot.currentWindow, null);
+    assert.equal(h.bot.listenerCount("windowOpen"), watching - 1, "the watch ends with the window it closed");
+  });
+
+  it("closes a merchant window a stopped call left open before opening its own", async () => {
+    const h = createHarness();
+    spawnMerchant(h, "villager", [3.5, 64, 0.5]);
+    const bot = h.bot as unknown as EventEmitter & Record<string, unknown>;
+    let closed = 0;
+    const stray = Object.assign(new EventEmitter(), {
+      type: "minecraft:merchant",
+      close: async () => {
+        closed++;
+        bot.currentWindow = null;
+        stray.emit("close");
+      },
+    });
+    bot.currentWindow = stray;
+    const window = merchantWindow(h, [EMERALD_FOR_BREAD]);
+    assert.equal((await h.run(trade.offers)).length, 1);
+    assert.equal(closed, 1, "the stray window is closed first, or the server will not open another over it");
+    assert.equal(window.opened.length, 1);
+    assert.equal(bot.currentWindow, null);
   });
 });
 
@@ -439,6 +526,19 @@ describe("trade.buy", () => {
     const window = merchantWindow(h, [{ give: ["wheat", 20], charged: 40, get: ["emerald", 1] }]);
     assert.deepEqual(await h.run(trade.buy, { index: 0, times: 3 }), { traded: 3, gave: { wheat: 120 }, got: { emerald: 3 } });
     assert.deepEqual(h.inventory, { wheat: 8, emerald: 3 });
+    assert.deepEqual(window.dropped, {});
+  });
+
+  it("fills the trade slot from as many small stacks as it takes: 27 stacks of 5 at a price of 30 all trade", async () => {
+    // The server's select fills the slot with a whole stack; after two trades of 30, 4 remain and
+    // topping up to the charged price takes six moves of five, not three.
+    const h = createHarness();
+    const stock = h.bot.inventory as unknown as Stock;
+    for (let slot = 9; slot < 36; slot++) stock.set(slot, stock.make("wheat", 5));
+    spawnMerchant(h, "villager", [3.5, 64, 0.5]);
+    const window = merchantWindow(h, [{ give: ["wheat", 20], charged: 30, get: ["emerald", 1] }]);
+    assert.deepEqual(await h.run(trade.buy, { index: 0, times: 4 }), { traded: 4, gave: { wheat: 120 }, got: { emerald: 4 } });
+    assert.deepEqual(h.inventory, { wheat: 15, emerald: 4 });
     assert.deepEqual(window.dropped, {});
   });
 
@@ -554,6 +654,36 @@ describe("trade.buy", () => {
     assert.deepEqual(h.inventory, { emerald: 8, bread: 6 });
     assert.deepEqual(window.dropped, {});
     assert.deepEqual(openListeners(h), { windowOpen: 0, trade_list: 0 }, "a window the server closed lets Mineflayer's listener go too");
+  });
+
+  it("leaves the inventory exactly as the server has it after the server closes the window: the trades' outputs are in the model, not only what the close synced", async () => {
+    // The server syncs the slots its close touched (the returned inputs); the outputs the trades
+    // stowed before the close reach the model only through the routine's resync from the window.
+    const h = createHarness({ inventory: { wheat: 90 } }); // a full stack the select takes, and a partial one the close returns onto
+    spawnMerchant(h, "villager", [3.5, 64, 0.5]);
+    const window = merchantWindow(h, [WHEAT_FOR_EMERALD], { closeAfter: 2 });
+    assert.deepEqual(await h.run(trade.buy, { index: 0, times: 4 }), {
+      traded: 2,
+      gave: { wheat: 40 },
+      got: { emerald: 2 },
+      shortfall: "only 2 of 4 trades completed: the merchant closed the trade window",
+    });
+    assert.deepEqual(h.inventory, { wheat: 50, emerald: 2 });
+    assert.deepEqual(window.dropped, {});
+  });
+
+  it("models the return itself when the server closes the window without syncing anything back", async () => {
+    const h = createHarness({ inventory: { emerald: 10 } });
+    spawnMerchant(h, "villager", [3.5, 64, 0.5]);
+    // Two trades are answered and stowed; the close lands on the next click, so nothing is left mid-trade, and no sync follows the close.
+    merchantWindow(h, [EMERALD_FOR_BREAD], { closeAfterAnswered: 2, noSyncOnClose: true });
+    assert.deepEqual(await h.run(trade.buy, { index: 0, times: 3 }), {
+      traded: 2,
+      gave: { emerald: 2 },
+      got: { bread: 6 },
+      shortfall: "only 2 of 3 trades completed: the merchant closed the trade window",
+    });
+    assert.deepEqual(h.inventory, { emerald: 8, bread: 6 }, "the cursor's output and the trade slots' remainder are modeled back in");
   });
 
   it("fails naming the cause when no trade happened", async () => {
