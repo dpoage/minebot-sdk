@@ -60,7 +60,7 @@ const CATALOG: readonly CatalogEntry[] = [
   entry("crafter", () => import("./crafter.ts"), ["make"]),
   entry("builder", () => import("./builder.ts"), ["materials", "build", "check"]),
   entry("explorer", () => import("./explorer.ts"), ["scan", "explore", "remember", "places", "waypoints", "travel", "surface"]),
-  entry("social", () => import("./social.ts"), ["say", "waitForChat", "players", "follow", "give", "gesture"]),
+  entry("social", () => import("./social.ts"), ["say", "waitForChat", "players", "follow", "give", "gesture", "sign", "book"]),
 ];
 
 // Imported one after the other, in catalog order, so that a module's own imports of the modules it uses evaluate first.

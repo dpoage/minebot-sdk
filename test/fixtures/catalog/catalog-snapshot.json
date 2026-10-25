@@ -3295,7 +3295,7 @@
   },
   {
     "name": "social",
-    "description": "Talk to, wait for, follow, and hand items to other players, and gesture at them (look, nod, shake, wave, crouch, jump, hold an item out).",
+    "description": "Talk to, wait for, follow, and hand items to other players, gesture at them (look, nod, shake, wave, crouch, jump, hold an item out), and write words in the world (text on a sign, pages in a book).",
     "uses": [
       "move",
       "sense",
@@ -3541,6 +3541,175 @@
           },
           "required": [
             "kind"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "sign",
+        "description": "Write `lines` (1 to 4 strings, each at most 45 characters as the server counts them — an emoji counts as 2; about 15 characters show per line, so keep lines short) on the existing sign at `at` ({x,y,z} or [x,y,z]). `side`: \"front\" (default) or \"back\". The sign must already stand there (place it with place.place, e.g. item \"oak_sign\") and be within 4.5 blocks of the bot; walk closer first with move.to. A waxed sign cannot be written. Lines you leave out end up empty. The write uses a main hand the server will open the editor for: an ordinary held item or an empty hand is used as it is, while honeycomb, a dye, an ink sac, or a hanging sign item on a wall hanging sign — each of which would act on the sign instead of opening its editor — is set aside for the write and the hotbar is put back exactly as it was, so the sign is never waxed or recolored. It throws only when every hotbar stack is one of those and no inventory slot is free, naming the stacks. Returns { at, side, lines } with the four lines read back from the sign, and throws if the sign does not show what was written.",
+        "args": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "at": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "x": {
+                      "type": "number"
+                    },
+                    "y": {
+                      "type": "number"
+                    },
+                    "z": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "x",
+                    "y",
+                    "z"
+                  ]
+                },
+                {
+                  "type": "array",
+                  "prefixItems": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "number"
+                    }
+                  ],
+                  "items": false,
+                  "minItems": 3,
+                  "maxItems": 3
+                }
+              ]
+            },
+            "lines": {
+              "minItems": 1,
+              "maxItems": 4,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "maxLength": 45
+              }
+            },
+            "side": {
+              "default": "front",
+              "type": "string",
+              "enum": [
+                "front",
+                "back"
+              ]
+            }
+          },
+          "required": [
+            "at",
+            "lines"
+          ]
+        },
+        "returns": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "at": {
+              "type": "object",
+              "properties": {
+                "x": {
+                  "type": "number"
+                },
+                "y": {
+                  "type": "number"
+                },
+                "z": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "x",
+                "y",
+                "z"
+              ],
+              "additionalProperties": false
+            },
+            "side": {
+              "type": "string",
+              "enum": [
+                "front",
+                "back"
+              ]
+            },
+            "lines": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "at",
+            "side",
+            "lines"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "book",
+        "description": "Write `pages` (1 to 100 strings, each 1 to 1024 characters as the server counts them — an emoji counts as 2) into the first writable_book (book and quill) in the inventory, replacing what it held. A writable_book is made from a book, an ink_sac and a feather. Without `title` the book stays a writable_book that can be written again (a ledger). With `title` (1 to 32 characters, counted the same way) the book is signed: it becomes a written_book with you as the author, and can never be edited again. Returns { item, title?, pages } where pages is the count read back, and throws if the book does not hold what was written.",
+        "args": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "pages": {
+              "minItems": 1,
+              "maxItems": 100,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1024
+              }
+            },
+            "title": {
+              "type": "string",
+              "maxLength": 32
+            }
+          },
+          "required": [
+            "pages"
+          ]
+        },
+        "returns": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "item": {
+              "type": "string",
+              "enum": [
+                "writable_book",
+                "written_book"
+              ]
+            },
+            "title": {
+              "type": "string"
+            },
+            "pages": {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            }
+          },
+          "required": [
+            "item",
+            "pages"
           ],
           "additionalProperties": false
         }
