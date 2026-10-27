@@ -24,6 +24,10 @@ import { triggerFinished, type EventSink, type FinishedEnd, type LostFiring, typ
 
 /** A reflex's `when` is an expression over two names, so it is cut off quickly. */
 const WHEN_TIMEOUT_MS = 100;
+/** A death after a reflex's firing ended counts against it for this long; the incident's deaths fell 100-104 s after the run that walked the player back to its grave. */
+const DEATH_AFTER_RUN_MS = 180_000;
+/** Two deaths counted against one reflex within this long disable it. */
+const DEATH_WINDOW_MS = 10 * 60_000;
 
 export class TriggerInvalidError extends Error {}
 export class TriggerLimitError extends Error {}
@@ -71,6 +75,12 @@ interface Queued {
   preempts: boolean;
 }
 
+/** A reflex's latest firing, from just before its run starts; running until Triggers learns its end. */
+interface Firing {
+  def: StoredReflex;
+  endedAt?: number;
+}
+
 export interface TriggersDeps {
   store: JsonStore;
   events: EventSink;
@@ -115,6 +125,10 @@ export class Triggers {
   readonly #stats = new Map<string, Stats>();
   /** When each reflex's latest firing started, for the cooldown. */
   readonly #lastFired = new Map<string, number>();
+  /** Each reflex's latest firing, for the deaths that fall during it or soon after. */
+  readonly #firings = new Map<string, Firing>();
+  /** When each reflex was last charged with a death, the death's own time. */
+  readonly #charged = new Map<string, number>();
   readonly #predicates = vm.createContext({});
   readonly #unsubscribe: () => void;
   /** Whether a name is an action binding: none is until the bindings say so. */
@@ -200,6 +214,8 @@ export class Triggers {
     this.#when.delete(name);
     this.#stats.delete(name);
     this.#lastFired.delete(name);
+    this.#firings.delete(name);
+    this.#charged.delete(name);
     this.#dequeue(name);
     this.#deps.store.delete(name);
     this.#deps.counts?.(this.failures());
@@ -245,6 +261,8 @@ export class Triggers {
     else this.#when.delete(def.name);
     this.#stats.delete(def.name);
     this.#lastFired.delete(def.name);
+    this.#firings.delete(def.name);
+    this.#charged.delete(def.name);
     this.#dequeue(def.name);
     this.#save(def);
     this.#deps.counts?.(this.failures());
@@ -315,6 +333,7 @@ export class Triggers {
   #onEvent(event: BodyEvent): void {
     // A reflex never fires on the events of reflexes, so reflexes cannot feed each other.
     if (this.#closed || isReflexEvent(event.type)) return;
+    if (event.type === "death") this.#chargeDeaths(event);
     const now = Date.now();
     for (const def of [...this.#defs.values()]) {
       if (!def.enabled || !def.on.includes(event.type)) continue;
@@ -384,6 +403,7 @@ export class Triggers {
     const startedAt = Date.now();
     const active = { priority: def.priority };
     this.#active = active;
+    const firing: Firing = { def };
     const announce = () => {
       // A reflex replaced or removed while its firing was starting keeps none of the numbers.
       if (this.#defs.get(def.name) === def) {
@@ -391,6 +411,7 @@ export class Triggers {
         stats.fired++;
         stats.lastFired = new Date().toISOString();
         this.#lastFired.set(def.name, Date.now());
+        this.#firings.set(def.name, firing);
       }
       this.#deps.events.push("reflex_fired", {
         name: def.name,
@@ -418,6 +439,8 @@ export class Triggers {
       outcome = { status: "error", error: err instanceof Error ? err.message : String(err), durationMs: Date.now() - startedAt };
     }
     if (this.#active === active) this.#active = null;
+    // Whatever the run was, its firing is over now: deaths from here on are counted by how long ago.
+    if (this.#firings.get(def.name) === firing) firing.endedAt = Date.now();
     // Whatever was stopped for a preempting firing has ended; a run that started since is a new one to stop.
     this.#preempting = false;
     this.#finish(def, outcome, end);
@@ -454,17 +477,59 @@ export class Triggers {
     if (outcome.status === "ok") stats.failures = 0;
     else if (outcome.status === "error" || outcome.status === "timeout") stats.failures++;
     if (stats.failures < MAX_TRIGGER_FAILURES || !def.enabled) return undefined;
+    return this.#disable(def, `failed ${stats.failures} times in a row; last: ${(outcome.error ?? outcome.status).split("\n")[0]}`);
+  }
+
+  /** Turns a reflex off, with the reason the agent reads: the failure breaker's and the death breaker's one way to disable. The binding stays. */
+  #disable(def: StoredReflex, reason: string): TriggerDisabled {
     def.enabled = false;
-    def.disabledReason = `failed ${stats.failures} times in a row; last: ${(outcome.error ?? outcome.status).split("\n")[0]}`;
+    def.disabledReason = reason;
     this.#dequeue(def.name);
     this.#save(def);
-    return { name: def.name, failures: stats.failures, reason: def.disabledReason };
+    return { name: def.name, failures: this.#statsOf(def.name).failures, reason };
+  }
+
+  /**
+   * Charges a death against every enabled reflex whose firing it fell during, or fell no more than DEATH_AFTER_RUN_MS
+   * after the end of; a reflex charged twice within DEATH_WINDOW_MS disables itself. Runs before the death's own
+   * matching, so a reflex this death disables is not fired by it.
+   */
+  #chargeDeaths(event: BodyEvent): void {
+    const diedAt = Number.isFinite(event.time) ? event.time : Date.now();
+    for (const def of [...this.#defs.values()]) {
+      const firing = this.#firings.get(def.name);
+      if (!def.enabled || firing?.def !== def) continue;
+      // A death in the same tick as the end counts: until the end is learned the firing is running, and a death stamped before it is not after it.
+      if (firing.endedAt !== undefined && diedAt - firing.endedAt > DEATH_AFTER_RUN_MS) continue;
+      const previous = this.#charged.get(def.name);
+      if (previous === undefined || Math.abs(diedAt - previous) > DEATH_WINDOW_MS) {
+        this.#charged.set(def.name, diedAt);
+        continue;
+      }
+      this.#charged.delete(def.name);
+      const where = positionOf(event.data.position);
+      const cause = typeof event.data.cause === "string" ? (event.data.cause.split("\n")[0] ?? "").trim() : "";
+      const last = `${cause || "died"}${where && ` at ${where}`}`;
+      const disabled = this.#disable(
+        def,
+        `the player died 2 times within 10 min during or right after its runs (last: ${last}); bind it again with bind_routine and its full settings (list_routines shows them) to turn it back on`,
+      );
+      if (this.#deps.counts) this.#deps.counts(this.failures(), { disabled });
+      else this.#deps.events.push("reflex_disabled", disabled);
+    }
   }
 }
 
 /** Compiles a `when` expression; throws with the syntax error when it does not parse. */
 function compileWhen(when: string): vm.Script {
   return new vm.Script(`(${when}\n)`, { filename: "when.js" });
+}
+
+/** A death's position as the agent reads places ("x y z", block coordinates); empty when the event has none. */
+function positionOf(position: unknown): string {
+  if (typeof position !== "object" || position === null) return "";
+  const { x, y, z } = position as Record<string, unknown>;
+  return [x, y, z].every((n) => typeof n === "number" && Number.isFinite(n)) ? [x, y, z].map((n) => Math.floor(n as number)).join(" ") : "";
 }
 
 /** The message of a thrown value; errors from the expression's VM context are not instances of this realm's Error. */
