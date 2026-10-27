@@ -15,6 +15,17 @@ const DEFAULT_RETREAT_DISTANCE = 16;
 const RETREAT_TIMEOUT_MS = 20_000;
 // How long after a kill to wait for the pieces a slime or magma cube splits into.
 const SPLIT_WAIT_MS = 1200;
+// An attack that gives up after the target has covered this many blocks in the last 5 seconds lost a race.
+const OUTRUN_WINDOW_MS = 5_000;
+const OUTRUN_BLOCKS = 6;
+
+/** A distance at one decimal place, as the give-up reasons report it. */
+function blocks(distance: number): number {
+  return Math.round(distance * 10) / 10;
+}
+
+/** How an engage ended: killed, or the one line that tells the agent why it gave up and what to do next. */
+type Engaged = { killed: true } | { killed: false; reason: string };
 
 // Attack damage by tool material. The registry has no damage values.
 const SWORD_DAMAGE: Record<string, number> = { wooden: 4, golden: 4, stone: 5, copper: 5, iron: 6, diamond: 7, netherite: 8 };
@@ -117,29 +128,56 @@ async function openFight(ctx: RoutineContext): Promise<Fight> {
   return fight;
 }
 
-/** Closes in on `target` and hits it on every weapon cooldown until it dies, `deadline` passes, or the target limit does. Returns true when it died. */
-async function engage(ctx: RoutineContext, fight: Fight, target: Entity, deadline: number): Promise<boolean> {
+/**
+ * Closes in on `target` and hits it on every weapon cooldown until it dies, `deadline` passes, or the target limit does.
+ * When it gives up, says why in one line, checked in this order: the target vanished; it is still in reach (out of time);
+ * it outran the player; the way is blocked.
+ */
+async function engage(ctx: RoutineContext, fight: Fight, target: Entity, deadline: number): Promise<Engaged> {
   const { bot } = ctx;
   const give = Math.min(deadline, Date.now() + TARGET_TIMEOUT_MS);
   const cooldown = attackCooldownMs(fight.weapon);
   let nextHit = 0;
+  let hits = 0;
+  let closest = eyeDistance(ctx, target);
+  // Where the target has been while the attack ran: the last five seconds of it say whether it outran the player.
+  const trail: { at: number; position: Vec3; distance: number }[] = [];
+  const sample = () => {
+    const distance = eyeDistance(ctx, target);
+    closest = Math.min(closest, distance);
+    trail.push({ at: Date.now(), position: target.position.clone(), distance });
+    while (trail.length > 2 && trail[1]!.at <= Date.now() - OUTRUN_WINDOW_MS) trail.shift();
+  };
+  /** The target left `bot.entities` without dying: the first category, since nothing else can be measured afterwards. */
+  const gone = (): Engaged => {
+    const last = trail[trail.length - 1];
+    return { killed: false, reason: `the target is gone (last seen ${blocks(last?.distance ?? eyeDistance(ctx, target))} blocks away); find it again with sense.look or pick another` };
+  };
   bot.pathfinder.setGoal(new goals.GoalFollow(target, 2), true);
   while (Date.now() < give) {
     if (ctx.signal.aborted) throw ctx.signal.reason;
     if (bot.health <= 0) throw new Error("died while fighting");
     if (fight.dead.has(target.id)) {
       fight.kills++;
-      return true;
+      return { killed: true };
     }
-    if (!bot.entities[target.id]) return false;
+    if (!bot.entities[target.id]) return gone();
     if (eyeDistance(ctx, target) <= REACH && Date.now() >= nextHit) {
       await bot.lookAt(target.position.offset(0, target.height * 0.6, 0), true);
       bot.attack(target);
+      hits++;
       nextHit = Date.now() + cooldown;
     }
+    sample();
     await ctx.sleep(TICK_MS);
   }
-  return false;
+  if (!bot.entities[target.id]) return gone();
+  const now = eyeDistance(ctx, target);
+  if (now <= REACH) return { killed: false, reason: `still in reach after the time ran out (hits landed: ${hits}); call again to keep hitting` };
+  const since = trail.find((point) => point.at >= Date.now() - OUTRUN_WINDOW_MS) ?? trail[0];
+  const moved = since && trail.length > 0 ? since.position.distanceTo(trail[trail.length - 1]!.position) : 0;
+  if (moved >= OUTRUN_BLOCKS) return { killed: false, reason: `it outran you (closest ${blocks(closest)} blocks, now ${blocks(now)}); it moves faster than you follow; corner it or wait until it stops` };
+  return { killed: false, reason: `could not get within reach (closest ${blocks(closest)} blocks, now ${blocks(now)}); the way is blocked: water, a wall, a fence or a drop; walk around it or pick another target` };
 }
 
 /** Fights hostiles (or the creatures matching `targets`) within `radius` of the player, nearest first, until none are left or `timeoutMs` passes. */
@@ -160,7 +198,7 @@ async function fightAll(ctx: RoutineContext, radius: number, targets: NamePatter
         await ctx.sleep(SPLIT_WAIT_MS);
         continue;
       }
-      if (!(await engage(ctx, fight, target, deadline))) given.add(target.id);
+      if (!(await engage(ctx, fight, target, deadline)).killed) given.add(target.id);
     }
   } finally {
     fight.close();
@@ -187,17 +225,18 @@ const Target = z.union([z.number().int(), z.string().min(1)]);
 export const attack = defineRoutine(
   {
     name: "combat.attack",
-    description: "Hit one creature until it dies. `target` is an entity id or a name ('zombie'; the nearest match, a player's username works too). Walks up to it, holds the best sword or axe from the inventory, and hits once per weapon cooldown. Gives up after `timeoutMs` (default 20000). Returns { target, killed, damageTaken, weapon }.",
+    description: "Hit one creature until it dies. `target` is an entity id or a name ('zombie'; the nearest match, a player's username works too). Walks up to it, holds the best sword or axe from the inventory, and hits once per weapon cooldown. Gives up after `timeoutMs` (default 20000). Returns { target, killed, damageTaken, weapon, reason }; when `killed` is false, `reason` is one line that names why it gave up (gone, still in reach, outran, blocked) and what to do next.",
     args: z.object({ target: Target, timeoutMs: z.number().int().positive().default(TARGET_TIMEOUT_MS) }),
-    returns: z.object({ target: z.string(), killed: z.boolean(), damageTaken: z.number(), weapon: z.string().nullable() }),
+    returns: z.object({ target: z.string(), killed: z.boolean(), damageTaken: z.number(), weapon: z.string().nullable(), reason: z.string().optional() }),
   },
   async (ctx, { target, timeoutMs }) => {
     const entity = findEntity(ctx, target);
     if (!entity) throw new Error(`no entity matches ${JSON.stringify(target)}`);
     const fight = await openFight(ctx);
     try {
-      const killed = await engage(ctx, fight, entity, Date.now() + timeoutMs);
-      return { target: entity.name ?? entity.username ?? String(entity.id), killed, damageTaken: fight.damage, weapon: fight.weapon };
+      const engaged = await engage(ctx, fight, entity, Date.now() + timeoutMs);
+      const result = { target: entity.name ?? entity.username ?? String(entity.id), killed: engaged.killed, damageTaken: fight.damage, weapon: fight.weapon };
+      return engaged.killed ? result : { ...result, reason: engaged.reason };
     } finally {
       fight.close();
     }
