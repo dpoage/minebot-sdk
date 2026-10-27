@@ -1,6 +1,6 @@
 // The survival routines: eating, sleeping, and wearing armor — the actions that keep a player alive.
 // It acts only when called; nothing here eats or sleeps on its own.
-import { defineRoutine, goals, isHostile, Point, Position, type RoutineContext, toVec3, within, z } from "minebot-sdk/routine";
+import { defineRoutine, goals, isHostile, Point, Position, type RoutineContext, toVec3, type Vec3, within, z } from "minebot-sdk/routine";
 
 export const description = "Eat, sleep in a bed, wake up, and wear the best armor in the inventory.";
 export const uses = [] as const;
@@ -102,21 +102,90 @@ function nearestBed(ctx: RoutineContext, radius: number) {
   return bot.findBlocks({ matching: ids, maxDistance: radius, count: 8 })[0];
 }
 
-async function sleepAt(ctx: RoutineContext, at: Position | undefined) {
+/** How long the bed wait sleeps between looks at the clock; the server sends the time once a second. */
+const WAIT_POLL_MS = 250;
+/** The longest the walk to the bed takes (its own limit), and the slack the wait's hint adds for the final check and the sleep itself. */
+const WALK_LIMIT_MS = 30_000;
+const WAIT_SLACK_MS = 5_000;
+/** The wait `survival.sleep` allows by default: the longest wait there is (13082 ticks, 654 s) with margin. */
+const DEFAULT_WAIT_MS = 660_000;
+
+/** Ticks until a bed works: 0 in the window and in a thunderstorm, else up to the next dusk (no thunderstorm is assumed to start). */
+function ticksUntilBed(timeOfDay: number, thunderstorm: boolean): number {
+  return canSleep(timeOfDay, thunderstorm) ? 0 : (((NIGHT_START - timeOfDay) % 24_000) + 24_000) % 24_000;
+}
+
+/** The call timeout that covers a wait of `waitMs`: the wait, the walk to the bed, and slack. */
+function callTimeoutFor(waitMs: number): number {
+  return Math.ceil((waitMs + WALK_LIMIT_MS + WAIT_SLACK_MS) / 1000) * 1000;
+}
+
+function notNight(timeOfDay: number): string {
+  return `it is not night (time of day ${timeOfDay}); a bed works from ${NIGHT_START} to ${NIGHT_END}, or in a thunderstorm`;
+}
+
+/** The error for a clock that never reaches the window: the daylight cycle is stopped. */
+function stoppedClock(timeOfDay: number): Error {
+  return new Error(`${notNight(timeOfDay)}, and the clock is stopped (gamerule advance_time is off), so night never comes; turn advance_time on or wait for a thunderstorm`);
+}
+
+/** The bed block at `pos`, or the reason there is none. */
+function bedAt(ctx: RoutineContext, pos: Vec3) {
   const { bot } = ctx;
-  if (bot.isSleeping) throw new Error("already sleeping");
-  const thunderstorm = bot.isRaining && bot.thunderState > 0;
-  if (!canSleep(bot.time.timeOfDay, thunderstorm)) {
-    throw new Error(`it is not night (time of day ${bot.time.timeOfDay}); a bed works from ${NIGHT_START} to ${NIGHT_END}, or in a thunderstorm`);
-  }
-  const pos = at ? toVec3(at).floored() : nearestBed(ctx, 16);
-  if (!pos) throw new Error("no bed within 16 blocks; place one or pass `at`");
   const bed = bot.blockAt(pos);
   if (!bed) throw new Error(`${pos} is not loaded`);
   if (!bot.isABed(bed)) throw new Error(`no bed at ${pos}; the block there is ${bed.name}`);
+  return bed;
+}
+
+async function walkToBed(ctx: RoutineContext, pos: Vec3) {
+  const { bot } = ctx;
   if (bot.entity.position.distanceTo(pos.offset(0.5, 0.5, 0.5)) > 3) {
-    await within(30_000, "pathfinding", bot.pathfinder.goto(new goals.GoalNear(pos.x, pos.y, pos.z, 2)), () => bot.pathfinder.setGoal(null));
+    await within(WALK_LIMIT_MS, "pathfinding", bot.pathfinder.goto(new goals.GoalNear(pos.x, pos.y, pos.z, 2)), () => bot.pathfinder.setGoal(null));
   }
+}
+
+/** Waits until a bed works (the window opens or a thunderstorm starts), or throws when the clock stops or `deadline` (ms since the epoch) passes. A stop or timeout of the run ends it through `ctx.sleep`. */
+async function waitForBed(ctx: RoutineContext, deadline: number, timeoutMs: number) {
+  const { bot } = ctx;
+  while (!canSleep(bot.time.timeOfDay, bot.isRaining && bot.thunderState > 0)) {
+    if (bot.time.doDaylightCycle === false) throw stoppedClock(bot.time.timeOfDay);
+    if (Date.now() >= deadline) {
+      throw new Error(`the bed window did not open within timeoutMs ${timeoutMs} (time of day ${bot.time.timeOfDay}, the server may be lagging); call survival.sleep again with { wait: true }`);
+    }
+    await ctx.sleep(WAIT_POLL_MS);
+  }
+}
+
+async function sleepAt(ctx: RoutineContext, at: Position | undefined, wait: boolean, timeoutMs: number) {
+  const { bot } = ctx;
+  if (bot.isSleeping) throw new Error("already sleeping");
+  const deadline = Date.now() + timeoutMs;
+  const ticks = ticksUntilBed(bot.time.timeOfDay, bot.isRaining && bot.thunderState > 0);
+  const waitMs = ticks * 50;
+  if (ticks > 0) {
+    const opensIn = `the window opens in ${Math.ceil(ticks / 20)} s`;
+    if (bot.time.doDaylightCycle === false) throw stoppedClock(bot.time.timeOfDay);
+    if (!wait) {
+      throw new Error(`${notNight(bot.time.timeOfDay)}; ${opensIn}. To wait for it, call survival.sleep with { wait: true } and a call timeout_ms of at least ${callTimeoutFor(waitMs)}`);
+    }
+    if (waitMs > timeoutMs) {
+      throw new Error(`${notNight(bot.time.timeOfDay)}; ${opensIn}, which is after timeoutMs ${timeoutMs}. Call survival.sleep again with { wait: true, timeoutMs: ${waitMs + WAIT_SLACK_MS} } and a call timeout_ms of at least ${callTimeoutFor(waitMs)}`);
+    }
+  }
+  const pos = at ? toVec3(at).floored() : nearestBed(ctx, 16);
+  if (!pos) throw new Error("no bed within 16 blocks; place one or pass `at`");
+  bedAt(ctx, pos);
+  if (ticks > 0) {
+    // The runner drops a timed-out run's error and keeps its log, so this line is what the agent reads when its call is cut off first.
+    ctx.log(`survival.sleep: waiting ${Math.ceil(ticks / 20)} s for the bed window (time of day ${bot.time.timeOfDay}, opens at ${NIGHT_START}). If this call's timeout_ms is shorter, it is cut off first: call again with timeout_ms >= ${callTimeoutFor(waitMs)}`);
+  }
+  await walkToBed(ctx, pos);
+  if (ticks > 0) {
+    await waitForBed(ctx, deadline, timeoutMs);
+    await walkToBed(ctx, pos);
+  }
+  const bed = bedAt(ctx, pos);
   try {
     await bot.sleep(bed);
   } catch (err) {
@@ -177,11 +246,11 @@ export const eat = defineRoutine(
 export const sleep = defineRoutine(
   {
     name: "survival.sleep",
-    description: "Go to bed at `at` ({x,y,z} or [x,y,z]), or the nearest bed within 16 blocks, and sleep. Works at night (time of day 12541 to 23458) and in thunderstorms; fails with the reason otherwise, or when monsters are near the bed or the bed is occupied. Returns { sleeping, at } once asleep. Call `wake` or wait for morning to get up.",
-    args: z.object({ at: Position.optional() }),
+    description: "Go to bed at `at` ({x,y,z} or [x,y,z]), or the nearest bed within 16 blocks, and sleep. A bed works at night (time of day 12541 to 23458) and in thunderstorms; at other times it fails saying how many seconds until night. With `wait: true` it walks to the bed, waits there (at most `timeoutMs`, default 660000), and sleeps when night comes; give the call a timeout_ms longer than the wait (up to 11 minutes) or it is cut off first. It fails at once when the clock is stopped or the wait exceeds `timeoutMs`, and when monsters are near the bed or the bed is occupied. Returns { sleeping, at } once asleep. Call `wake` or wait for morning to get up.",
+    args: z.object({ at: Position.optional(), wait: z.boolean().default(false), timeoutMs: z.number().int().positive().default(DEFAULT_WAIT_MS) }),
     returns: z.object({ sleeping: z.boolean(), at: Point }),
   },
-  (ctx, { at }) => sleepAt(ctx, at),
+  (ctx, { at, wait, timeoutMs }) => sleepAt(ctx, at, wait, timeoutMs),
 );
 
 export const wake = defineRoutine(
