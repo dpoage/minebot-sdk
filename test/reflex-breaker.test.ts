@@ -49,8 +49,9 @@ const settle = async () => {
  * A Triggers over a fake runner and a fake clock (Date only: every event is stamped by it). Runs end at once, or when
  * `hold` is set, when the test releases them, which is how a run takes as long as the incident's collect-loot did.
  */
-async function harness(options: { file?: string; hold?: boolean; counts?: boolean } = {}): Promise<Harness> {
+async function harness(options: { file?: string; hold?: boolean; counts?: boolean; username?: string } = {}): Promise<Harness> {
   const file = options.file ?? path.join(await mkdtemp(path.join(tmpdir(), "minebot-breaker-")), "triggers.json");
+  const username = options.username ?? "Fartmastery";
   const events = new EventLog();
   const runner = { running: null as object | null };
   const ran: string[] = [];
@@ -69,7 +70,7 @@ async function harness(options: { file?: string; hold?: boolean; counts?: boolea
       },
     },
     connected: () => true,
-    bot: () => ({}),
+    bot: () => (username ? { username } : {}),
     reflexes: true,
     register: async () => {},
     ...(options.counts && { counts: (failures: Record<string, number>, ended?: Harness["counted"][number]["ended"]) => void counted.push({ failures, ended }) }),
@@ -179,12 +180,12 @@ describe("death breaker: the incident replay", () => {
     assert.deepEqual(h.ran.filter((name) => name === "collect-loot").length, 2, `firings: ${h.ran.join(" ")}`);
     const disabled = typed(h.events, "reflex_disabled");
     assert.equal(disabled.length, 1, "reported once; the five later deaths find it disabled");
-    assert.deepEqual(disabled[0]!.data, { name: "collect-loot", failures: 0, reason: reasonOf("died at -287 42 104") });
+    assert.deepEqual(disabled[0]!.data, { name: "collect-loot", failures: 0, reason: reasonOf("died at -286 42 105") });
     assert.equal(disabled[0]!.time, T0 + 406_201, "at the second death that counts, the third of the replay");
     const firedAfter = typed(h.events, "reflex_fired").filter((e) => e.seq > disabled[0]!.seq && e.data.name === "collect-loot");
     assert.deepEqual(firedAfter, []);
     const reflex = stored(h, "collect-loot")!;
-    assert.deepEqual([reflex.enabled, reflex.disabledReason], [false, reasonOf("died at -287 42 104")], "saved to the store");
+    assert.deepEqual([reflex.enabled, reflex.disabledReason], [false, reasonOf("died at -286 42 105")], "saved to the store");
     assert.equal(h.triggers.reflexes().find((r) => r.name === "collect-loot")!.enabled, false);
     // sleep-camp was charged once by death 2 (it ended 16 s before), and once more by death 8: 20 minutes apart.
     assert.equal(h.triggers.reflexes().find((r) => r.name === "sleep-camp")!.enabled, true);
@@ -256,10 +257,41 @@ describe("death breaker: what counts", () => {
     await h.at(90 * SECOND);
     await h.die({ position: { x: -289.5, y: 43, z: 102.52 }, cause: "Fartmastery drowned\nsecond line" });
     assert.equal(enabled(h), false);
-    assert.deepEqual(typed(h.events, "reflex_disabled").map((e) => e.data), [{ name: "r", failures: 0, reason: reasonOf("Fartmastery drowned at -290 43 102") }]);
+    assert.deepEqual(typed(h.events, "reflex_disabled").map((e) => e.data), [{ name: "r", failures: 0, reason: reasonOf("drowned at -289 43 103") }]);
     await h.release("r");
     assert.deepEqual(typed(h.events, "reflex_finished").map((e) => [e.data.name, e.data.status]), [["r", "ok"]], "the run's end is still reported");
     assert.equal(typed(h.events, "reflex_disabled").length, 1);
+  });
+
+  it("leaves the player's own name out of the cause, wherever the death message repeats it", async () => {
+    const h = await harness();
+    await bindOnChat(h);
+    await fire(h, 0);
+    await h.at(20 * SECOND);
+    await h.die({ position: { x: 1.6, y: 2.4, z: 3 } });
+    await h.at(40 * SECOND);
+    await h.die({ position: { x: 1.6, y: 2.4, z: 3 }, cause: "Fartmastery was slain by Fartmastery" });
+    assert.equal(h.triggers.reflexes()[0]!.disabledReason, reasonOf("was slain by at 2 2 3"));
+  });
+
+  it("drops the leading player name when the body has no bot to ask, and says died when the cause is only the name", async () => {
+    const blind = await harness({ username: "" });
+    await bindOnChat(blind);
+    await fire(blind, 0);
+    await blind.at(20 * SECOND);
+    await blind.die({ position: { x: 0, y: 64, z: 0 }, cause: "suffocated" });
+    await blind.at(40 * SECOND);
+    await blind.die({ position: { x: 0, y: 64, z: 0 }, cause: "Fartmastery drowned" });
+    assert.equal(blind.triggers.reflexes()[0]!.disabledReason, reasonOf("drowned at 0 64 0"), "no bot: the message's leading name is dropped");
+
+    const h = await harness();
+    await bindOnChat(h);
+    await fire(h, 0);
+    await h.at(20 * SECOND);
+    await h.die({ position: { x: 0, y: 64, z: 0 }, cause: "suffocated" });
+    await h.at(40 * SECOND);
+    await h.die({ position: { x: 0, y: 64, z: 0 }, cause: "Fartmastery" });
+    assert.equal(h.triggers.reflexes()[0]!.disabledReason, reasonOf("died at 0 64 0"), "a cause that is only the name says died");
   });
 
   it("counts a death in the same tick as the firing's end", async () => {
@@ -314,7 +346,7 @@ describe("death breaker: the disable", () => {
     await h.die({ position: { x: 1.9, y: 70, z: -0.5 } });
     await h.at(40 * SECOND);
     await h.die({ position: { x: 1.9, y: 70, z: -0.5 }, cause: "" });
-    assert.equal(h.triggers.reflexes().find((r) => r.name === "r")!.disabledReason, reasonOf("died at 1 70 -1"));
+    assert.equal(h.triggers.reflexes().find((r) => r.name === "r")!.disabledReason, reasonOf("died at 2 70 0"));
     assert.deepEqual(h.triggers.reflexes().map((r) => r.name), ["r"]);
   });
 

@@ -508,7 +508,7 @@ export class Triggers {
       }
       this.#charged.delete(def.name);
       const where = positionOf(event.data.position);
-      const cause = typeof event.data.cause === "string" ? (event.data.cause.split("\n")[0] ?? "").trim() : "";
+      const cause = causeOf(event.data.cause, usernameOf(this.#deps.bot()));
       const last = `${cause || "died"}${where && ` at ${where}`}`;
       const disabled = this.#disable(
         def,
@@ -525,11 +525,32 @@ function compileWhen(when: string): vm.Script {
   return new vm.Script(`(${when}\n)`, { filename: "when.js" });
 }
 
-/** A death's position as the agent reads places ("x y z", block coordinates); empty when the event has none. */
+/** A death's position as the agent reads places ("x y z", whole block coordinates); empty when the event has none. */
 function positionOf(position: unknown): string {
   if (typeof position !== "object" || position === null) return "";
   const { x, y, z } = position as Record<string, unknown>;
-  return [x, y, z].every((n) => typeof n === "number" && Number.isFinite(n)) ? [x, y, z].map((n) => Math.floor(n as number)).join(" ") : "";
+  return [x, y, z].every((n) => typeof n === "number" && Number.isFinite(n)) ? [x, y, z].map((n) => Math.round(n as number)).join(" ") : "";
+}
+
+/**
+ * The player's death cause as the agent reads it: the death message's first line with the player's own name removed
+ * ("Fartmastery drowned" -> "drowned"); empty when the event carries none or only the name.
+ */
+function causeOf(cause: unknown, username: string | undefined): string {
+  if (typeof cause !== "string") return "";
+  let text = (cause.split("\n")[0] ?? "").trim();
+  if (!text) return "";
+  // The body's player is the one that died, so its name is what the message leads with (and can repeat: "... by Fartmastery").
+  if (username) text = text.replace(new RegExp(`\\b${username.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "gi"), " ");
+  else text = text.replace(/^\S+\s+/, "");
+  return text.replace(/\s+/g, " ").trim();
+}
+
+/** The name the body's player goes by, when the bot is attached: the death message's word to leave out of the cause. */
+function usernameOf(bot: unknown): string | undefined {
+  if (typeof bot !== "object" || bot === null || !("username" in bot)) return undefined;
+  const { username } = bot as { username?: unknown };
+  return typeof username === "string" && username.trim() ? username.trim() : undefined;
 }
 
 /** The message of a thrown value; errors from the expression's VM context are not instances of this realm's Error. */
