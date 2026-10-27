@@ -1250,7 +1250,7 @@
       },
       {
         "name": "sleep",
-        "description": "Go to bed at `at` ({x,y,z} or [x,y,z]), or the nearest bed within 16 blocks, and sleep. Works at night (time of day 12541 to 23458) and in thunderstorms; fails with the reason otherwise, or when monsters are near the bed or the bed is occupied. Returns { sleeping, at } once asleep. Call `wake` or wait for morning to get up.",
+        "description": "Go to bed at `at` ({x,y,z} or [x,y,z]), or the nearest bed within 16 blocks, and sleep. A bed works at night (time of day 12541 to 23458) and in thunderstorms; at other times it fails saying how many seconds until night. With `wait: true` it walks to the bed, waits there (at most `timeoutMs`, default 660000), and sleeps when night comes; give the call a timeout_ms longer than the wait (up to 11 minutes) or it is cut off first. It fails at once when the clock is stopped or the wait exceeds `timeoutMs`, and when monsters are near the bed or the bed is occupied. Returns { sleeping, at } once asleep. Call `wake` or wait for morning to get up.",
         "args": {
           "$schema": "https://json-schema.org/draft/2020-12/schema",
           "type": "object",
@@ -1294,6 +1294,16 @@
                   "maxItems": 3
                 }
               ]
+            },
+            "wait": {
+              "default": false,
+              "type": "boolean"
+            },
+            "timeoutMs": {
+              "default": 660000,
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
             }
           }
         },
