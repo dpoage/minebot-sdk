@@ -157,6 +157,7 @@ describe("(P1.2, mb-95b) a promise a run does not await that rejects", () => {
         assert.equal(run.status, "error", String(run.error));
         assert.match(run.error ?? "", /routine "builder\.box" arguments: /);
         assert.ok((run.error ?? "").includes(NOT_AWAITED), String(run.error));
+        assert.ok((run.error ?? "").includes(" - this promise was not awaited; add await before the call"), String(run.error));
         if (name === "box-then-throw") assert.equal((run.error ?? "").split("\n")[0], "Error: own error after the box", "the run's own error stays first");
         await sleep(200);
         await stayedUp(body, call, pid);
@@ -236,9 +237,39 @@ describe("(P1.5, mb-mf5) after a run ends, the pathfinder has no goal and no con
       const run = await call("goto-unawaited");
       assert.equal(run.status, "error");
       assert.ok((run.error ?? "").startsWith(`GoalChanged: The goal was changed before it could be completed!${NOT_AWAITED}`), String(run.error));
+      assert.ok((run.error ?? "").startsWith("GoalChanged: The goal was changed before it could be completed! - this promise was not awaited; add await before the call"), String(run.error));
       await sleep(200);
       await stayedUp(body, call, pid);
       assert.deepEqual(await stateOf(call), free);
+    });
+  });
+});
+
+describe("a contained run's program_finished event carries the run's own error", () => {
+  /** The last `program_finished` event of a run that ended with an error; its `error` is the same text the run answered with. */
+  const errorFinish = (body: FakeBody): Record<string, unknown> => {
+    const [finished] = body.eventsOf("program_finished").filter((event) => event.data.status === "error").slice(-1);
+    assert.ok(finished, "no program_finished event with status error");
+    return finished.data;
+  };
+
+  it("(P1.1) a throw in a timer while the run awaits: the event names the run's error, not the abort the program's own rejection reported", { timeout: 60_000 }, async () => {
+    await using(async (body, call) => {
+      const run = await call("timer-throw");
+      assert.equal(run.status, "error");
+      await sleep(200);
+      const { error } = errorFinish(body);
+      assert.notEqual(error, "finished", "the host's preview of the run's own abort is not the event's error");
+      assert.equal(error, run.error);
+    });
+  });
+
+  it("(P1.2) a rejection nothing awaited after the program returned: likewise", { timeout: 60_000 }, async () => {
+    await using(async (body, call) => {
+      const run = await call("box-then-return");
+      assert.equal(run.status, "error");
+      await sleep(200);
+      assert.equal(errorFinish(body).error, run.error);
     });
   });
 });

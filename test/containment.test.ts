@@ -41,6 +41,7 @@ describe("a run's code is active when an error reaches the process", () => {
     const run = outcome("rejection-active");
     assert.equal(run.status, "error");
     assert.equal(lines("rejection-active")[0], `Error: rejected while active${NOT_AWAITED}`);
+    assert.equal(lines("rejection-active")[0], "Error: rejected while active - this promise was not awaited; add await before the call");
   });
 
   it("an exception does not say await: only a rejection does", () => {
@@ -97,6 +98,7 @@ describe("the body is halted at every end of a run (mb-mf5)", () => {
     const run = outcome("halt-cancels-unawaited-call");
     assert.equal(run.status, "error");
     assert.equal(lines("halt-cancels-unawaited-call")[0], `Error: The goal was changed before it could be completed!${NOT_AWAITED}`);
+    assert.equal(lines("halt-cancels-unawaited-call")[0], "Error: The goal was changed before it could be completed! - this promise was not awaited; add await before the call");
   });
 });
 
