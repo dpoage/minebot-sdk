@@ -65,18 +65,26 @@ export class Bindings {
     const { triggers } = this.#deps;
     if (input.kind === "reflex") {
       if (!triggers) throw new BindingInvalidError("this body does not offer reflexes: it was started without them");
-      if (this.#deps.library.source(routine) === undefined) throw new RoutineNotFoundError(`no routine named "${routine}"`);
+      this.#requireRoutine(routine);
       const { reflex, replaced } = await triggers.addReflex(input);
       return { binding: reflex, replaced };
     }
     const held = triggers?.holds(name);
     if (held !== undefined) throw new NameConflictError(name, held);
-    if (this.#deps.library.source(routine) === undefined) throw new RoutineNotFoundError(`no routine named "${routine}"`);
+    this.#requireRoutine(routine);
     const binding: ActionBindingInfo = { kind: "action", name, routine };
     this.#deps.store.set(name, { kind: binding.kind, routine });
     const replaced = this.#actions.has(name);
     this.#actions.set(name, binding);
     return { binding, replaced };
+  }
+
+  /** Throws `RoutineNotFoundError` naming the routine and both ways to save it, when the library does not hold it. */
+  #requireRoutine(routine: string): void {
+    if (this.#deps.library.source(routine) !== undefined) return;
+    throw new RoutineNotFoundError(
+      `no routine named "${routine}" in this body's routine library; save it first: pass its TypeScript as \`source\` to bind_routine (or routine_save), or run \`npx minebot routines save <file>.ts\`, then bind again`,
+    );
   }
 
   /** Removes the binding of `name`, an action or a reflex, or the stored entry of that name that the reflexes skipped at start; false when there was none. */

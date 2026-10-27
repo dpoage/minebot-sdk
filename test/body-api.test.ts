@@ -615,6 +615,11 @@ interface GatedProbe {
 
 const ROUTINE_NAME_RULE = { status: 400, body: { error: "✖ use 1-48 lowercase letters, digits, _ and -; start with a letter\n  → at name" } };
 const CALL_NAME_RULE = "✖ use an action's name (1-48 lowercase letters, digits, _ and -; start with a letter) or a built-in routine's <module>.<routine>\n  → at name";
+/** What a bind of a routine the library lacks answers with 404, in full: the cause, then both fixes. */
+const NO_ROUTINE = (name: string) => ({
+  status: 404,
+  body: { error: `no routine named "${name}" in this body's routine library; save it first: pass its TypeScript as \`source\` to bind_routine (or routine_save), or run \`npx minebot routines save <file>.ts\`, then bind again` },
+});
 
 /** Every capability-gated route of the table, once, with a request whose answer does not depend on which other capabilities the body offers. */
 const GATED: GatedProbe[] = [
@@ -640,7 +645,7 @@ const GATED: GatedProbe[] = [
   { capability: "routines", method: "GET", url: "/routines/versions?name=Bad", served: () => ROUTINE_NAME_RULE },
   { capability: "routines", method: "POST", url: "/routines/revert", call: { json: { name: "Bad", version: 1 } }, served: () => ROUTINE_NAME_RULE },
   { capability: "routines", method: "GET", url: "/bindings", served: () => ({ body: { bindings: [] } }) },
-  { capability: "routines", method: "POST", url: "/bind", call: { json: { kind: "action", name: "act", routine: "ghost" } }, served: () => ({ status: 404, body: { error: 'no routine named "ghost"' } }) },
+  { capability: "routines", method: "POST", url: "/bind", call: { json: { kind: "action", name: "act", routine: "ghost" } }, served: () => NO_ROUTINE("ghost") },
   { capability: "routines", method: "POST", url: "/unbind", call: { json: { name: "ghost" } }, served: () => ({ status: 404, body: { error: 'no binding "ghost"' } }) },
   // Served when the body has actions or built-ins; a dot-free name is an action's, which a body without routines does not keep.
   { capability: "call", method: "POST", url: "/call", call: { json: { name: "ghost" } }, served: (f) => ({ status: 404, body: { error: f.routines ? 'no action bound to "ghost"' : 'no action named "ghost": this body has no routine library; built-in routines are called as <module>.<routine>' } }) },
@@ -743,7 +748,7 @@ describe("body API: reflexes", () => {
     const syntax = await body.send("POST", "/bind", { json: { kind: "reflex", name: "rfx", routine: "r1", on: ["hurt"], when: "event.data <" } });
     assert.equal(syntax.status, 400);
     assert.match(JSON.stringify(syntax.body), /^\{"error":"when does not compile: /);
-    await body.call("POST", "/bind", { status: 404, body: { error: 'no routine named "ghost"' } }, { json: { kind: "reflex", name: "rfx", routine: "ghost", on: ["hurt"] } });
+    await body.call("POST", "/bind", NO_ROUTINE("ghost"), { json: { kind: "reflex", name: "rfx", routine: "ghost", on: ["hurt"] } });
     await body.call("GET", "/bindings", { body: { bindings: [] } });
   });
 
