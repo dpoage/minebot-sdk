@@ -24,6 +24,8 @@ export interface RunResult {
   error?: string;
   logs: string;
   durationMs: number;
+  /** How many times the player died while the run was active; absent when it did not. `observe` shows the last death. */
+  diedDuringRun?: number;
 }
 
 /**
@@ -44,6 +46,8 @@ export interface RunRecord {
   call?: { name: string; routine?: string; args: unknown };
   /** The args a module run was given. */
   args?: unknown;
+  /** How many times the player died while the run was active; absent when it did not. */
+  diedDuringRun?: number;
 }
 
 export interface BodyEvent {

@@ -21,6 +21,15 @@ pathfinder.Movements = class {};
 function fakeBot(): EventEmitter {
   const bot = new EventEmitter();
   const noop = () => {};
+  /** The controls a run or the body's float holds, and every value jump was given, in order (a run reads them back through `ctx.bot`). */
+  const controlState: Record<string, boolean> = {};
+  const jumps: boolean[] = [];
+  /** The block at the player's eyes: a run sets `ctx.bot.eye.name = "water"` to put the player under water. */
+  const eye = { name: null as string | null };
+  const setControlState = (control: string, state: boolean) => {
+    controlState[control] = state;
+    if (control === "jump") jumps.push(state);
+  };
   Object.assign(bot, {
     username: "fakebot",
     health: 20,
@@ -32,7 +41,14 @@ function fakeBot(): EventEmitter {
     pathfinder: { setMovements: noop, setGoal: noop },
     _client: new EventEmitter(),
     loadPlugin: noop,
-    clearControlStates: noop,
+    controlState,
+    jumps,
+    eye,
+    setControlState,
+    clearControlStates: () => {
+      for (const [control, held] of Object.entries(controlState)) if (held) setControlState(control, false);
+    },
+    blockAt: () => (eye.name === null ? null : { name: eye.name, getProperties: () => ({}) }),
     stopDigging: noop,
     deactivateItem: noop,
     quit: noop,

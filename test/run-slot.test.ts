@@ -13,7 +13,6 @@ import { removeScratch, startFakeBody } from "./fixtures/host/fake-body.ts";
 // Loaded after the fake body, which sets MINEBOT_RUNTIME_DIR before anything reaches the discovery module; the history is
 // the same module instance the fake body's supervisor builds its history from.
 const { ProgramHistory } = await import("../src/body/history.ts");
-const { BusyError } = await import("../src/program/runner.ts");
 
 after(removeScratch);
 
@@ -53,7 +52,9 @@ describe("a call that arrives while a preempted run is in its grace", () => {
         body.events.push("chat", { from: "ana", message: "run" });
         await sleep(leg.postMs);
         const b = await body.request("POST", "/call", { name: "b" });
-        assert.deepEqual(b, { status: 409, body: { error: new BusyError().message } });
+        assert.equal(b.status, 409);
+        assert.ok(typeof b.body === "object" && b.body !== null && "error" in b.body);
+        assert.match(String(b.body.error), /^busy: call_routine "a" has held the run slot for \d+ s; wait_for \["program_finished"\] or stop_program, then retry$/);
 
         assert.equal(((await a).body as RunResult).status, "stopped");
         const finished = await body.waitFor("reflex_finished");

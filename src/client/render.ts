@@ -11,7 +11,8 @@ const json = (value: unknown) => JSON.stringify(value, null, 2);
  */
 export function formatRun(run: RunResult | RunRecord): string {
   const named = "seq" in run ? `run ${run.seq}${run.call === undefined ? "" : ` (call ${run.call.name})`}: ` : "";
-  const parts = [`${named}status: ${run.status} (${run.durationMs} ms)`];
+  const died = run.diedDuringRun === undefined ? "" : `\ndied during this run (${run.diedDuringRun} ${run.diedDuringRun === 1 ? "time" : "times"}); observe shows the last death`;
+  const parts = [`${named}status: ${run.status} (${run.durationMs} ms)${died}`];
   if (run.logs) parts.push(`logs:\n${run.logs}`);
   if (run.error) parts.push(`error:\n${run.error}`);
   if (run.result !== undefined) parts.push(`result:\n${typeof run.result === "string" ? run.result : json(run.result)}`);
