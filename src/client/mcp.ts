@@ -373,7 +373,7 @@ export async function serveMcp(bodyName: string, toolSet: ToolSet): Promise<void
   const wikiList = server.registerTool(
     "wiki_list",
     { description: "", inputSchema: { section: z.string().optional() } },
-    ({ section }) => call(async (c) => (await c.wikiList(section)).pages.map((p) => `${p.id} [${p.status}] ${p.title}`).join("\n")),
+    ({ section }) => call(async (c) => (await c.wikiList(section)).pages.map((p) => `${p.id} [${p.status}] ${p.title}${p.stale ? ` ${p.stale}` : ""}`).join("\n")),
   );
   const addLesson = server.registerTool(
     "wiki_add_lesson",
