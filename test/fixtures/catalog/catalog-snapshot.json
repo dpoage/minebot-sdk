@@ -1404,7 +1404,7 @@
     "routines": [
       {
         "name": "attack",
-        "description": "Hit one creature until it dies. `target` is an entity id or a name ('zombie'; the nearest match, a player's username works too). Walks up to it, holds the best sword or axe from the inventory, and hits once per weapon cooldown. Gives up after `timeoutMs` (default 20000). Returns { target, killed, damageTaken, weapon }.",
+        "description": "Hit one creature until it dies. `target` is an entity id or a name ('zombie'; the nearest match, a player's username works too). Walks up to it, holds the best sword or axe from the inventory, and hits once per weapon cooldown. Gives up after `timeoutMs` (default 20000). Returns { target, killed, damageTaken, weapon, reason }; when `killed` is false, `reason` is one line that names why it gave up (gone, still in reach, outran, blocked) and what to do next.",
         "args": {
           "$schema": "https://json-schema.org/draft/2020-12/schema",
           "type": "object",
@@ -1451,6 +1451,9 @@
                 "string",
                 "null"
               ]
+            },
+            "reason": {
+              "type": "string"
             }
           },
           "required": [
