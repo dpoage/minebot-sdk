@@ -102,12 +102,29 @@ function roomFor(ctx: RoutineContext, recipe: { delta: readonly { id: number; co
 }
 
 /**
+ * Closes a window still open from earlier code (a crafting table or chest the bot opened and left),
+ * and says so. With another window open, a craft's inventory updates never arrive and it times out
+ * after 20 s ("Event updateSlot:0 did not fire"). Closing copies the window's inventory slots back
+ * into the inventory, so it runs first of all: every path of a call then starts and ends with no
+ * window of its own, and a call that fails its checks still leaves none open.
+ */
+async function closeStrayWindow(ctx: RoutineContext): Promise<void> {
+  const { bot } = ctx;
+  const stray = bot.currentWindow;
+  if (!stray) return;
+  const type = stray.type.toString().replace(/^minecraft:/, "").replace(/^crafting$/, "crafting_table");
+  await bot.closeWindow(stray);
+  ctx.log(`closed the open ${type} window first`);
+}
+
+/**
  * Crafts at least `count` more of `name` from what the inventory holds, using a crafting table
  * within reach when the recipe needs one. Returns what the inventory gained once it has settled;
  * fails when that is nothing, with an InventoryFullError when the inventory had no room for the result.
  */
 async function craftItem(ctx: RoutineContext, name: string, count = 1): Promise<number> {
   const { bot } = ctx;
+  await closeStrayWindow(ctx);
   const id = itemId(ctx, name);
   let recipe = bot.recipesFor(id, null, count, null)[0];
   let table: Block | null = null;
@@ -157,7 +174,7 @@ async function craftItem(ctx: RoutineContext, name: string, count = 1): Promise<
 export const craft = defineRoutine(
   {
     name: "craft.craft",
-    description: "Craft at least `count` (default 1) more of `item` from the inventory. A recipe that needs a crafting table uses one within 4 blocks, and the call fails when there is none. Returns how many the inventory gained once the result settled, and fails when that is none: when the inventory has no room for the result, the error says it fell at the bot's feet and how to recover it, and otherwise the error names the recipe's inputs.",
+    description: "Craft at least `count` (default 1) more of `item` from the inventory. A window left open (a crafting table or chest) is closed before the craft runs. A recipe that needs a crafting table uses one within 4 blocks, and the call fails when there is none. Returns how many the inventory gained once the result settled, and fails when that is none: when the inventory has no room for the result, the error says it fell at the bot's feet and how to recover it, and otherwise the error names the recipe's inputs.",
     args: z.object({ item: z.string().min(1), count: z.number().int().positive().default(1) }),
     returns: z.number(),
   },
