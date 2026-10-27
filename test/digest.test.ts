@@ -38,18 +38,18 @@ describe("summarize: the digest's wording", () => {
     assert.equal(line([]), undefined);
   });
 
-  it("names one death, its cause without the player's name, its place floored, and the respawn with its distance", () => {
+  it("names one death, its cause without the player's name, its place in whole blocks, and the respawn with its horizontal distance", () => {
     assert.equal(
       line([death(-286.36, 42, 104.64, "Fartmastery drowned"), spawn(-517.5, 76, 105.5)]),
-      `${PREFIX}died once: drowned at -287 42 104, respawned at -518 76 105 (234 blocks away)`,
+      `${PREFIX}died once, last: drowned at -286 42 104, respawned at -517 76 105 (231 blocks away)`,
     );
-    assert.equal(line([death(10.9, 64, -0.5, "Fartmastery fell from a high place"), spawn(11.5, 64, -0.5)]), `${PREFIX}died once: fell from a high place at 10 64 -1, respawned at 11 64 -1 (1 block away)`);
+    assert.equal(line([death(10.9, 64, -0.5, "Fartmastery fell from a high place"), spawn(11.5, 64, -0.5)]), `${PREFIX}died once, last: fell from a high place at 10 64 0, respawned at 11 64 0 (1 block away)`);
   });
 
   it("counts several deaths, and gives the breakdown only when the causes differ", () => {
     assert.equal(
       line([death(0, 10, 0, "P drowned"), spawn(0, 80, 0), death(5, 20, 5, "P drowned"), spawn(0, 80, 0)]),
-      `${PREFIX}died 2 times, last: drowned at 5 20 5, respawned at 0 80 0 (60 blocks away)`,
+      `${PREFIX}died 2 times, last: drowned at 5 20 5, respawned at 0 80 0 (7 blocks away)`,
     );
     assert.equal(
       line([death(0, 10, 0, "P drowned"), death(1, 10, 0, "P fell from a high place"), death(2, 10, 0, "P drowned"), death(3, 10, 0, "P was slain by Zombie")]),
@@ -58,9 +58,9 @@ describe("summarize: the digest's wording", () => {
   });
 
   it("reads an absent cause as unknown", () => {
-    assert.equal(line([death(1.5, 2, 3)]), `${PREFIX}died at 1 2 3`);
-    assert.equal(line([death(1, 2, 3), death(4, 5, 6)]), `${PREFIX}died 2 times, last at 4 5 6`);
-    assert.equal(line([death(1, 2, 3, "P drowned"), death(4, 5, 6)]), `${PREFIX}died 2 times (drowned 1, unknown 1), last at 4 5 6`);
+    assert.equal(line([death(1.5, 2, 3)]), `${PREFIX}died once, last: at 1 2 3`);
+    assert.equal(line([death(1, 2, 3), death(4, 5, 6)]), `${PREFIX}died 2 times, last: at 4 5 6`);
+    assert.equal(line([death(1, 2, 3, "P drowned"), death(4, 5, 6)]), `${PREFIX}died 2 times (drowned 1, unknown 1), last: at 4 5 6`);
   });
 
   it("pairs a respawn with the last death only, and ignores a spawn that follows no death", () => {
@@ -70,10 +70,10 @@ describe("summarize: the digest's wording", () => {
 
   it("carries a death whose respawn the window did not reach into the next window", () => {
     const first = summarize([death(0, 0, 0, "P drowned")]);
-    assert.equal(first.line, `${PREFIX}died once: drowned at 0 0 0`);
+    assert.equal(first.line, `${PREFIX}died once, last: drowned at 0 0 0`);
     assert.deepEqual(first.awaitingRespawn, { x: 0, y: 0, z: 0 });
     const second = summarize([spawn(30, 40, 0)], first.awaitingRespawn);
-    assert.equal(second.line, `${PREFIX}respawned at 30 40 0 (50 blocks away)`);
+    assert.equal(second.line, `${PREFIX}respawned at 30 40 0 (30 blocks away)`);
     assert.equal(second.awaitingRespawn, undefined);
   });
 
@@ -86,7 +86,7 @@ describe("summarize: the digest's wording", () => {
         ev("reflex_disabled", { name: "eat", failures: 3, reason: "failed 3 times" }),
         death(1, 2, 3, "P drowned"),
       ]),
-      `${PREFIX}died once: drowned at 1 2 3; reflex collect-loot disabled: 2 deaths in 10 minutes; reflex eat disabled: failed 3 times; bot host restarted: the host crashed (exit 1): boom; kicked: You were kicked for flying`,
+      `${PREFIX}died once, last: drowned at 1 2 3; reflex collect-loot disabled: 2 deaths in 10 minutes; reflex eat disabled: failed 3 times; bot host restarted: the host crashed (exit 1): boom; kicked: You were kicked for flying`,
     );
   });
 
@@ -96,7 +96,7 @@ describe("summarize: the digest's wording", () => {
   });
 });
 
-/** The real events of 2026-10-25 15:59-16:23: 8 drownings at the same spot, 626 hurts. */
+/** The real events of 2026-10-27 00:19-00:43: 8 drownings at the same spot, 626 hurts. */
 const WINDOW = readFileSync(path.join(import.meta.dirname, "fixtures", "death-loop-events.jsonl"), "utf8")
   .trim()
   .split("\n")
@@ -113,7 +113,7 @@ describe("replay: the 8-death loop of seq 5400-6115", () => {
 
   it("yields one line that counts all 8 deaths, as the artifact has them (no cause recorded)", () => {
     const text = summarize(WINDOW).line!;
-    assert.equal(text, `${PREFIX}died 8 times, last at -287 42 104, respawned at -519 177 89 (269 blocks away)`);
+    assert.equal(text, `${PREFIX}died 8 times, last: at -286 42 104, respawned at -518 177 89 (232 blocks away)`);
   });
 
   it("names the cause once the death event carries the server's message (the system line before each death)", () => {
@@ -123,7 +123,7 @@ describe("replay: the 8-death loop of seq 5400-6115", () => {
       return e.type === "death" ? { ...e, data: { ...e.data, cause: message } } : e;
     });
     const text = summarize(enriched).line!;
-    assert.equal(text, `${PREFIX}died 8 times, last: drowned at -287 42 104, respawned at -519 177 89 (269 blocks away)`);
+    assert.equal(text, `${PREFIX}died 8 times, last: drowned at -286 42 104, respawned at -518 177 89 (232 blocks away)`);
     assert.ok(!/hurt|low_health|item_picked_up|health|food/.test(text), text);
     assert.ok(!text.includes("\n"));
   });
@@ -172,7 +172,7 @@ describe("Digest: the cursor", () => {
     log.push("hurt", { health: 1 });
     assert.equal(await digest.take(), undefined);
     log.push("death", { position: { x: 1, y: 2, z: 3 }, cause: "P fell from a high place" });
-    assert.equal(await digest.take(), `${PREFIX}died once: fell from a high place at 1 2 3`);
+    assert.equal(await digest.take(), `${PREFIX}died once, last: fell from a high place at 1 2 3`);
     assert.equal(await digest.take(), undefined);
   });
 
@@ -206,7 +206,7 @@ describe("Digest: the cursor", () => {
     log.push("death", { position: { x: 1, y: 2, z: 3 }, cause: "P drowned" });
     for (let i = 0; i < 1500; i++) log.push("hurt", { health: 1 });
     log.requests.length = 0;
-    assert.equal(await digest.take(), `${PREFIX}died once: drowned at 1 2 3`);
+    assert.equal(await digest.take(), `${PREFIX}died once, last: drowned at 1 2 3`);
     assert.deepEqual(log.requests, [[0, 1000], [1000, 1000], [2000, 1000], [3000, 1000], [4000, 1000]]);
     assert.equal(await digest.take(), undefined);
   });
@@ -264,7 +264,7 @@ describe("Digest: the cursor", () => {
     const digest = log.digest();
     await digest.start();
     log.push("death", { position: { x: 0, y: 0, z: 0 }, cause: "P drowned" });
-    assert.equal(await digest.take(), `${PREFIX}died once: drowned at 0 0 0`);
+    assert.equal(await digest.take(), `${PREFIX}died once, last: drowned at 0 0 0`);
     log.push("spawn", { position: { x: 0, y: 0, z: 100 } });
     assert.equal(await digest.take(), `${PREFIX}respawned at 0 0 100 (100 blocks away)`);
   });
@@ -316,7 +316,7 @@ describe("minebot mcp: every response begins with the digest", () => {
       log.push("death", { position: { x: -286.5, y: 42, z: 104.5 }, cause: "Fartmastery drowned" });
       log.push("spawn", { position: { x: -517.5, y: 76, z: 105.5 } });
       log.push("block_broken", { name: "stone" });
-      assert.deepEqual(await text("api_reference"), { text: `${PREFIX}died once: drowned at -287 42 104, respawned at -518 76 105 (233 blocks away)\n${DOC}`, isError: false });
+      assert.deepEqual(await text("api_reference"), { text: `${PREFIX}died once, last: drowned at -286 42 104, respawned at -517 76 105 (231 blocks away)\n${DOC}`, isError: false });
       assert.deepEqual(await text("api_reference"), { text: DOC, isError: false });
 
       log.push("kicked", { reason: "Flying is not enabled" });

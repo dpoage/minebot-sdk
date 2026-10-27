@@ -49,7 +49,10 @@ function placeOf(value: unknown): Place | undefined {
   return typeof x === "number" && typeof y === "number" && typeof z === "number" && Number.isFinite(x + y + z) ? { x, y, z } : undefined;
 }
 
-const at = (place: Place | undefined): string => (place ? ` at ${Math.floor(place.x)} ${Math.floor(place.y)} ${Math.floor(place.z)}` : "");
+/** Whole blocks, truncated toward zero (`-286.5` -> `-286`, never `-0`). */
+const whole = (value: number): number => Math.trunc(value) || 0;
+
+const at = (place: Place | undefined): string => (place ? ` at ${whole(place.x)} ${whole(place.y)} ${whole(place.z)}` : "");
 
 /** The server's death message without the player's name: "Fartmastery drowned" -> "drowned". */
 function causeOf(value: unknown): string | undefined {
@@ -66,14 +69,15 @@ function deathPart(deaths: Death[], respawn: { place: Place; from: Place | undef
     const counts = new Map<string, number>();
     for (const { cause } of deaths) counts.set(cause ?? "unknown", (counts.get(cause ?? "unknown") ?? 0) + 1);
     if (deaths.length === 1) {
-      parts.push(last.cause ? `died once: ${last.cause}${at(last.place)}` : `died${at(last.place)}`);
+      parts.push(`died once, last:${last.cause ? ` ${last.cause}` : ""}${at(last.place)}`);
     } else {
       const breakdown = counts.size > 1 ? ` (${[...counts].sort((a, b) => b[1] - a[1]).map(([cause, n]) => `${cause} ${n}`).join(", ")})` : "";
-      parts.push(`died ${deaths.length} times${breakdown}, last${last.cause ? `: ${last.cause}` : ""}${at(last.place)}`);
+      parts.push(`died ${deaths.length} times${breakdown}, last:${last.cause ? ` ${last.cause}` : ""}${at(last.place)}`);
     }
   }
   if (respawn) {
-    const distance = respawn.from ? Math.round(Math.hypot(respawn.place.x - respawn.from.x, respawn.place.y - respawn.from.y, respawn.place.z - respawn.from.z)) : undefined;
+    // Horizontal blocks: a respawn's height tells nothing about how far the player walked.
+    const distance = respawn.from ? Math.round(Math.hypot(respawn.place.x - respawn.from.x, respawn.place.z - respawn.from.z)) : undefined;
     const far = distance === undefined ? "" : ` (${distance} block${distance === 1 ? "" : "s"} away)`;
     parts.push(`respawned${at(respawn.place)}${far}`);
   }

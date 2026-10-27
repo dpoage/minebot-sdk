@@ -121,6 +121,8 @@ async function stubBody(features: BodyFeatures): Promise<{ url: string; seen: st
     const raw = await text(req);
     res.setHeader("content-type", "application/json");
     if (req.url === "/features" || req.url === "/api") return void res.end(JSON.stringify(req.url === "/features" ? features : { doc: "the program reference" }));
+    // The digest that begins every MCP response polls the event log; an empty log is not a tool's request.
+    if (req.url?.startsWith("/events")) return void res.end(JSON.stringify({ events: [], next: 0 }));
     seen.push(`${req.method} ${req.url} ${raw}`);
     res.end(JSON.stringify({ status: "ok", durationMs: 1, logs: "", result: 1 }));
   });
