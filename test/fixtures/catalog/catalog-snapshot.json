@@ -563,7 +563,7 @@
     "routines": [
       {
         "name": "recipes",
-        "description": "Up to 3 recipes for `item`: [{ makes, requiresTable, ingredients: { name: count } }]. Fails for an unknown item.",
+        "description": "Every recipe for `item`, one per variant (a tagged ingredient such as planks or logs gives one recipe per wood, so stick lists 13): [{ makes, requiresTable, ingredients: { name: count } }]. Fails for an unknown item. To see what you still need to gather for it, call crafter.plan.",
         "args": {
           "$schema": "https://json-schema.org/draft/2020-12/schema",
           "type": "object",
@@ -2370,7 +2370,7 @@
   },
   {
     "name": "crafter",
-    "description": "Craft and smelt item chains from the inventory, finding or placing a crafting table or furnace when needed.",
+    "description": "Plan, craft, and smelt item chains: crafter.plan lists the raw materials still missing for an item; crafter.make crafts and smelts it from the inventory, finding or placing a crafting table or furnace when needed.",
     "uses": [
       "move",
       "sense",
@@ -2406,6 +2406,73 @@
         "returns": {
           "$schema": "https://json-schema.org/draft/2020-12/schema",
           "type": "number"
+        }
+      },
+      {
+        "name": "plan",
+        "description": "Say what `count` (default 1) of `item` still needs, without doing anything: a dry run of crafter.make over the inventory and the crafting table and furnace within 32 blocks. Returns { item, count, have, missing, alternatives }. `have` is what the inventory holds now. `missing` is { item: n } of the raw materials still to gather (oak_log, cobblestone, raw_iron, coal, ...), counting what a crafting table or furnace you lack would take (logs; 8 cobblestone) and coal for fuel (charcoal, planks, and logs burn too); `{}` means crafter.make can make it now. An ore block is never named: mine it for its raw item. Where several recipes need the same amount it names the commonest material, and `alternatives` lists the others that would do instead ({ cobblestone: [cobbled_deepslate, blackstone] }). Fails for an unknown item.",
+        "args": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "item": {
+              "type": "string",
+              "minLength": 1
+            },
+            "count": {
+              "default": 1,
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            }
+          },
+          "required": [
+            "item"
+          ]
+        },
+        "returns": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "item": {
+              "type": "string"
+            },
+            "count": {
+              "type": "number"
+            },
+            "have": {
+              "type": "number"
+            },
+            "missing": {
+              "type": "object",
+              "propertyNames": {
+                "type": "string"
+              },
+              "additionalProperties": {
+                "type": "number"
+              }
+            },
+            "alternatives": {
+              "type": "object",
+              "propertyNames": {
+                "type": "string"
+              },
+              "additionalProperties": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "required": [
+            "item",
+            "count",
+            "have",
+            "missing",
+            "alternatives"
+          ],
+          "additionalProperties": false
         }
       }
     ]

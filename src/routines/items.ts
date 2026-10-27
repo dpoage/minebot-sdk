@@ -39,11 +39,11 @@ function droppedItems(ctx: RoutineContext, radius: number) {
 export const recipes = defineRoutine(
   {
     name: "items.recipes",
-    description: "Up to 3 recipes for `item`: [{ makes, requiresTable, ingredients: { name: count } }]. Fails for an unknown item.",
+    description: "Every recipe for `item`, one per variant (a tagged ingredient such as planks or logs gives one recipe per wood, so stick lists 13): [{ makes, requiresTable, ingredients: { name: count } }]. Fails for an unknown item. To see what you still need to gather for it, call crafter.plan.",
     args: z.object({ item: z.string().min(1) }),
     returns: z.array(z.object({ makes: z.number(), requiresTable: z.boolean(), ingredients: z.record(z.string(), z.number()) })),
   },
-  (ctx, { item }): RecipeSummary[] => ctx.bot.recipesAll(itemId(ctx, item), null, true).slice(0, 3).map((r) => summarize(ctx, r)),
+  (ctx, { item }): RecipeSummary[] => ctx.bot.recipesAll(itemId(ctx, item), null, true).map((r) => summarize(ctx, r)),
 );
 
 export const drops = defineRoutine(
