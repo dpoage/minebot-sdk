@@ -13,6 +13,24 @@ const SAMPLE_MS = 500;
 const PROGRESS_BLOCKS = 1;
 const NEAR_UPDATE_BLOCKS = 6;
 const EYE_HEIGHT = 1.62;
+/**
+ * The body's low-oxygen threshold, the same value `src/host/watch.ts` exports as `LOW_OXYGEN`: the
+ * server lets the breath bar fall to 10 before the player starts taking drowning damage.
+ */
+const LOW_OXYGEN = 10;
+const AIR_SAMPLE_MS = 100;
+/** Long enough to surface from any depth at 20 ticks a second, short enough to keep a doomed walk short. */
+const AIR_RISE_MS = 8_000;
+/** A finished path that leaves the player out of range and then does nothing for this many ticks ended short. */
+const PATH_SHORT_IDLE_TICKS = 10;
+/** A no-path explanation searches with a fall height taller than any world: every drop is allowed. */
+const UNLIMITED_DROP_DOWN = 512;
+/** Both searches that explain a missing path share this budget, so a failed walk still ends promptly. */
+const NO_PATH_RESEARCH_MS = 5_000;
+/** The pathfinder's own search slice, so a re-search never blocks a tick for longer than a search tick. */
+const SEARCH_SLICE_MS = 40;
+/** Blocks whose cell holds water: swimming up needs the head in a cell that is none of them. */
+const WATER_BLOCKS = new Set(["water", "kelp", "kelp_plant", "seagrass", "tall_seagrass", "bubble_column"]);
 
 /** Rejects (and stops pathfinding) once the player has made no progress for `NO_PROGRESS_MS`; `stop` ends the watch. */
 function watchProgress(bot: RoutineContext["bot"], target: Vec3): { stalled: Promise<never>; stop: () => void } {
@@ -40,6 +58,93 @@ function watchProgress(bot: RoutineContext["bot"], target: Vec3): { stalled: Pro
     stop: () => {
       clearInterval(timer);
       bot.off("blockUpdate", onBlockUpdate);
+    },
+  };
+}
+
+/** Resolves "air" once the player's oxygen falls below `LOW_OXYGEN`; `at` says where that happened; `stop` ends the watch. */
+function watchAir(bot: RoutineContext["bot"]): { low: Promise<"air">; at: () => Vec3; stop: () => void } {
+  const low = Promise.withResolvers<"air">();
+  let at = bot.entity.position.floored();
+  const timer = setInterval(() => {
+    if (bot.oxygenLevel >= LOW_OXYGEN) return;
+    at = bot.entity.position.floored();
+    low.resolve("air");
+  }, AIR_SAMPLE_MS);
+  return { low: low.promise, at: () => at, stop: () => clearInterval(timer) };
+}
+
+/** Whether the block the player's eyes are in holds water: the breath bar only refills once the head is out. */
+function headUnderwater(bot: RoutineContext["bot"]): boolean {
+  const head = bot.blockAt(bot.entity.position.offset(0, EYE_HEIGHT, 0));
+  if (!head) return false;
+  if (WATER_BLOCKS.has(head.name)) return true;
+  return head.getProperties().waterlogged === true;
+}
+
+/**
+ * Stops the walk and swims up by holding jump until the head is out of water (or `AIR_RISE_MS`
+ * passes), then returns the error that ends the run. The pathfinder's own control clearing has
+ * already happened when its goal is dropped.
+ */
+async function riseOutOfAir(bot: RoutineContext["bot"], from: Vec3, target: Vec3): Promise<Error> {
+  bot.pathfinder.setGoal(null);
+  bot.setControlState("jump", true);
+  try {
+    const started = Date.now();
+    while (headUnderwater(bot) && Date.now() - started < AIR_RISE_MS) {
+      await new Promise<void>((resolve) => setTimeout(resolve, AIR_SAMPLE_MS));
+    }
+  } finally {
+    bot.setControlState("jump", false);
+  }
+  const up = bot.entity.position.floored();
+  return new Error(`out of air at ${from}: swam up to ${up}; the path to ${target} runs underwater - go around the water`);
+}
+
+/**
+ * Rejects when the pathfinder has walked its last node, then gone idle short of the goal: it set a
+ * non-empty path, reported nothing since, `isMoving()` is false, and the player is outside `range`
+ * for `PATH_SHORT_IDLE_TICKS` physics ticks. A path that ended and a goal that is still set is a
+ * dead end the plugin never reports; without this the walk would wait for the stuck watchdog instead.
+ */
+function watchPathShort(bot: RoutineContext["bot"], target: Vec3, goal: InstanceType<typeof goals.GoalNear>): { short: Promise<never>; stop: () => void } {
+  const short = Promise.withResolvers<never>();
+  let walking = false;
+  let idle = 0;
+  const reached = () => {
+    walking = false;
+    idle = 0;
+  };
+  const onUpdate = ({ status, path }: { status: string; path: unknown[] }) => {
+    if (status === "success" && path.length > 0) walking = true;
+    idle = 0;
+  };
+  const onTick = () => {
+    if (!walking) return;
+    const feet = bot.entity.position.floored();
+    const near = (p: Vec3) => p.distanceSquared(target) <= goal.rangeSq;
+    if (near(feet) || near(feet.offset(0, 1, 0))) return reached();
+    if (bot.pathfinder.isMoving?.()) {
+      idle = 0;
+      return;
+    }
+    idle++;
+    if (idle < PATH_SHORT_IDLE_TICKS) return;
+    walking = false;
+    short.reject(new Error(`could not reach ${target}: the path ended ${feet.distanceTo(target).toFixed(1)} blocks short`));
+  };
+  bot.on("path_update", onUpdate);
+  bot.on("path_reset", reached);
+  bot.on("goal_reached", reached);
+  bot.on("physicsTick", onTick);
+  return {
+    short: short.promise,
+    stop: () => {
+      bot.off("path_update", onUpdate);
+      bot.off("path_reset", reached);
+      bot.off("goal_reached", reached);
+      bot.off("physicsTick", onTick);
     },
   };
 }
@@ -107,29 +212,134 @@ function watchPathEnd(bot: RoutineContext["bot"], goal: object): { outcome: Prom
   };
 }
 
+/** A node of a pathfinder path: where it stands, and what it would break or place getting to the next one. */
+interface PathNode {
+  x: number;
+  y: number;
+  z: number;
+  toBreak?: readonly { x: number; y: number; z: number }[];
+}
+
+interface SearchResult {
+  status: string;
+  path: PathNode[];
+}
+
+/** A copy of `from`'s movement rules, with the fall height or the own-build exclusions changed; a fresh `Movements` would silently drop both. */
+function cloneMovements(bot: RoutineContext["bot"], from: InstanceType<typeof Movements> | undefined, options: { unlimitedDrop?: boolean; noExclusions?: boolean } = {}): InstanceType<typeof Movements> {
+  const movements = new Movements(bot);
+  // The plugin types the exclusion lists as one-element tuples, so replaced lists need a cast to write.
+  const exclusions = movements as unknown as { exclusionAreasBreak: unknown; exclusionAreasPlace: unknown; exclusionAreasStep: unknown };
+  if (options.noExclusions === true) {
+    exclusions.exclusionAreasBreak = [];
+    exclusions.exclusionAreasPlace = [];
+    exclusions.exclusionAreasStep = [];
+  } else if (from) {
+    exclusions.exclusionAreasBreak = from.exclusionAreasBreak;
+    exclusions.exclusionAreasPlace = from.exclusionAreasPlace;
+    exclusions.exclusionAreasStep = from.exclusionAreasStep;
+  }
+  if (options.unlimitedDrop === true) movements.maxDropDown = UNLIMITED_DROP_DOWN;
+  else if (from) movements.maxDropDown = from.maxDropDown;
+  return movements;
+}
+
+/** Runs the pathfinder's own search with `movements`, a search tick at a time, and returns the path when one is found within `budgetMs`. */
+async function searchPath(bot: RoutineContext["bot"], movements: InstanceType<typeof Movements>, goal: InstanceType<typeof goals.GoalNear>, budgetMs: number): Promise<SearchResult | undefined> {
+  if (budgetMs <= 0) return undefined;
+  const deadline = Date.now() + budgetMs;
+  const generator = bot.pathfinder.getPathFromTo(movements, bot.entity.position, goal, {
+    timeout: budgetMs,
+    tickTimeout: SEARCH_SLICE_MS,
+  }) as unknown as IterableIterator<{ result: SearchResult }>;
+  for (;;) {
+    const next = generator.next();
+    if (next.done === true) return undefined;
+    const { result } = next.value;
+    if (result.status === "success") return result.path.length > 0 ? result : undefined;
+    if (result.status !== "partial") return undefined;
+    if (Date.now() >= deadline) return undefined;
+    // The search is sliced so a tick never waits on it; the next slice starts after the tick's work.
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  }
+}
+
+/** The largest fall on `path`, in blocks: the biggest drop of y between consecutive nodes, from where the player stands. */
+function largestDrop(path: readonly PathNode[], start: Vec3): number {
+  let previous = start.y;
+  let drop = 0;
+  for (const node of path) {
+    drop = Math.max(drop, previous - node.y);
+    previous = node.y;
+  }
+  return Math.max(1, Math.round(drop));
+}
+
+/** The error that names a block on the only way: a path that appears without the own-build exclusions goes through it. */
+function ownBuildError(bot: RoutineContext["bot"], target: Vec3, path: readonly PathNode[]): Error | undefined {
+  const position =
+    path.flatMap((node) => node.toBreak ?? [])[0] ?? path.find((node) => bot.blockAt(new Vec3(node.x, node.y, node.z))?.boundingBox === "block");
+  if (!position) return undefined;
+  const at = new Vec3(position.x, position.y, position.z);
+  const block = bot.blockAt(at);
+  return new Error(
+    `could not reach ${target}: every way goes through blocks you placed (e.g. ${block?.name ?? "a block"} at ${at}); open a door, break one yourself, or call move.to again with allowDigOwnBuilds: true`,
+  );
+}
+
 /**
- * Runs a pathfinder goal with a time limit and a progress watchdog. When the executor keeps resetting
- * with "stuck", retries without diagonal moves: the planner allows diagonal steps up out of a pit that
- * clip a tall block at the corner, and the executor then replans the same failing step forever.
- * When the pathfinder ends without reporting the goal reached (no path, the search timed out, or an empty
- * path), the player's position is checked against the goal. Pathfinding is stopped on every failure.
+ * Explains a walk that found no path, by searching again with one rule relaxed at a time: without
+ * the own-build exclusions (so a path that appears was behind a block the bot placed), then with
+ * every fall allowed (so a path that appears was behind the drop limit). Throws the matching error;
+ * returns when neither rule explains it, leaving the generic could-not-reach error to the walk.
  */
-async function pathTo(ctx: RoutineContext, goal: InstanceType<typeof goals.GoalNear>, timeoutMs: number): Promise<void> {
+async function throwWhyNoPath(bot: RoutineContext["bot"], goal: InstanceType<typeof goals.GoalNear>, walk: InstanceType<typeof Movements> | undefined, target: Vec3): Promise<void> {
+  const deadline = Date.now() + NO_PATH_RESEARCH_MS;
+  if ((walk?.exclusionAreasBreak.length ?? 0) > 0 || (walk?.exclusionAreasPlace.length ?? 0) > 0) {
+    const found = await searchPath(bot, cloneMovements(bot, walk, { noExclusions: true }), goal, deadline - Date.now());
+    const error = found && ownBuildError(bot, target, found.path);
+    if (error) throw error;
+  }
+  const deep = await searchPath(bot, cloneMovements(bot, walk, { unlimitedDrop: true }), goal, deadline - Date.now());
+  if (deep) {
+    const atMost = walk?.maxDropDown ?? 4;
+    throw new Error(
+      `could not reach ${target}: every way down is a drop of ${largestDrop(deep.path, bot.entity.position)} blocks (the pathfinder drops at most ${atMost}) - dig or build stairs down, or pick a target on this level`,
+    );
+  }
+}
+
+/**
+ * Runs a pathfinder goal with a time limit, a progress watchdog, and the checks only a walk in the
+ * world can show: the breath bar falling, and a path that ends short and leaves the pathfinder
+ * idle. When the executor keeps resetting with "stuck", retries without diagonal moves: the planner
+ * allows diagonal steps up out of a pit that clip a tall block at the corner, and the executor then
+ * replans the same failing step forever. When the pathfinder ends without reporting the goal reached
+ * (no path, the search timed out, or an empty path), the player's position is checked against the
+ * goal; a missing path is explained by one relaxed re-search. Pathfinding is stopped on every failure.
+ * `allowDigOwnBuilds` walks on movements without the own-build exclusions, for a player who chose to
+ * cut through what they built.
+ */
+async function pathTo(ctx: RoutineContext, goal: InstanceType<typeof goals.GoalNear>, timeoutMs: number, allowDigOwnBuilds: boolean): Promise<void> {
   const { bot } = ctx;
   const normal = bot.pathfinder.movements;
+  const walk = allowDigOwnBuilds ? cloneMovements(bot, normal, { noExclusions: true }) : normal;
   const target = new Vec3(goal.x, goal.y, goal.z);
   let stuck = 0;
   const onReset = (reason: string) => {
     if (reason !== "stuck" || ++stuck !== STUCK_RESETS_BEFORE_FALLBACK) return;
-    const straight = new Movements(bot);
+    const straight = cloneMovements(bot, bot.pathfinder.movements);
     straight.getMoveDiagonal = () => {};
     ctx.log("pathfinding: stuck on a diagonal step; retrying without diagonal moves");
     bot.pathfinder.setMovements(straight);
   };
+  if (walk !== normal) bot.pathfinder.setMovements(walk);
   bot.on("path_reset", onReset);
   const end = watchPathEnd(bot, goal);
   const watch = watchProgress(bot, target);
-  let ended: PathOutcome | undefined;
+  const air = watchAir(bot);
+  const pathShort = watchPathShort(bot, target, goal);
+  let ended: PathOutcome | "air" | undefined;
   try {
     // `goto` resolving is not an outcome (it resolves on any empty path, also a partial one); the watcher
     // takes its failures, ends a goto that said nothing, and settles on the pathfinder's own report.
@@ -137,41 +347,47 @@ async function pathTo(ctx: RoutineContext, goal: InstanceType<typeof goals.GoalN
       () => end.gotoSettled(undefined),
       (err: unknown) => end.gotoSettled(err),
     );
-    ended = await within(timeoutMs, "pathfinding", Promise.race([end.outcome, watch.stalled]), () => bot.pathfinder.setGoal(null));
+    ended = await within(timeoutMs, "pathfinding", Promise.race([end.outcome, watch.stalled, air.low, pathShort.short]), () => bot.pathfinder.setGoal(null));
   } finally {
     watch.stop();
     end.stop();
+    air.stop();
+    pathShort.stop();
     bot.off("path_reset", onReset);
     if (bot.pathfinder.movements !== normal) bot.pathfinder.setMovements(normal);
     if (ended !== "reached" && bot.pathfinder.goal === goal) bot.pathfinder.setGoal(null);
   }
+  if (ended === "air") throw await riseOutOfAir(bot, air.at(), target);
   if (ended === "reached") return;
   const feet = bot.entity.position.floored();
   // As the pathfinder's own end-of-path check, the cell above the feet also counts (for standing on a half-height block).
   const near = (p: Vec3) => p.distanceSquared(target) <= goal.rangeSq;
   if (near(feet) || near(feet.offset(0, 1, 0))) return;
+  if (ended === "noPath") await throwWhyNoPath(bot, goal, walk, target);
   const why = ended === "timeout" ? "the path search ran out of time" : "the pathfinder found no way there from here";
   throw new Error(`could not reach ${target}: stopped at ${feet}, ${feet.distanceTo(target).toFixed(1)} blocks away; ${why}`);
 }
 
 /** Walks within `range` blocks of `target` and returns where the player then stands. */
-async function walkTo(ctx: RoutineContext, target: Vec3, range: number, timeoutMs: number): Promise<Vec3> {
-  await pathTo(ctx, new goals.GoalNear(target.x, target.y, target.z, range), timeoutMs);
+async function walkTo(ctx: RoutineContext, target: Vec3, range: number, timeoutMs: number, allowDigOwnBuilds: boolean): Promise<Vec3> {
+  await pathTo(ctx, new goals.GoalNear(target.x, target.y, target.z, range), timeoutMs, allowDigOwnBuilds);
   return ctx.bot.entity.position.floored();
 }
 
 export const to = defineRoutine(
   {
     name: "move.to",
-    description: "Walk within `range` blocks of `position` ({x,y,z} or [x,y,z]) and stop; the feet, or the block above them, within `range` counts as there. Throws, after stopping pathfinding, when `timeoutMs` passes, when 12 s go by with no progress (no movement, digging, or nearby block change: 'stuck at ...'), or when the pathfinder ends without a way within `range`, finding none or running out of search time ('could not reach ...'). Returns where the player stands once stopped.",
+    description:
+      "Walk within `range` blocks of `position` ({x,y,z} or [x,y,z]) and stop; the feet, or the block above them, within `range` counts as there. Throws, after stopping pathfinding, when `timeoutMs` passes, when 12 s go by with no progress (no movement, digging, or nearby block change: 'stuck at ...'), when the breath bar falls under 10 ('out of air ...'), when a finished path leaves the player short ('the path ended ... blocks short'), or when the pathfinder ends without a way within `range`, finding none or running out of search time ('could not reach ...'). A missing path names what blocked the way when a relaxed search finds one: a drop taller than the pathfinder falls, or a block the bot placed itself (`allowDigOwnBuilds: true` walks through those). Returns where the player stands once stopped.",
     args: z.object({
       position: Position,
       range: z.number().min(0).default(1),
       timeoutMs: z.number().int().positive().default(DEFAULT_GOTO_TIMEOUT_MS),
+      allowDigOwnBuilds: z.boolean().default(false),
     }),
     returns: Point,
   },
-  (ctx, { position, range, timeoutMs }) => walkTo(ctx, toVec3(position).floored(), range, timeoutMs),
+  (ctx, { position, range, timeoutMs, allowDigOwnBuilds }) => walkTo(ctx, toVec3(position).floored(), range, timeoutMs, allowDigOwnBuilds),
 );
 
 export const stop = defineRoutine(
