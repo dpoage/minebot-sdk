@@ -52,6 +52,9 @@ const CURATED: Record<string, CuratedRow> = {
 
 const PATH = /^[\w$]+(?:\.[\w$]+)*$/;
 
+/** Names every value inherits rather than declares: never a bot member, whatever the walk finds there. */
+const NON_MEMBER = /^(?:__proto__|constructor|prototype)$/;
+
 /**
  * The message V8 writes for a call on a non-function: the source text of the callee, then the verdict. The
  * receiver is `bot`, `ctx.bot`, or a destructured alias that ends in `bot` (`myBot`): any other callee
@@ -64,13 +67,19 @@ const NOT_A_FUNCTION =
 /** Longer than any V8 callee message; a longer text is some other error's prose. */
 const MAX_MESSAGE = 300;
 
+/** `target[name]` when a class declared it; an Object.prototype member (`toString`, `__proto__`) is not one. */
+function lookup(target: unknown, name: string): unknown {
+  if ((typeof target !== "object" && typeof target !== "function") || target === null) return undefined;
+  for (let at: object | null = target; at !== null && at !== Object.prototype; at = Object.getPrototypeOf(at)) {
+    if (Object.hasOwn(at, name)) return (at as Record<string, unknown>)[name];
+  }
+  return undefined;
+}
+
 /** What `root.<path>` is on this object: undefined when any segment is missing or the walk leaves the objects. */
 function walk(root: object, path: string): unknown {
   let current: unknown = root;
-  for (const segment of path.split(".")) {
-    if ((typeof current !== "object" && typeof current !== "function") || current === null) return undefined;
-    current = (current as Record<string, unknown>)[segment];
-  }
+  for (const segment of path.split(".")) current = lookup(current, segment);
   return current;
 }
 
@@ -104,7 +113,7 @@ function nearestMember(parent: object, wrong: string): string | undefined {
   const allowed = wrong.length <= 3 ? 0 : wrong.length <= 5 ? 1 : 2;
   let best: { name: string; distance: number } | undefined;
   for (const name of memberNames(parent)) {
-    if (name.startsWith("_") || name.startsWith("$")) continue;
+    if (name.startsWith("_") || name.startsWith("$") || NON_MEMBER.test(name)) continue;
     const distance = name.toLowerCase() === wrong.toLowerCase() ? 0 : editDistance(name, wrong);
     if (distance <= allowed && (best === undefined || distance < best.distance)) best = { name, distance };
   }
@@ -113,6 +122,11 @@ function nearestMember(parent: object, wrong: string): string | undefined {
 
 function kindOf(value: unknown): string {
   return value === null ? "null" : typeof value;
+}
+
+/** "an object" / "a string": the indefinite article the kind's first letter takes. */
+function withArticle(kind: string): string {
+  return `${"aeiou".includes(kind[0]!) ? "an" : "a"} ${kind}`;
 }
 
 /**
@@ -127,13 +141,14 @@ function kindOf(value: unknown): string {
 export function suggestBotMember(path: string, bot?: object): string | undefined {
   try {
     if (typeof path !== "string" || !PATH.test(path)) return undefined;
+    if (path.split(".").some((segment) => NON_MEMBER.test(segment))) return undefined;
     const row = Object.hasOwn(CURATED, path) ? CURATED[path] : undefined;
     if (bot === undefined || bot === null) return row?.line;
 
     const value = walk(bot, path);
     if (typeof value === "function") return undefined;
     if (row !== undefined && row.needs.every((member) => walk(bot, member) !== undefined)) return row.line;
-    if (value !== undefined) return `bot.${path} is a ${kindOf(value)}, not a function: read bot.${path}`;
+    if (value !== undefined) return `bot.${path} is ${withArticle(kindOf(value))}, not a function: read bot.${path}`;
 
     const cut = path.lastIndexOf(".");
     const parentPath = cut < 0 ? undefined : path.slice(0, cut);
@@ -146,7 +161,7 @@ export function suggestBotMember(path: string, bot?: object): string | undefined
     const member = (parent as Record<string, unknown>)[near];
     return typeof member === "function"
       ? `bot.${path} does not exist: the nearest real member is bot.${real}(...)`
-      : `bot.${path} does not exist: the nearest real member is bot.${real}, a ${kindOf(member)} to read, not call`;
+      : `bot.${path} does not exist: the nearest real member is bot.${real}, ${withArticle(kindOf(member))} to read, not call`;
   } catch {
     return undefined;
   }

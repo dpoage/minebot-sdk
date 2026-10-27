@@ -170,6 +170,13 @@ describe("did-you-mean for bot members", () => {
       assert.equal(explainError(new TypeError("bot.version is not a function"), bot), suggestBotMember("version", bot));
     });
 
+    it("uses the article the kind takes", () => {
+      assert.equal(suggestBotMember("entities", bot), "bot.entities is an object, not a function: read bot.entities");
+      assert.equal(suggestBotMember("inventory", bot), "bot.inventory is an object, not a function: read bot.inventory");
+      assert.equal(suggestBotMember("version", bot), "bot.version is a string, not a function: read bot.version");
+      assert.equal(suggestBotMember("isRainin", bot), "bot.isRainin does not exist: the nearest real member is bot.isRaining, a boolean to read, not call");
+    });
+
     it("says nothing when no member is close, or the name is too short to judge", () => {
       assert.equal(suggestBotMember("teleportToSpawn", bot), undefined);
       assert.equal(suggestBotMember("xyz", bot), undefined);
@@ -253,6 +260,17 @@ describe("did-you-mean for bot members", () => {
       assert.equal(suggestBotMember("selectItem", hostile), undefined);
       assert.equal(suggestBotMember("equipp", hostile), undefined);
       assert.equal(explainError(new TypeError("bot.selectItem is not a function"), hostile), undefined);
+    });
+
+    it("Object.prototype plumbing is never a member to suggest", () => {
+      for (const path of ["__proto__", "constructor", "prototype"]) {
+        assert.equal(suggestBotMember(path), undefined, path);
+        assert.equal(suggestBotMember(path, bot), undefined, path);
+        assert.equal(explainError(new TypeError(`bot.${path} is not a function`), bot), undefined, path);
+      }
+      for (const path of ["entities.__proto__", "entities.constructor", "entities.prototype", "entities.toString", "valueOf", "hasOwnProperty"]) {
+        assert.equal(suggestBotMember(path, bot), undefined, path);
+      }
     });
 
     it("paths that are not member paths are refused", () => {
