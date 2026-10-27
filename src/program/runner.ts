@@ -1,4 +1,5 @@
 import { inspect } from "node:util";
+import { setImmediate as nextMacrotask } from "node:timers/promises";
 import { DEFAULT_TIMEOUT_MS, MAX_TIMEOUT_MS, type RunResult, type RunStatus } from "../protocol/index.ts";
 import { hungCause, restartedError, STOP_GRACE_MS } from "../protocol/host.ts";
 import { insideDir, locateFrame } from "./frames.ts";
@@ -18,11 +19,27 @@ export class BusyError extends Error {
   }
 }
 
+/** Where an error that reached the process came from: a throw nothing caught, or a promise rejection nothing handled. */
+export type ContainOrigin = "exception" | "rejection";
+
+/** What a contained rejection's message ends with: the one thing an agent can do about it. */
+export const NOT_AWAITED = " - this promise was not awaited; add await before the call";
+
 export interface RunnerOptions {
   /** Emitter used by the run-scoped `on(event, handler)` helper. */
   events?: () => ProgramEventSource | undefined;
-  /** Halts in-flight actions of the body when a program is aborted. */
-  onAbort?: () => void;
+  /**
+   * Stops what a run may have left in flight (the pathfinder's goal, held controls, digging, the item in use).
+   * Called synchronously at every end of a run (ok, error, timeout, stopped, contained), before the run reports
+   * its end, and by `contain` before the next tick.
+   */
+  halt?: () => void;
+  /**
+   * Called once for every run that ends with status "error", whether its program threw or an error was contained,
+   * with the value that was thrown (for a contained error, the one the process handler received). A string it
+   * returns is appended as the last line of the run's error; a throw from it is ignored.
+   */
+  explain?: (err: unknown) => string | undefined;
   maxLogBytes?: number;
   /** How long an aborted program gets to settle before the run reports itself hung. Default: STOP_GRACE_MS. */
   graceMs?: number;
@@ -31,6 +48,18 @@ export interface RunnerOptions {
 interface Running {
   controller: AbortController;
   startedAt: number;
+  /** Ends this run with `err`, or adds it to the run's error when the run has ended already; false when the body could not be halted. */
+  contain(err: unknown, origin: ContainOrigin): boolean;
+}
+
+/** What ends a run's race when an error is contained while its code is active. */
+class Contained {
+  readonly err: unknown;
+  readonly text: string;
+  constructor(err: unknown, text: string) {
+    this.err = err;
+    this.text = text;
+  }
 }
 
 /** Runs agent programs (a routine call, a module run, a reflex firing) one at a time. Not a security sandbox. */
@@ -54,6 +83,18 @@ export class ProgramRunner {
   }
 
   /**
+   * Ends the run whose code is active as if its program threw `err`: status "error", the error's message and
+   * frame. A run that has settled but not yet reported its end (the macrotask after its program settled, and a
+   * stopped or timed-out program's grace) stays containable: `err` is then added to its error, as a line after
+   * the error it already has, and a status "ok" becomes "error". The body is halted synchronously, before the
+   * next tick. `origin` "rejection" is for a promise nothing handled: the message then says to add `await`.
+   * Returns false when no run is containable (the caller must treat `err` as a crash).
+   */
+  contain(err: unknown, origin: ContainOrigin = "exception"): boolean {
+    return this.#running?.contain(err, origin) ?? false;
+  }
+
+  /**
    * Runs `fn` with this run's scope as one run: busy while another run is active, the timeout and stop, the
    * grace and `hung`, the log, the duration, the result as JSON. An aborted program gets `graceMs` to settle
    * (resolve or reject); one that does not ends the run with `hung`. `sourceDir` is the directory the
@@ -61,6 +102,8 @@ export class ProgramRunner {
    * Timers and bot listeners a program creates itself are not cleared; only the scope's `sleep` and `on` are run-scoped.
    * While the runner is busy with the run (an aborted program's grace included), the `console` output methods also append
    * to its log, and still write where they wrote; the methods that were there are back when the runner is free.
+   * The body is halted (`halt`) at every end, and an error that reaches the process while the run is active or
+   * within one macrotask of its program's end is the run's (see `contain`).
    */
   async call(
     fn: (scope: ProgramScope) => Promise<unknown>,
@@ -106,11 +149,38 @@ export class ProgramRunner {
       emitter.on(event, handler);
       listeners.push([emitter, event, handler]);
     };
-    this.#running = { controller, startedAt };
+    // The errors that reached the process once the program's end was decided (or its abort was under way), in order:
+    // they are added to the run's error, or are its error when it had none.
+    const late: { err: unknown; text: string }[] = [];
+    let decided = false;
+    /** Whether `contain` already halted the body for the end that was decided. */
+    let halted = false;
+    const containedEnd = Promise.withResolvers<never>();
+    containedEnd.promise.catch(() => {}); // only the race below listens, and only while the program is undecided
+    const contain = (err: unknown, origin: ContainOrigin): boolean => {
+      // Before the next tick: a bad goal the pathfinder throws on every tick is gone before the second throw.
+      try {
+        this.#options.halt?.();
+      } catch {
+        return false; // a body that cannot be halted is not one to go on with
+      }
+      const text = formatRoutineError(err, options.sourceDir, { suffix: origin === "rejection" ? NOT_AWAITED : "", nearestFrame: true });
+      if (!decided && !signal.aborted) {
+        decided = true;
+        halted = true;
+        containedEnd.reject(new Contained(err, text));
+      } else {
+        late.push({ err, text });
+      }
+      return true;
+    };
+    this.#running = { controller, startedAt, contain };
 
     let status: RunStatus;
     let result: unknown;
     let error: string | undefined;
+    /** What the run's error came from: the value its program threw, or the first that was contained. */
+    let thrown: unknown;
     let started: Promise<unknown> | undefined;
     /** The log as of the abort: a program that settles within its grace returns this, as one that stopped at once does. */
     let loggedAtAbort: string | undefined;
@@ -126,16 +196,22 @@ export class ProgramRunner {
         const aborted = Promise.withResolvers<never>();
         if (signal.aborted) aborted.reject(signal.reason);
         signal.addEventListener("abort", () => aborted.reject(signal.reason), { once: true });
-        result = toWire(await Promise.race([started, aborted.promise]));
+        result = toWire(await Promise.race([started, aborted.promise, containedEnd.promise]));
+        decided = true;
         status = "ok";
       } catch (err) {
-        if (signal.aborted) {
+        decided = true;
+        if (err instanceof Contained) {
+          status = "error";
+          error = err.text;
+          thrown = err.err;
+        } else if (signal.aborted) {
           status = signal.reason instanceof Error && signal.reason.message === "timeout" ? "timeout" : "stopped";
-          this.#options.onAbort?.();
           loggedAtAbort = logs.toString();
         } else {
           status = "error";
           error = formatRoutineError(err, options.sourceDir);
+          thrown = err;
         }
       } finally {
         clearTimeout(timeout);
@@ -143,11 +219,33 @@ export class ProgramRunner {
         for (const timer of timers) clearTimeout(timer);
         for (const [emitter, event, handler] of listeners) emitter.off(event, handler);
       }
+      // Whatever the end, nothing the program started keeps the body busy into the next run.
+      if (!halted) this.#options.halt?.();
       // With its timers and listeners gone, a program waiting on one never settles: it is hung.
       // The runner stays busy meanwhile, so no other program joins one that is still running.
       const graceMs = this.#options.graceMs ?? STOP_GRACE_MS;
       if (started && (status === "stopped" || status === "timeout") && !(await settledWithin(started, graceMs))) {
-        return { status, result: undefined, error: restartedError(hungCause(graceMs)), logs: logs.toString(), durationMs: Date.now() - startedAt, hung: true };
+        const hung = [restartedError(hungCause(graceMs)), ...late.map(({ text }) => text)].join("\n");
+        return { status, result: undefined, error: hung, logs: logs.toString(), durationMs: Date.now() - startedAt, hung: true };
+      }
+      // A promise the program did not await that rejects as it ends is reported as unhandled once the microtasks it
+      // ran in have drained: still within this macrotask. The run stays containable until the next one.
+      await nextMacrotask();
+      if (late.length > 0) {
+        if (status === "ok") {
+          status = "error";
+          result = undefined;
+          thrown = late[0]!.err;
+          error = late.map(({ text }) => text).join("\n");
+        } else {
+          error = [error, ...late.map(({ text }) => text)].filter((text) => text !== undefined).join("\n");
+        }
+      }
+      if (status === "error") {
+        try {
+          const explained = this.#options.explain?.(thrown);
+          if (explained) error = error === undefined ? explained : `${error}\n${explained}`;
+        } catch {} // an explanation that fails is no reason to lose the error it was for
       }
     } finally {
       restoreConsole();
@@ -233,10 +331,12 @@ async function settledWithin(program: Promise<unknown>, ms: number): Promise<boo
  * A routine's error: its message and the stack frames inside `sourceDir`, each naming `<file>:<line>:<column>`.
  * Frames name library modules by `file:` URL; what a URL adds to the file (a query, a fragment) names an
  * evaluation and not a file, so frames give the file's path. Never throws, whatever the routine threw.
+ * `suffix` ends the message. `nearestFrame` names the stack's first frame when none is inside `sourceDir`, as
+ * the host's crash report does: an error that comes from a listener or a timer, not from the program's own call.
  */
-function formatRoutineError(err: unknown, sourceDir: string): string {
+function formatRoutineError(err: unknown, sourceDir: string, { suffix = "", nearestFrame = false } = {}): string {
   try {
-    if (typeof err !== "object" || err === null || !("stack" in err) || typeof err.stack !== "string") return String(err);
+    if (typeof err !== "object" || err === null || !("stack" in err) || typeof err.stack !== "string") return `${String(err)}${suffix}`;
     const name = "name" in err && typeof err.name === "string" ? err.name : "Error";
     const message = "message" in err && typeof err.message === "string" ? err.message : "";
     // Modules load from the directory's real path, so its frames name that.
@@ -249,14 +349,16 @@ function formatRoutineError(err: unknown, sourceDir: string): string {
     // A module that does not compile starts with a source excerpt ("<file>:N", the line, a caret) before a blank line.
     const excerptStart = located(first);
     const excerpt = excerptStart === undefined ? [] : [excerptStart, ...rest.slice(0, Math.max(rest.indexOf(""), 0))];
-    const frames = rest.flatMap((line) => (line.trimStart().startsWith("at ") ? (located(line) ?? []) : []));
-    return [...excerpt, `${name}: ${message}`, ...frames].join("\n");
+    const stackLines = rest.filter((line) => line.trimStart().startsWith("at "));
+    let frames = stackLines.flatMap((line) => located(line) ?? []);
+    if (nearestFrame && frames.length === 0 && stackLines[0] !== undefined) frames = [locateFrame(stackLines[0])?.text ?? stackLines[0]];
+    return [...excerpt, `${name}: ${message}${suffix}`, ...frames].join("\n");
   } catch {
     // The value has no string form (a null prototype) or one of its accessors threw: show it as inspect does.
     try {
-      return inspect(err, { depth: 2, breakLength: 120 });
+      return `${inspect(err, { depth: 2, breakLength: 120 })}${suffix}`;
     } catch {
-      return "a thrown value that cannot be shown";
+      return `a thrown value that cannot be shown${suffix}`;
     }
   }
 }

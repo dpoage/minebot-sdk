@@ -128,7 +128,7 @@ export class Body {
     this.wiki = new WikiAccess(options.wiki, options.wikiMode, options.username, () => wikiView(this.features));
     this.runner = new ProgramRunner({
       events: () => this.#connection.bot ?? undefined,
-      onAbort: () => this.#connection.halt(),
+      halt: () => this.#connection.halt(),
     });
     this.triggers =
       options.triggersEnabled === false
