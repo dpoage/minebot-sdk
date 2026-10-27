@@ -319,7 +319,7 @@ describe("the built-in commands of the CLI and tools of the MCP server, against 
     { name: "gatherer", description: "Gather.", uses: ["move"], routines: ["gather"], stats: {} },
   ];
   const HITS: BuiltinSearchHit[] = [{ module: "move", score: 4.2, text: "Walk." }, { module: "move", routine: "to", score: 3.1, text: "Walk within range.", stats: { ok: 3, failed: 1 } }];
-  const DOCS = "## move\nWalk.\nUses no other built-in modules.\n### move.to(ctx, { position })";
+  const DOCS = "## move\nWalk.\nUses no other built-in modules.\n### await move.to(ctx, { position })";
   const SOURCE = "export const description = 'Walk.';\n";
   const requests = (stub: { seen: Seen[] }) => stub.seen.map((request) => `${request.method} ${request.url}`);
   const answers: Answers = {
