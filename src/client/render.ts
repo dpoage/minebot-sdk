@@ -131,7 +131,7 @@ export function formatNotes(notes: Note[]): string {
   return notes.map((n) => `## ${n.key} (${n.updated})\n${n.text}`).join("\n\n");
 }
 
-/** Renders wiki search hits, one per line with a snippet. */
+/** Renders wiki search hits, one per line with a snippet. A hit whose lesson names a module that changed carries its stale mark. */
 export function formatHits(hits: SearchHit[]): string {
-  return hits.map((h) => `${h.id} [${h.status}] ${h.title}\n  ${h.snippet}`).join("\n");
+  return hits.map((h) => `${h.id} [${h.status}] ${h.title}${h.stale ? ` ${h.stale}` : ""}\n  ${h.snippet}`).join("\n");
 }

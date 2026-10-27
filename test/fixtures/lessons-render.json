@@ -1,0 +1,128 @@
+[
+  {
+    "id": "lessons/26-1-a-1x2-door-will-not-place-unless-the-cell-above-its-top",
+    "status": "lesson",
+    "sha256": "967c0c1343569b7c1ed90a69f11d631ccd4ce50d4ff404c25677a03c9e879b94",
+    "chars": 2605
+  },
+  {
+    "id": "lessons/26-1-bed-placement-no-collision-block-adjacent-along-the-axi",
+    "status": "lesson",
+    "sha256": "33119a7ca2777c1ca653ab3bb0e0510b7fd941110c1478123676738e04030382",
+    "chars": 2089
+  },
+  {
+    "id": "lessons/26-1-door-placement-paper-26-1-refuses-vanilla-allows-2-wide",
+    "status": "lesson",
+    "sha256": "d786f06be64849bad996455305de8ec09092467534c4abef8a6bc06629870a09",
+    "chars": 1515
+  },
+  {
+    "id": "lessons/bee-poison-is-fatal-without-milk-dropped-items-despawn-in-5-",
+    "status": "lesson",
+    "sha256": "4a2c581663e357251e08dbc4077b149b4796abd2a104e89ae8584051f428cd7d",
+    "chars": 1398
+  },
+  {
+    "id": "lessons/blockat-on-unloaded-chunks-lies-scan-only-near-the-player",
+    "status": "lesson",
+    "sha256": "36cbd266052c2c114606179617c3fa5658efc43e8c68c1740d4e4e4f3ddcd75f",
+    "chars": 1062
+  },
+  {
+    "id": "lessons/blockat-races-on-chunk-load-double-read-trust-player-position",
+    "status": "lesson",
+    "sha256": "0327cee4e9ac621f9e2e8374e9d32211f328206b69c3d20980c9be3c40f93e56",
+    "chars": 1425
+  },
+  {
+    "id": "lessons/builder-build-blueprints-are-solid-grids-a-box-blueprint-mak",
+    "status": "lesson",
+    "sha256": "420feeffd1d17f48d38da399f282bca7a56df66811cde6b00c8e8695aab00fbc",
+    "chars": 1637
+  },
+  {
+    "id": "lessons/craft-craft-checks-only-direct-ingredients-batches-and-lies",
+    "status": "lesson",
+    "sha256": "b683ef7bfd7584eeff72b16a84a6c287e79b01ecee868d5fb00052716a1c6229",
+    "chars": 1933
+  },
+  {
+    "id": "lessons/dropped-items-are-not-in-bot-entities-cannot-collect",
+    "status": "lesson",
+    "sha256": "6dac125571ff3598f93455c78847d24a77a6f07deebb30b705cdd15f7d4ff7af",
+    "chars": 2046
+  },
+  {
+    "id": "lessons/equip-then-place-races-verify-helditem-and-the-result",
+    "status": "lesson",
+    "sha256": "0c203dfa02a8bb3277e3c7dbb39dc43019b48ca7b64a5cc2a9a81be5535f2ba5",
+    "chars": 2212
+  },
+  {
+    "id": "lessons/mcp-transport-caps-requests-at-30s-long-runs-must-be-launche",
+    "status": "lesson",
+    "sha256": "d802e185e4e7b10817bb22187b76dbae3dad7a8b20aca61df8425ec3db6908ef",
+    "chars": 1499
+  },
+  {
+    "id": "lessons/mineflayer-api-in-this-fork",
+    "status": "lesson",
+    "sha256": "b41d12c0c83b98a6388341f8f88d4cbaa97e653c37f66ec2764392dad7f2de25",
+    "chars": 1620
+  },
+  {
+    "id": "lessons/openvillager-rejects-wandering-trader-spoof-entitytype-to-re",
+    "status": "lesson",
+    "sha256": "0bc83880f7cc704a87956a1bcecba632da8eb79a34dfe1f34855a5a6356d4fdf",
+    "chars": 1613
+  },
+  {
+    "id": "lessons/pathfinder-is-unusable-in-this-sdk-both-imports-throw",
+    "status": "lesson",
+    "sha256": "02f06aff5ba1ab19fb1351edf5a5e87f32a0b152825af5498a62ff71a4ecd835",
+    "chars": 2071
+  },
+  {
+    "id": "lessons/pathfinder-loops-on-diagonal-steps-over-rubble-flatten-the-w",
+    "status": "lesson",
+    "sha256": "72a6f774bd381510efc165feec31e323c2188469b32a3938d4f6016cddd508b4",
+    "chars": 1816
+  },
+  {
+    "id": "lessons/placement-clicks-near-a-bed-break-the-bed-26-1",
+    "status": "lesson",
+    "sha256": "b1e17ecd594c2ba64315a09b9af093ee828500c72ce4841f9e73cee549f3ba58",
+    "chars": 1542
+  },
+  {
+    "id": "lessons/raw-mineflayer-control-apis-crash-the-bot-host-prefer-sdk-bu",
+    "status": "lesson",
+    "sha256": "d1f4d8a2d494afa6b63ea1f0592f2b074b3e4b13d1294a3006cdb0d37e055c40",
+    "chars": 1874
+  },
+  {
+    "id": "lessons/the-camp-is-in-a-valley-the-settlement-is-on-cliff-platforms",
+    "status": "lesson",
+    "sha256": "c7e1a6b58f20ee68086c4ad2b3ab5abf6fc9286451e2975e6462c289c044f1ae",
+    "chars": 998
+  },
+  {
+    "id": "lessons/this-mineflayer-fork-placeblock-takes-a-face-vector-lookat-r",
+    "status": "lesson",
+    "sha256": "7c2f05e14d85767354fa9a41dc1e816c4c5c337ada4f8bb5afc41345c03035e0",
+    "chars": 1474
+  },
+  {
+    "id": "lessons/this-mineflayer-fork-shouldusephysics-freezes-forever",
+    "status": "lesson",
+    "sha256": "ea29bd0e03cc4926b1c6b0d68c01da182ac3eb60320d5d3629ee6eff3e17a58e",
+    "chars": 2204
+  },
+  {
+    "id": "lessons/this-mineflayer-fork-yaw-0-is-north-positive-is-west",
+    "status": "lesson",
+    "sha256": "8b63a46056d5ab696a0df686b7d7aa0d7641815569ff3c0dcb37047e6fa82611",
+    "chars": 1163
+  }
+]
