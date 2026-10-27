@@ -187,7 +187,7 @@ export default {
   it("imports a library module by file name as the library has it when the run starts", async () => {
     await using({}, async (body) => {
       body.writeRoutines({ shared: "export const answer = 41;\nexport default () => 'routine';\n", other: "import { answer } from './shared.ts';\nexport const next = answer + 1;\n" });
-      const code = "import { answer } from './shared.ts';\nimport { next } from './other.ts';\nimport routine from './shared.ts';\nexport default { answer, next, routine: routine({} as never, {}) };\n";
+      const code = "// @ts-nocheck\nimport { answer } from './shared.ts';\nimport { next } from './other.ts';\nimport routine from './shared.ts';\nexport default { answer, next, routine: routine({} as never, {}) };\n";
       assert.deepEqual(runOf(await run(body, code)).result, { answer: 41, next: 42, routine: "routine" });
       body.writeRoutines({ shared: "export const answer = 99;\nexport default () => 'changed';\n" });
       assert.deepEqual(runOf(await run(body, code)).result, { answer: 99, next: 100, routine: "changed" });

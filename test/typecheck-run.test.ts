@@ -145,6 +145,16 @@ describe("typeCheckRun", () => {
     assert.equal(errors[0]!.includes("\n"), false, errors[0]!);
   });
 
+  it("does not refuse an unknown name that is only probed with typeof, and refuses any other use of it", { timeout: 120_000 }, async () => {
+    // `typeof triggers` answers "undefined" instead of throwing, so the probe is not the failure the check predicts.
+    await passes("export default (ctx) => [typeof triggers, 'triggers' in ctx];\n");
+    const called = await refused("export default (ctx) => {\n  triggers();\n};\n");
+    assert.match(called[0]!, /^line 2:3 Cannot find name 'triggers'/);
+    // `typeof` protects a bare name only: a member access of it still throws at run time.
+    const member = await refused("export default (ctx) => typeof triggers.chat;\n");
+    assert.match(member[0]!, /^line 1:\d+ Cannot find name 'triggers'/);
+  });
+
   it("lists the errors in the order of the source", { timeout: 120_000 }, async () => {
     const errors = await refused("export default async (ctx) => {\n  b();\n  a();\n};\nc();\n");
     assert.deepEqual(errors.map((e) => e.split(" ")[1]), ["2:3", "3:3", "5:1"]);

@@ -172,10 +172,12 @@ function offsetOf(text: string, line: number, column: number): number | undefine
   return start + column - 1 <= text.length ? start + column - 1 : undefined;
 }
 
-/** Codes whose diagnostic refuses a run: a name that is not defined, a value that is not callable, a call with the wrong number of arguments, a key the object's type does not have. */
-const REFUSED_CODES: Record<number, true> = { 2304: true, 2349: true, 2554: true, 2353: true };
+/** Codes whose diagnostic refuses a run: a value that is not callable, a call with the wrong number of arguments, a key the object's type does not have. */
+const REFUSED_CODES: Record<number, true> = { 2349: true, 2554: true, 2353: true };
 /** Codes of a member that the type does not have; they refuse only where the member is called. */
 const MISSING_MEMBER_CODES: Record<number, true> = { 2339: true, 2551: true };
+/** The code of a name that is not defined: it refuses a run, except where the name is only asked for with `typeof`. */
+const UNDEFINED_NAME = 2304;
 
 /**
  * The offset in `text` where a missing member (diagnostic `d`, code 2339 or 2551) is named, and its name,
@@ -189,10 +191,34 @@ function calledMember(d: Diagnostic, text: string): { at: number; name: string }
 }
 
 /**
+ * Whether a diagnostic of an undefined name (`UNDEFINED_NAME`) is the direct operand of a `typeof` expression,
+ * as in `typeof triggers`: `typeof` answers "undefined" for a name that does not exist instead of throwing, so
+ * that diagnostic predicts no failure. A member access is not protected (`typeof x.y` throws when `x` is not
+ * defined), and neither is any other use of the name.
+ */
+function typeofOperand(d: Diagnostic, text: string): boolean {
+  const name = /^Cannot find name '([^']+)'/.exec(d.message)?.[1];
+  const at = offsetOf(text, d.line, d.column);
+  if (name === undefined || at === undefined || !text.startsWith(name, at)) return false;
+  return /typeof\s+$/.test(text.slice(0, at)) && !/^\s*(?:\.|\[)/.test(text.slice(at + name.length));
+}
+
+/**
+ * Whether diagnostic `d` refuses a run: the classes that predict a failure at run time (see
+ * `REFUSED_CODES`), a member that is missing where it is called, and an undefined name that is used for
+ * more than a `typeof` probe. A diagnostic that names one of the names the check adds is the check's.
+ */
+function refuses(d: Diagnostic, text: string): boolean {
+  if (/\$(?:RC|R|r)\b/.test(d.message)) return false;
+  if (d.code === UNDEFINED_NAME) return !typeofOperand(d, text);
+  if (MISSING_MEMBER_CODES[d.code]) return calledMember(d, text) !== undefined;
+  return REFUSED_CODES[d.code] === true;
+}
+
+/**
  * The diagnostics that refuse a run, from those of its file: the classes that predict a failure at run
- * time (see `REFUSED_CODES`), outside the names the check adds, in the order of the source. Anything
- * else (an unresolved module, a type mismatch) leaves the run to run. `text` is `checkedText` of the run's
- * source.
+ * time (see `refuses`), outside the names the check adds, in the order of the source. Anything else (an
+ * unresolved module, a type mismatch) leaves the run to run. `text` is `checkedText` of the run's source.
  *
  * A source that does not parse refuses nothing: Node's parser answers a grammar error with its own hints,
  * and the diagnostics of a half-parsed file (which recovery invents) do not describe the code the agent
@@ -201,7 +227,7 @@ function calledMember(d: Diagnostic, text: string): { at: number; name: string }
 export function refusing(diagnostics: readonly Diagnostic[], text: string): Diagnostic[] {
   if (diagnostics.some((d) => d.code >= 1000 && d.code < 2000)) return [];
   return diagnostics
-    .filter((d) => !/\$(?:RC|R|r)\b/.test(d.message) && (REFUSED_CODES[d.code] || (MISSING_MEMBER_CODES[d.code] && calledMember(d, text) !== undefined)))
+    .filter((d) => refuses(d, text))
     .sort((a, b) => a.line - b.line || a.column - b.column);
 }
 
