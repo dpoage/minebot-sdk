@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import { smeltOutput } from "minebot-sdk/routine";
 import { createHarness } from "minebot-sdk/testing";
 import * as crafter from "../src/routines/crafter.ts";
 import * as items from "../src/routines/items.ts";
@@ -83,10 +84,10 @@ describe("crafter.plan agrees with crafter.make (P3)", () => {
         for (const goal of GOALS) {
           const { missing } = await planOf(inventory, station, goal);
           const stocked = add(inventory, missing);
+          assert.deepEqual((await planOf(stocked, station, goal)).missing, {}, `${goal}: the plan on ${JSON.stringify(stocked)} is empty before the make`);
           const h = world(stocked, station);
           assert.ok((await h.run(crafter.make, { item: goal })) >= 1, `${goal} made from ${JSON.stringify(stocked)}`);
           assert.equal(h.count(goal) >= 1, true, `${goal} held`);
-          assert.deepEqual((await planOf(stocked, station, goal)).missing, {}, `${goal}: the plan on ${JSON.stringify(stocked)} is empty`);
         }
       });
     }
@@ -175,5 +176,29 @@ describe("crafter.plan reports what it is asked about", () => {
   it("names what a bigger count needs and fails for an unknown item", async () => {
     assert.deepEqual((await planOf({ oak_log: 1 }, "none", "oak_planks", 9)).missing, { oak_log: 2 });
     await assert.rejects(planOf({}, "none", "no_such_item"), /unknown item "no_such_item"/);
+  });
+});
+
+describe("crafter.plan answers for every item (P5)", () => {
+  it("returns for every registry item that crafts or smelts, on an empty inventory, each within 500 ms", { timeout: 120_000 }, async () => {
+    const h = createHarness();
+    const covered = Object.keys(h.bot.registry.itemsByName)
+      .sort()
+      .filter((name) => h.bot.recipesAll(h.bot.registry.itemsByName[name]!.id, null, true).length > 0 || smeltOutput(name) !== undefined);
+    assert.ok(covered.length > 100, `covered only ${covered.length} items`);
+    let max = 0;
+    let slowest = "";
+    for (const name of covered) {
+      const started = performance.now();
+      const plan = await h.run(crafter.plan, { item: name });
+      const took = performance.now() - started;
+      assert.equal(plan.item, name);
+      assert.ok(took < 500, `${name} took ${took.toFixed(1)} ms`);
+      if (took > max) {
+        max = took;
+        slowest = name;
+      }
+    }
+    console.log(`P5: ${covered.length} items, slowest ${slowest} at ${max.toFixed(1)} ms`);
   });
 });
