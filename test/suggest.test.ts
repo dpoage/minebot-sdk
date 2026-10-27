@@ -135,6 +135,20 @@ describe("did-you-mean for bot members", () => {
       assert.equal(suggestBotMember("isRaining", { isRaining: false }), suggestBotMember("isRaining"));
     });
 
+    it("never echoes the runtime phrasing back at the agent", () => {
+      const lines = [
+        ...CORPUS.map((row) => explainError(new TypeError(row.message), bot)),
+        suggestBotMember("equipp", bot),
+        suggestBotMember("version", bot),
+        suggestBotMember("isRainin", bot),
+      ];
+      for (const line of lines) {
+        assert.ok(line);
+        assert.ok(!line.includes("is not a function"), line);
+        assert.ok(!line.includes("Cannot read properties"), line);
+      }
+    });
+
     it("a path that is a real function is not suggested against", () => {
       assert.equal(explainError(new TypeError("bot.equip is not a function"), bot), undefined);
       assert.equal(suggestBotMember("inventory.items", bot), undefined);
