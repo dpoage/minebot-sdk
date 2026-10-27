@@ -140,6 +140,12 @@ describe("dig.dig on blocks without a collision box", () => {
     });
   }
 
+  it("D2: digs stone, a block with a collision box, and leaves the cell clear", async () => {
+    const h = createHarness({ inventory: { wooden_pickaxe: 1 }, blocks: [{ name: "stone", at: [1, 64, 0] }] });
+    assert.deepEqual(await h.run(dig.dig, { at: [1, 64, 0] }), { block: "stone" });
+    assert.equal(h.blockAt([1, 64, 0]).name, "air");
+  });
+
   it("D2: a clear cell, air or a fluid, is already dug: { block: null }", async () => {
     const h = createHarness({ blocks: [{ name: "water", at: [1, 64, 0] }, { name: "lava", at: [2, 64, 0] }] });
     for (const x of [1, 2, 3]) assert.deepEqual(await h.run(dig.dig, { at: [x, 64, 0] }), { block: null }, `x ${x}`);
