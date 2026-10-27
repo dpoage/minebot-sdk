@@ -465,6 +465,9 @@ export function createFakeBot(options: FakeBotOptions): BotHandle {
         for (const drop of dropsOf(here)) dropItem(drop, 1, here.position.offset(0.5, 0.5, 0.5));
       }
       events.emit("diggingCompleted", here);
+      // The server's answer, which dig.dig waits for: it lands after bot.dig has resolved, as a server's does.
+      const after = world.blockAt(here.position);
+      setImmediate(() => events.emit("blockUpdate", here, after));
       pickUp();
     },
     stopDigging() {},
