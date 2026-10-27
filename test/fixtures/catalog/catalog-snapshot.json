@@ -237,7 +237,7 @@
     "routines": [
       {
         "name": "dig",
-        "description": "Dig the block at `at` ({x,y,z} or [x,y,z]), equipping the best tool and failing with the tools it needs when the inventory lacks them. Digs on while gravel or sand refills the position. Returns { block } — the last block dug, or null when the position was already clear.",
+        "description": "Dig the block at `at` ({x,y,z} or [x,y,z]) and wait for the server to confirm the break: signs, torches, flowers and grass are dug like stone. It does not walk: a block whose box is 5.5 blocks or more from your eyes (the server's reach) throws naming the block, the distance and the move.to call to make first. Equips the best tool and fails with the tools it needs when the inventory lacks them. Throws when the server does not break the block within 3 s (the block is then still there). Digs on while gravel or sand refills the position. Returns { block } — the last block dug, or null when the position was already clear (air or fluid).",
         "args": {
           "$schema": "https://json-schema.org/draft/2020-12/schema",
           "type": "object",
