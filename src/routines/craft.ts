@@ -105,7 +105,8 @@ function roomFor(ctx: RoutineContext, recipe: { delta: readonly { id: number; co
  * Closes a window still open from earlier code (a crafting table or chest the bot opened and left),
  * and says so. With another window open, a craft's inventory updates never arrive and it times out
  * after 20 s ("Event updateSlot:0 did not fire"). Closing copies the window's inventory slots back
- * into the inventory, so call it before the inventory is read.
+ * into the inventory, so it runs first of all: every path of a call then starts and ends with no
+ * window of its own, and a call that fails its checks still leaves none open.
  */
 async function closeStrayWindow(ctx: RoutineContext): Promise<void> {
   const { bot } = ctx;
@@ -123,6 +124,7 @@ async function closeStrayWindow(ctx: RoutineContext): Promise<void> {
  */
 async function craftItem(ctx: RoutineContext, name: string, count = 1): Promise<number> {
   const { bot } = ctx;
+  await closeStrayWindow(ctx);
   const id = itemId(ctx, name);
   let recipe = bot.recipesFor(id, null, count, null)[0];
   let table: Block | null = null;
@@ -137,7 +139,6 @@ async function craftItem(ctx: RoutineContext, name: string, count = 1): Promise<
     if (bot.recipesAll(id, null, true).length === 0) throw new Error(`${name} cannot be crafted`);
     throw new Error(`not enough ingredients for ${count} ${name}; items.recipes({ item: "${name}" }) lists what it needs`);
   }
-  await closeStrayWindow(ctx);
   const item = name.replace(/^minecraft:/, "");
   const held = () => bot.inventory.items().filter((i) => i.name === item).reduce((n, i) => n + i.count, 0);
   const times = Math.ceil(count / recipe.result.count);

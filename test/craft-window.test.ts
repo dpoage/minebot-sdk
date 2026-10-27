@@ -71,11 +71,12 @@ describe("craft.craft with a window left open", () => {
     assert.deepEqual(h.logs, ["crafted 4 oak_planks"]);
   });
 
-  it("leaves the window alone when the call fails before any craft", async () => {
+  it("closes the window even when the call then fails, so it leaves none open either way", async () => {
     const h = createHarness({ inventory: {} });
     const { events } = withStrayWindow(h, "minecraft:generic_9x3");
     await assert.rejects(h.run(craft.craft, { item: "oak_planks" }), /not enough ingredients for 1 oak_planks/);
-    assert.deepEqual(events, []);
-    assert.ok(h.bot.currentWindow, "a refused call does not take a window from the code that opened it");
+    assert.deepEqual(events, ["close"], "no craft, but the window is gone");
+    assert.deepEqual(h.logs, ["closed the open generic_9x3 window first"]);
+    assert.equal(h.bot.currentWindow, null);
   });
 });
