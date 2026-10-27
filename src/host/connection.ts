@@ -2,13 +2,11 @@
 // click pacing, translating bot events into the body's event log, and halting in-flight actions.
 import { setTimeout as delay } from "node:timers/promises";
 import mineflayer, { type Bot } from "mineflayer";
-import pathfinderPkg from "mineflayer-pathfinder";
 import { round, vec } from "../mc/position.ts";
 import { MC_VERSION } from "../mc/version.ts";
 import { NOT_CONNECTED_MESSAGE, type EventSink } from "../protocol/host.ts";
+import { installPathfinder } from "./pathfinding.ts";
 import { watchGame } from "./watch.ts";
-
-const { pathfinder, Movements } = pathfinderPkg;
 
 const RECONNECT_DELAY_MS = 5_000;
 /** Reconnect delays double after each failed attempt up to this cap, so a server that is down for hours is not hammered. */
@@ -140,7 +138,7 @@ export class Connection {
       }),
     });
     this.#bot = bot;
-    bot.loadPlugin(pathfinder);
+    installPathfinder(bot);
     watchGame(bot, events);
     // Plugins (including the inventory plugin that defines clickWindow) load after createBot returns.
     bot.once("login", () => {
@@ -155,7 +153,6 @@ export class Connection {
     bot.once("spawn", () => {
       this.#spawned = true;
       spawnedAt = Date.now();
-      bot.pathfinder.setMovements(new Movements(bot));
       events.push("connected", { username: bot.username, host, port });
     });
     bot.on("spawn", () => events.push("spawn", { position: vec(bot.entity.position) }));
