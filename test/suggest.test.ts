@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { EventEmitter, once } from "node:events";
+import { EventEmitter } from "node:events";
 import { describe, it, before, after } from "node:test";
 import mineflayer from "mineflayer";
 import { pathfinder } from "mineflayer-pathfinder";
@@ -57,7 +57,9 @@ async function realBot(): Promise<mineflayer.Bot> {
   // The stub is the part of a node-minecraft-protocol client the plugins touch; the typings want the whole client.
   const bot = mineflayer.createBot({ client: client as unknown as mineflayer.BotOptions["client"], username: "suggest-test", version: MC_VERSION });
   bot.loadPlugin(pathfinder);
-  await once(bot, "inject_allowed");
+  const injected = Promise.withResolvers<void>();
+  bot.once("inject_allowed", () => injected.resolve());
+  await injected.promise;
   return bot;
 }
 
