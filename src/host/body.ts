@@ -186,7 +186,7 @@ export class Body {
    */
   async run(code: string, args: unknown, timeoutMs?: number): Promise<RunOutcome> {
     const { loader } = this.#options;
-    return this.#called(async (ctx) => resultOf(await loader.run(code), ctx, args), loader.dir, timeoutMs);
+    return this.#called(async (ctx) => resultOf(await loader.run(code, ctx), ctx, args), loader.dir, timeoutMs);
   }
 
   /**

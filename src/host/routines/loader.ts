@@ -42,6 +42,7 @@ import { createRequire, findPackageJSON, registerHooks, type ResolveFnOutput } f
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { PACKAGE_ROOT } from "../../package.ts";
+import { typeCheckRun } from "../typecheck.ts";
 import { moduleName, readModule } from "./library.ts";
 
 export class RoutineNotFoundError extends Error {}
@@ -70,6 +71,9 @@ interface Served {
 
 /** The file name every run has in its directory; no routine can be named so, and each run's URL has a query of its own. */
 const RUN_FILE = ".run.ts";
+
+/** How many of a refused run's errors its refusal lists; the rest are counted. */
+const MAX_REFUSED_SHOWN = 5;
 
 /** The runs of this process by URL, each with the text the load hook serves for it. */
 const runs = new Map<string, Served>();
@@ -374,8 +378,14 @@ export class RoutineLoader {
    * `./<name>.ts` the library's module of that name as of the library's bytes now (the generation
    * `load` would use); this changes no generation, so a later `load` returns what an earlier one did.
    * A source with a top-level `return`, or a static `import` inside a function, rejects with an error that names `export default`.
+   *
+   * With `ctx`, the source is type-checked first (`typeCheckRun`) and nothing is evaluated once `ctx.signal` aborts: a source
+   * with a refusing diagnostic rejects with an error that lists the first of them and how to run the source unchecked, and a
+   * check that cannot answer (typescript absent, over budget, internal failure) logs one `type check skipped: <reason>` line
+   * to `ctx.log` and evaluates the source as it would be without one. Without `ctx` the source is evaluated unchecked.
    */
-  async run(source: string): Promise<unknown> {
+  async run(source: string, ctx?: { readonly signal: AbortSignal; log(...args: unknown[]): void }): Promise<unknown> {
+    if (ctx) await this.#check(source, ctx);
     const library = this.#library;
     let home: Home | undefined;
     if (library) {
@@ -391,6 +401,27 @@ export class RoutineLoader {
     } catch (err) {
       throw explainReturn(explainImport(err, url.href, source), url.href);
     }
+  }
+
+  /**
+   * The type check of a run (see `run`): returns when the run may be evaluated, throws when it may not. An abort at any point is
+   * the run's own end (its reason is thrown), not a skip.
+   */
+  async #check(source: string, ctx: { readonly signal: AbortSignal; log(...args: unknown[]): void }): Promise<void> {
+    ctx.signal.throwIfAborted();
+    const check = await typeCheckRun(this.library ? this.dir : undefined, source, { signal: ctx.signal });
+    ctx.signal.throwIfAborted();
+    if (check.status === "skipped") ctx.log(`type check skipped: ${check.reason}`);
+    if (check.status !== "failed") return;
+    const shown = check.errors.slice(0, MAX_REFUSED_SHOWN).map((error) => error.replace(/^/gm, "  "));
+    const more = check.errors.length - shown.length;
+    throw new Error(
+      [
+        `the run did not start: the type check found ${check.errors.length} error(s) in your code. Fix them and run again, or put // @ts-nocheck as the first line to run it unchecked.`,
+        ...shown,
+        ...(more > 0 ? [`  and ${more} more`] : []),
+      ].join("\n"),
+    );
   }
 
   /** The generation the library's bytes make now, with the text of each module in it. */
