@@ -20,6 +20,8 @@ import { requestStats } from "./stats.ts";
 import { BodyState } from "./state.ts";
 import { Triggers, type StoredReflex } from "./triggers.ts";
 import { preemptingRunner } from "./channel.ts";
+import { keepAfloat, type Afloat } from "./autonomic.ts";
+import { explainError } from "./suggest.ts";
 
 export interface BodyOptions {
   username: string;
@@ -109,6 +111,7 @@ export class Body {
   readonly #options: BodyOptions;
   readonly #connection: Connection;
   readonly #stall = new StallTracker();
+  readonly #afloat: Afloat;
 
   constructor(options: BodyOptions) {
     this.#options = options;
@@ -128,7 +131,8 @@ export class Body {
     this.wiki = new WikiAccess(options.wiki, options.wikiMode, options.username, () => wikiView(this.features));
     this.runner = new ProgramRunner({
       events: () => this.#connection.bot ?? undefined,
-      onAbort: () => this.#connection.halt(),
+      halt: () => this.#connection.halt(),
+      explain: (err) => explainError(err, this.#connection.bot ?? undefined),
     });
     this.triggers =
       options.triggersEnabled === false
@@ -149,6 +153,8 @@ export class Body {
           });
     // A firing that waits for the slot starts when it frees.
     options.recorder.onIdle(() => this.triggers?.idle());
+    // While no run holds the slot, a player whose eyes are in water floats up; every run's start lets go of the float's jump (`#execute`).
+    this.#afloat = keepAfloat(() => this.#connection.bot ?? undefined, options.recorder);
   }
 
   /** What a run's context is built from: the body's facilities, with the optional ones only where the body offers them. */
@@ -219,7 +225,7 @@ export class Body {
     this.#connection.requireBot();
     // The error the program threw, kept before the runner formats it: its message's first line is what the run's finished event previews.
     let thrown: unknown;
-    const result = await this.runner.call(
+    const result = await this.#execute(
       async (scope) => {
         try {
           return await invoke(routineContext(scope, environment));
@@ -248,6 +254,19 @@ export class Body {
       this.#stall.record({ position: bot.entity.position.floored().toString(), inventory });
     }
     return { ...result, ...previewOf(result, thrown) };
+  }
+
+  /**
+   * Runs `fn` as one run on the runner. The float lets go of its jump synchronously first, and the runner starts the code
+   * in the same turn, so the code begins with no control the body holds; the slot is taken already (`record`), so the
+   * float presses nothing until the run's grace ends. A run that spanned player deaths says how many.
+   */
+  async #execute(fn: Parameters<ProgramRunner["call"]>[0], options: Parameters<ProgramRunner["call"]>[1]): Promise<RunOutcome> {
+    const deathsBefore = this.#connection.deaths;
+    this.#afloat.release();
+    const result = await this.runner.call(fn, options);
+    const died = this.#connection.deaths - deathsBefore;
+    return died > 0 ? { ...result, diedDuringRun: died } : result;
   }
 
   /** Records what a reflex being bound will run: its `when` expression (the routine's source is the library's). */
@@ -280,7 +299,7 @@ export class Body {
     const { loader } = this.#options;
     if (!loader.library) throw new Error("this body has no routines");
     const environment = this.#environment();
-    return this.runner.call(
+    return this.#execute(
       async (scope) => {
         const ctx = routineContext(scope, environment);
         return invokeRoutine(await loader.load(reflex.routine), reflex.routine, ctx, { event: structuredClone(event) });
@@ -336,6 +355,7 @@ export class Body {
 
   close(): void {
     this.triggers?.close();
+    this.#afloat.close();
     this.#connection.close();
     this.runner.stop();
   }

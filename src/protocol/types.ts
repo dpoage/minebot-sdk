@@ -24,6 +24,8 @@ export interface RunResult {
   error?: string;
   logs: string;
   durationMs: number;
+  /** How many times the player died while the run was active; absent when it did not. `observe` shows the last death. */
+  diedDuringRun?: number;
 }
 
 /**
@@ -44,6 +46,8 @@ export interface RunRecord {
   call?: { name: string; routine?: string; args: unknown };
   /** The args a module run was given. */
   args?: unknown;
+  /** How many times the player died while the run was active; absent when it did not. */
+  diedDuringRun?: number;
 }
 
 export interface BodyEvent {
@@ -84,6 +88,15 @@ export interface Vec {
   x: number;
   y: number;
   z: number;
+}
+
+/** The most recent death of this host session, as the observation reports it. */
+export interface DeathSummary {
+  /** ISO time the body saw the death. */
+  time: string;
+  position: Vec;
+  /** The server's death message, e.g. "Fartmastery drowned"; absent when the server sent none. */
+  cause?: string;
 }
 
 export interface ItemSummary {
@@ -149,6 +162,13 @@ export type Observation =
       sky: { open: boolean; cover?: string; solidAbove: number; waterAbove: number };
       /** Runs and calls in a row that ended with the same position and inventory. */
       programsWithoutChange: number;
+      /** The most recent death of this host session; absent until the player dies. */
+      lastDeath?: DeathSummary;
+      /**
+       * Where the player respawns: a bed or respawn anchor the server confirmed (the position it was set
+       * at); `null` once the server reset it to the world spawn; absent while this host session has not heard.
+       */
+      spawnPoint?: Vec | null;
     };
 
 export interface StatusResponse {

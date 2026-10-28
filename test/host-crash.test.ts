@@ -19,7 +19,6 @@ const FIXTURES = path.join(import.meta.dirname, "fixtures", "host");
 const { EventLog } = await import("../src/body/events.ts");
 const { HostProcess } = await import("../src/body/host-process.ts");
 const { ProgramHistory } = await import("../src/body/history.ts");
-const { restartedError } = await import("../src/protocol/host.ts");
 
 after(() => rmSync(ROOT, { recursive: true, force: true }));
 
@@ -112,16 +111,18 @@ async function death(scene: Scene, trigger: () => Promise<unknown>): Promise<{ r
 describe("a host that dies of an uncaught error names it in the restart's disconnected event", () => {
   const FIRST = "bot host restarted: the bot host exited (code 1): ";
 
-  it("(a) thrown by a routine's timer during a call: the message and the routine's line, a new host, and the run's own error unchanged", { timeout: 60_000 }, async () => {
+  // An error thrown while a run's code is active is the run's, and the host goes on (containment: test/containment-host.test.ts).
+  it("(a) thrown by a routine's timer during a call: the call ends with the error and the routine's line, and the same host answers", { timeout: 60_000 }, async () => {
     const source = "export default async (ctx: { sleep(ms: number): Promise<void> }) => {\n  setTimeout(() => {\n    throw new Error('thrown during a call');\n  }, 50);\n  await ctx.sleep(20_000);\n};\n";
     await withHost({ during: source }, async (scene) => {
-      const { reason, before, after, triggered } = await death(scene, () => scene.call("during"));
+      const before = await scene.pid();
+      const since = scene.events.since(0).next;
+      const run = ((await scene.call("during")).body) as RunResult;
       const file = path.join(scene.library, "during.ts");
-      assert.match(reason, new RegExp(`^${RegExp.escape(FIRST)}Error: thrown during a call \\(at ${RegExp.escape(file)}:${lineOf(source, "throw new Error")}:\\d+\\)$`));
-      assert.notEqual(after, before, "the same host answered");
-      const run = (triggered as Answer).body as RunResult;
       assert.equal(run.status, "error");
-      assert.equal(run.error, restartedError("the bot host exited (code 1)"), "the run's error does not carry the crash");
+      assert.match(run.error ?? "", new RegExp(`^Error: thrown during a call\\n.*${RegExp.escape(file)}:${lineOf(source, "throw new Error")}:\\d+`));
+      assert.equal(await scene.pid(), before, "another host answered");
+      assert.deepEqual(scene.events.since(since).events.filter((event) => event.type === "disconnected"), []);
     });
   });
 

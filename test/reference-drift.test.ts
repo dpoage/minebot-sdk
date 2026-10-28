@@ -213,7 +213,7 @@ describe("the built-in call shapes", () => {
 
   it("start with await in the docs of one module, as GET /builtins/docs?names= answers", () => {
     const docs = new Builtins({ offer: ["move"], stats: new KitStats(JsonStore.memory()) }).docs(["move"]);
-    assert.deepEqual(docs.split("\n").filter((line) => line.startsWith("### ")), ["### await move.to(ctx, { position, range?, timeoutMs? })", "### await move.stop(ctx)"]);
+    assert.deepEqual(docs.split("\n").filter((line) => line.startsWith("### ")), ["### await move.to(ctx, { position, range?, timeoutMs?, allowDigOwnBuilds? })", "### await move.stop(ctx)"]);
   });
 });
 

@@ -36,6 +36,7 @@ import {
 } from "../protocol/index.ts";
 import { formatBound, formatBuiltinHits, formatBuiltins, formatHits, formatLibrary, formatNotes, formatRevertedRoutine, formatRoutineVersions, formatRun, formatSavedRoutine, formatStatus } from "./render.ts";
 import { BodyClient } from "./client.ts";
+import { Digest } from "./digest.ts";
 
 type ToolResult = { content: { type: "text"; text: string }[]; isError?: boolean };
 
@@ -164,13 +165,22 @@ export async function serveMcp(bodyName: string, toolSet: ToolSet): Promise<void
     apply(features, apiDoc);
   };
 
+  // The first line of every response: the high-signal events logged since the previous one (see digest.ts).
+  const digest = new Digest(() => BodyClient.connect(bodyName));
+
   const call = async (fn: (client: BodyClient) => Promise<string>): Promise<ToolResult> => {
     await sync();
+    await digest.start();
+    let result: ToolResult;
     try {
-      return { content: [{ type: "text", text: await fn(await BodyClient.connect(bodyName)) }] };
+      result = { content: [{ type: "text", text: await fn(await BodyClient.connect(bodyName)) }] };
     } catch (err) {
-      return { content: [{ type: "text", text: err instanceof Error ? err.message : String(err) }], isError: true };
+      result = { content: [{ type: "text", text: err instanceof Error ? err.message : String(err) }], isError: true };
     }
+    // Read after the tool ran, so a run's own deaths are in its response.
+    const line = await digest.take();
+    if (line) result.content[0]!.text = `${line}\n${result.content[0]!.text}`;
+    return result;
   };
 
   server.registerTool(

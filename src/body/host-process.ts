@@ -525,6 +525,9 @@ export class HostProcess {
       return;
     }
     const cause = attempt.cause ?? `the bot host exited (${how})`;
+    // A host the supervisor ended names its own cause; the error of one that crashed on its own follows the exit text,
+    // in the error of each run it lost as in the `disconnected` reason.
+    const crash = attempt.cause === undefined && attempt.crash !== undefined ? `: ${crashDetail(attempt.crash)}` : "";
     this.#connected = false;
 
     // What the dead host still owed its runs: how they ended, then that it is gone, then the answers.
@@ -538,7 +541,7 @@ export class HostProcess {
       let answer: { status: number; body: unknown };
       if (state.kind === "in-flight") {
         clearTimeout(state.deadline);
-        const result = state.hung ?? lostRun(run, state, cause);
+        const result = state.hung ?? lostRun(run, state, `${cause}${crash}`);
         try {
           await run.recorded.end(result);
         } catch (err) {
@@ -561,8 +564,6 @@ export class HostProcess {
       }
       if (run.requestId !== undefined) answers.set(run.requestId, answer);
     }
-    // A host the supervisor ended names its own cause; the error of one that crashed on its own follows the exit text.
-    const crash = attempt.cause === undefined && attempt.crash !== undefined ? `: ${crashDetail(attempt.crash)}` : "";
     this.#events.push("disconnected", { reason: `bot host restarted: ${cause}${crash}` });
     // A request the host already answered is not waiting any more.
     for (const [id, answer] of answers) {

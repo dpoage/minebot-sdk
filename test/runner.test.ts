@@ -14,7 +14,7 @@ function makeRunner() {
   let aborts = 0;
   const runner = new ProgramRunner({
     events: () => emitter,
-    onAbort: () => aborts++,
+    halt: () => aborts++,
   });
   return { runner, emitter, aborts: () => aborts };
 }

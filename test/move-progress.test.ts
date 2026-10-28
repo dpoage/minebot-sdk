@@ -49,6 +49,15 @@ function startWalk(h: Harness, timeoutMs: number) {
 
 const message = (outcome: unknown) => (outcome instanceof Error ? outcome.message : `not an error: ${JSON.stringify(outcome)}`);
 
+/** The plugin's re-search API, which the harness leaves out: every explanation search finds no way. */
+function noResearches(h: Harness) {
+  const pathfinder = h.bot.pathfinder as unknown as { getPathFromTo: () => IterableIterator<{ result: unknown }> };
+  pathfinder.getPathFromTo = () =>
+    (function* slices(): Generator<{ result: unknown }> {
+      yield { result: { status: "noPath", path: [] } };
+    })();
+}
+
 describe("move.to progress watchdog", () => {
   beforeEach(() => mock.timers.enable({ apis: ["setTimeout", "setInterval", "Date"] }));
   afterEach(() => mock.timers.reset());
@@ -181,6 +190,7 @@ describe("move.to end-of-walk distance", () => {
     ];
     for (const { status, name, message, why } of cases) {
       const h = createHarness();
+      noResearches(h);
       const pathfinder = h.bot.pathfinder as unknown as { goal: unknown; goto: (goal: unknown) => Promise<void> };
       // As the plugin: the search ends with a partial path toward the goal, and `goto` rejects.
       pathfinder.goto = async (goal) => {
@@ -259,6 +269,7 @@ describe("move.to end-of-walk distance", () => {
 
   it("throws could-not-reach, naming no way, when the search ends 'noPath' with an empty path", async () => {
     const { h, pathfinder } = batchHarness((h) => h.bot.emit("path_update", { status: "noPath", path: [] } as never));
+    noResearches(h);
     await assert.rejects(
       h.run(move.to, { position: [10, 64, 0], range: 1 }),
       /^Error: could not reach \(10, 64, 0\): stopped at \(0, 64, 0\), 10\.0 blocks away; the pathfinder found no way there from here$/,

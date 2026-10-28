@@ -71,6 +71,28 @@ type Slot = { state: "idle" } | { state: "reserved"; runId: number; pending?: "s
 
 const IDLE: Slot = { state: "idle" };
 
+/** Who holds the slot, for the message of the run it refuses: what the run is, in the words of the tool that started it, and when it took the slot. */
+interface Holder {
+  what: string;
+  /** The event whose arrival says the holder is done. */
+  ends: "program_finished" | "reflex_finished";
+  since: number;
+}
+
+/** The holder of a slot taken by `run`: a reflex's firing, a call (named as the caller named it), or a module run. */
+function holderOf(run: { extra?: object; trigger?: FiringOf }, since: number): Holder {
+  if (run.trigger) return { what: `reflex "${run.trigger.name}"`, ends: "reflex_finished", since };
+  const call = run.extra && "call" in run.extra ? run.extra.call : undefined;
+  const name = typeof call === "object" && call !== null && "name" in call ? call.name : undefined;
+  return { what: typeof name === "string" ? `call_routine "${name}"` : "run_program", ends: "program_finished", since };
+}
+
+/** The refusal of a run that arrives while `holder` holds the slot: who, for how long, and what to do next. */
+function busyError(holder: Holder, now: number): BusyError {
+  const seconds = Math.round((now - holder.since) / 1000);
+  return new BusyError(`busy: ${holder.what} has held the run slot for ${seconds} s; wait_for ["${holder.ends}"] or stop_program, then retry`);
+}
+
 /**
  * Reports program runs and registrations to the supervisor, which writes the history, and holds the run slot: every run (a
  * call, a module run, a reflex firing) goes through `record`, and every event of a run (its arrival, the ack of its start,
@@ -87,6 +109,8 @@ export class RunReporter implements RunRecorder {
   readonly #idleListeners: (() => void)[] = [];
   #nextId = 0;
   #slot: Slot = IDLE;
+  /** Who took the slot last; read only while the slot is taken. */
+  #holder: Holder | undefined;
 
   constructor(options: RunReporterOptions) {
     this.#options = options;
@@ -159,7 +183,8 @@ export class RunReporter implements RunRecorder {
 
   async record(run: { code: string; timeoutMs?: number; extra?: object; requestId?: number; trigger?: FiringOf }, execute: () => Promise<RunOutcome & RunPreview>): Promise<RunResult> {
     // Its arrival: the run takes the slot, or is refused before the supervisor hears of it.
-    if (this.#slot.state !== "idle") throw new BusyError();
+    if (this.#slot.state !== "idle") throw busyError(this.#holder!, Date.now());
+    this.#holder = holderOf(run, Date.now());
     const runId = this.#nextId++;
     const reserved: Slot & { state: "reserved" } = { state: "reserved", runId };
     this.#slot = reserved;
