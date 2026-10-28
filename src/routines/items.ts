@@ -1,5 +1,5 @@
 // The items routines: item knowledge — recipes, and the item drops lying on the ground — and renaming an item at an anvil.
-import { type Block, type Bot, defineRoutine, type Item, Point, type RoutineContext, within, z } from "minebot-sdk/routine";
+import { type Block, type Bot, defineRoutine, type Item, type RoutineContext, within, z } from "minebot-sdk/routine";
 
 /** What `bot.openBlock` opens: the anvil's window, with its slots and the player's inventory in them. */
 type AnvilWindow = Awaited<ReturnType<Bot["openBlock"]>>;
@@ -28,12 +28,18 @@ function summarize(ctx: RoutineContext, recipe: { delta: { id: number; count: nu
   return { makes: recipe.result.count, requiresTable: recipe.requiresTable, ingredients };
 }
 
-/** Positions of dropped items within `radius`, nearest first. */
+/** The dropped stacks within `radius`, nearest first: the floored position of each entity with the item it holds. */
 function droppedItems(ctx: RoutineContext, radius: number) {
+  const at = ctx.bot.entity.position;
   return Object.values(ctx.bot.entities)
-    .filter((e) => e.name === "item" && e.position.distanceTo(ctx.bot.entity.position) < radius)
-    .sort((a, b) => a.position.distanceTo(ctx.bot.entity.position) - b.position.distanceTo(ctx.bot.entity.position))
-    .map((e) => e.position.floored());
+    .filter((e) => e.name === "item" && e.position.distanceTo(at) < radius)
+    .sort((a, b) => a.position.distanceTo(at) - b.position.distanceTo(at))
+    .flatMap((e) => {
+      const stack = e.getDroppedItem();
+      if (!stack) return [];
+      const { x, y, z } = e.position.floored();
+      return [{ x, y, z, name: stack.name, count: stack.count }];
+    });
 }
 
 export const recipes = defineRoutine(
@@ -49,9 +55,9 @@ export const recipes = defineRoutine(
 export const drops = defineRoutine(
   {
     name: "items.drops",
-    description: "Positions ({x,y,z}) of dropped item entities within `radius`, nearest first — what a dig has left to pick up.",
+    description: "Dropped item stacks within `radius` (default 8), nearest first: [{ x, y, z, name, count }], where x, y, z is the floored position of the stack and name and count are the item it holds, e.g. { x: 3, y: 64, z: 0, name: 'oak_log', count: 2 } — what a dig has left to pick up. An entry works wherever a position {x,y,z} is taken.",
     args: z.object({ radius: z.number().positive().default(8) }),
-    returns: z.array(Point),
+    returns: z.array(z.object({ x: z.number().int(), y: z.number().int(), z: z.number().int(), name: z.string(), count: z.number().int().positive() })),
   },
   (ctx, { radius }) => droppedItems(ctx, radius),
 );

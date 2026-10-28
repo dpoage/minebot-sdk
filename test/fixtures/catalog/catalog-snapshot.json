@@ -614,7 +614,7 @@
       },
       {
         "name": "drops",
-        "description": "Positions ({x,y,z}) of dropped item entities within `radius`, nearest first — what a dig has left to pick up.",
+        "description": "Dropped item stacks within `radius` (default 8), nearest first: [{ x, y, z, name, count }], where x, y, z is the floored position of the stack and name and count are the item it holds, e.g. { x: 3, y: 64, z: 0, name: 'oak_log', count: 2 } — what a dig has left to pick up. An entry works wherever a position {x,y,z} is taken.",
         "args": {
           "$schema": "https://json-schema.org/draft/2020-12/schema",
           "type": "object",
@@ -633,19 +633,35 @@
             "type": "object",
             "properties": {
               "x": {
-                "type": "number"
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
               },
               "y": {
-                "type": "number"
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
               },
               "z": {
-                "type": "number"
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              "name": {
+                "type": "string"
+              },
+              "count": {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
               }
             },
             "required": [
               "x",
               "y",
-              "z"
+              "z",
+              "name",
+              "count"
             ],
             "additionalProperties": false
           }
