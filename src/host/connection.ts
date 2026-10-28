@@ -2,6 +2,7 @@
 // click pacing, translating bot events into the body's event log, and halting in-flight actions.
 import { setTimeout as delay } from "node:timers/promises";
 import mineflayer, { type Bot } from "mineflayer";
+import { recordDeath, trackDeaths, type Senses } from "../mc/deaths.ts";
 import { round, vec } from "../mc/position.ts";
 import { MC_VERSION } from "../mc/version.ts";
 import { NOT_CONNECTED_MESSAGE, type EventSink } from "../protocol/host.ts";
@@ -61,6 +62,8 @@ export class Connection {
   #reconnects = 0;
   #deaths = 0;
   #lastDisconnect: string | undefined;
+  /** What the host session has sensed of its player: carried into the next connection's tracker. */
+  #senses: Senses = {};
 
   constructor(options: ConnectionOptions) {
     this.#options = options;
@@ -140,6 +143,7 @@ export class Connection {
     this.#bot = bot;
     installPathfinder(bot);
     watchGame(bot, events);
+    this.#senses = trackDeaths(bot, this.#senses);
     // Plugins (including the inventory plugin that defines clickWindow) load after createBot returns.
     bot.once("login", () => {
       const click = bot.clickWindow.bind(bot);
@@ -156,9 +160,12 @@ export class Connection {
       events.push("connected", { username: bot.username, host, port });
     });
     bot.on("spawn", () => events.push("spawn", { position: vec(bot.entity.position) }));
+    // The server reset the spawn point to the world spawn; the tracker reports null from here.
+    bot.on("spawnReset", () => events.push("spawn_reset", {}));
     bot.on("death", () => {
       this.#deaths++;
-      events.push("death", { position: vec(bot.entity.position) });
+      // The tracker holds the server's death message and the inventory as it was when that arrived.
+      events.push("death", recordDeath(bot));
     });
 
     let lastHealth = 20;
