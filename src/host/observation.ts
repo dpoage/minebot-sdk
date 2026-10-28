@@ -103,7 +103,7 @@ function describeSky(sky: SkyView): string {
 /** `last death 5m ago at -286 42 104 (drowned)`: the cause without the player's name, since the line is theirs. */
 function describeDeath(death: DeathSummary, username: string): string {
   const seen = Date.parse(death.time);
-  const minutes = Number.isFinite(seen) ? Math.max(0, Math.round((Date.now() - seen) / 60_000)) : 0;
+  const minutes = Number.isFinite(seen) ? Math.max(0, Math.floor((Date.now() - seen) / 60_000)) : 0;
   const cause = death.cause?.replaceAll(username, "").replace(/\s+/g, " ").trim();
   const at = `${Math.floor(death.position.x)} ${Math.floor(death.position.y)} ${Math.floor(death.position.z)}`;
   return `last death ${minutes}m ago at ${at}${cause ? ` (${cause})` : ""}`;

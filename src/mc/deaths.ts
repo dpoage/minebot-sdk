@@ -33,8 +33,13 @@ export interface Senses {
 interface Tracker extends Senses {
   /** The message and inventory of a death whose Mineflayer `death` event has not arrived yet. */
   pending?: DeathDetail;
-  /** The bed or respawn anchor the bot used last: the server's confirmation message names no position. */
+  /** The bed or respawn anchor the last successful use worked on: a later confirmation names no position. */
   used?: Vec;
+  /**
+   * A use in flight. The server confirms the new spawn point while the player is still in bed, before
+   * Mineflayer's call resolves, so the confirmation is held here until the call succeeds.
+   */
+  use?: { position: Vec; confirmed: boolean };
 }
 
 /** The NBT tags whose value is a number. */
@@ -56,7 +61,11 @@ function trackerOf(bot: Bot): Tracker {
 
 /** What the body has sensed about `bot`; empty for a bot that is not tracked. */
 export function sensesOf(bot: Bot): Senses {
-  return trackerOf(bot);
+  const tracker = trackerOf(bot);
+  return {
+    ...(tracker.lastDeath && { lastDeath: tracker.lastDeath }),
+    ...(tracker.spawnPoint !== undefined && { spawnPoint: tracker.spawnPoint }),
+  };
 }
 
 /**
@@ -80,7 +89,9 @@ export function trackDeaths(bot: Bot, carried: Senses = {}): Senses {
 
   // The server confirms a respawn point with a message; the position is the bed or anchor the bot used.
   bot.on("message", (message) => {
-    if (isSpawnSet(message) && tracker.used) tracker.spawnPoint = tracker.used;
+    if (!isSpawnSet(message)) return;
+    if (tracker.use) tracker.use.confirmed = true;
+    else if (tracker.used) tracker.spawnPoint = tracker.used;
   });
 
   // The server reset the spawn point (the bed or anchor is gone): the player respawns at the world spawn.
@@ -88,7 +99,9 @@ export function trackDeaths(bot: Bot, carried: Senses = {}): Senses {
     tracker.spawnPoint = null;
   });
 
-  wrapUse(bot, tracker);
+  // Mineflayer injects its plugins (the bed plugin defines `bot.sleep`) only after createBot returns,
+  // so the wrappers go on at login, as the click pacing in connection.ts and the dig wrapper do.
+  bot.once("login", () => wrapUse(bot, tracker));
   return tracker;
 }
 
@@ -107,24 +120,44 @@ export function recordDeath(bot: Bot): { position: Vec; cause?: string; dropped?
 
 /**
  * Remembers the bed or respawn anchor the bot uses: the server's confirmation message carries no
- * position, so the position has to come from the bot's own use.
+ * position, so the position has to come from the bot's own use — and only from a use that worked,
+ * since a refused sleep or a click that charged an anchor sets no spawn point.
  */
 function wrapUse(bot: Bot, tracker: Tracker): void {
   const sleep = bot.sleep;
   if (typeof sleep === "function") {
     bot.sleep = (async (...args: Parameters<Bot["sleep"]>) => {
       const [bedBlock] = args;
-      if (bedBlock) tracker.used = vec(bedBlock.position);
-      return sleep.apply(bot, args);
+      return useSpawnPoint(tracker, bedBlock && vec(bedBlock.position), () => sleep.apply(bot, args));
     }) as Bot["sleep"];
   }
   const activate = bot.activateBlock;
   if (typeof activate === "function") {
     bot.activateBlock = (async (...args: Parameters<Bot["activateBlock"]>) => {
       const [block] = args;
-      if (block?.name === "respawn_anchor") tracker.used = vec(block.position);
-      return activate.apply(bot, args);
+      // Glowstone charges an anchor instead of setting the spawn point.
+      const setsSpawn = block?.name === "respawn_anchor" && bot.heldItem?.name !== "glowstone";
+      return useSpawnPoint(tracker, setsSpawn ? vec(block.position) : undefined, () => activate.apply(bot, args));
     }) as Bot["activateBlock"];
+  }
+}
+
+/**
+ * Runs a use that would set the spawn point at `position`: a confirmation that arrives while the use
+ * is in flight is held until the use resolves, and a use that throws set nothing and is forgotten.
+ */
+async function useSpawnPoint<T>(tracker: Tracker, position: Vec | undefined, use: () => Promise<T>): Promise<T> {
+  const attempt = position && { position, confirmed: false };
+  if (attempt) tracker.use = attempt;
+  try {
+    const result = await use();
+    if (attempt) {
+      tracker.used = attempt.position;
+      if (attempt.confirmed) tracker.spawnPoint = attempt.position;
+    }
+    return result;
+  } finally {
+    if (attempt && tracker.use === attempt) tracker.use = undefined;
   }
 }
 
