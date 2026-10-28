@@ -13,6 +13,11 @@ import type { EventSink } from "../protocol/host.ts";
 const LOW_HEALTH = 8;
 /** Food below this raises `low_food`. */
 const LOW_FOOD = 6;
+/**
+ * Air below this raises `low_oxygen`. The routines that watch air (move.to) use the same value;
+ * Mineflayer reports air on the 0-20 scale the player's bubbles show.
+ */
+export const LOW_OXYGEN = 10;
 /** A hostile creature this close raises `hostile_near`. */
 const HOSTILE_RADIUS = 16;
 /** A notified creature raises the event again only after it has been this far away or gone. */
@@ -69,9 +74,19 @@ export function watchGame(bot: Bot, events: EventSink): void {
     }
   });
 
+  // Air is not an event of Mineflayer's: it changes under water without one, so every tick looks.
+  // A bot whose entity has not reported air yet has no oxygenLevel.
+  let oxygenArmed = true;
   const notified = new Set<number>();
   let ticks = 0;
   bot.on("physicsTick", () => {
+    if (typeof bot.oxygenLevel === "number") {
+      if (bot.oxygenLevel >= LOW_OXYGEN) oxygenArmed = true;
+      else if (oxygenArmed) {
+        oxygenArmed = false;
+        events.push("low_oxygen", { oxygen: bot.oxygenLevel });
+      }
+    }
     if (++ticks % HOSTILE_CHECK_TICKS !== 0 || !bot.entity) return;
     for (const id of notified) {
       const entity = bot.entities[id];

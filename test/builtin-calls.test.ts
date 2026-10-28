@@ -332,7 +332,7 @@ describe("a built-in call through the whole path", () => {
       const line = body.history().at(-1)!;
       assert.deepEqual([line.code, line.call, line.status], ["", { name: "move.to", args: { position: [3, 64, 2], range: 2 } }, "ok"]);
       const docs = ((await body.ok("GET", "/builtins/docs?names=move")) as { docs: string }).docs;
-      assert.match(docs, /### move\.to\(ctx, \{ position, range\?, timeoutMs\? \}\)\n.*\n- position: /);
+      assert.match(docs, /### await move\.to\(ctx, \{ position, range\?, timeoutMs\?, allowDigOwnBuilds\? \}\)\n.*\n- position: /);
       assert.match(docs, /- range\?: number \(default 1\)/);
       assert.match(docs, /Returns: /);
     });

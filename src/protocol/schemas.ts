@@ -18,6 +18,15 @@ export const NoteText = z.string().min(1).max(MAX_NOTE_LENGTH);
 export const WikiFeature = z.enum(["builtins", "milestones", "reflexes", "routines"]);
 export type WikiFeature = z.infer<typeof WikiFeature>;
 
+/** The identity of a module a lesson names: 12 hex digits of the sha256 of a built-in module's source, or a shipped package's installed version. */
+const ModuleIdentity = z.string().regex(/^(?:[0-9a-f]{12}|\d+\.\d+\.\d+[0-9A-Za-z.+-]*)$/);
+
+/** What a lesson records about the SDK that wrote it: the package version, and the identity of each module the lesson names. */
+const LessonProvenance = z.object({
+  sdk: z.string().min(1),
+  modules: z.record(z.string().min(1), ModuleIdentity),
+});
+
 /** Wiki page frontmatter. Pages that require a feature are hidden from bodies without it. */
 export const PageMeta = z.object({
   title: z.string().min(1),
@@ -33,6 +42,11 @@ export const PageMeta = z.object({
   /** Lessons only: the body that wrote it, and when. */
   author: z.string().optional(),
   created: z.string().optional(),
+  /**
+   * Lessons only: what the lesson was written against. A page whose record does not fit this shape loads as if it had
+   * none, so a hand-edited or future-format record can never make the wiki fail to load.
+   */
+  provenance: LessonProvenance.optional().catch(undefined),
 });
 export type PageMeta = z.output<typeof PageMeta>;
 

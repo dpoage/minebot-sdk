@@ -54,7 +54,7 @@ function contextMembers(features: BodyFeatures): { name: string; line: string }[
     { name: "sleep", line: "sleep(ms): resolves after ms; rejects when the run is aborted." },
     { name: "signal", line: "signal: AbortSignal that fires on timeout or stop. Check signal.aborted in long loops." },
     { name: "on", line: "on(event, handler): subscribe to a bot event. When the run ends or is aborted, the body removes the handlers that exist at that moment; one added after that is not kept." },
-    { name: "bot", line: 'bot: the mineflayer Bot (https://github.com/PrismarineJS/mineflayer/blob/master/docs/api.md). The pathfinder plugin is loaded: use bot.pathfinder.goto(goal), with `import { goals, Movements } from "mineflayer-pathfinder"` and `import { Vec3 } from "vec3"`.' },
+    { name: "bot", line: 'bot: the mineflayer Bot (https://github.com/PrismarineJS/mineflayer/blob/master/docs/api.md). The pathfinder plugin is loaded: `import { goals, Vec3 } from "minebot-sdk/routine"`, then `await bot.pathfinder.goto(new goals.GoalNear(x, y, z, 1))` walks to within 1 block of x, y, z (goto takes a goal instance, not an object).' },
     { name: "notes", line: 'notes: your notepad on this body; it survives body restarts and resets of your context. notes.set(key, text), notes.get(key) -> text, notes.list() -> [{ key, text, updated }], notes.delete(key). Keys are lowercase, e.g. "plan" or "places/base".' },
     {
       name: "status",
@@ -70,6 +70,48 @@ function contextMembers(features: BodyFeatures): { name: string; line: string }[
   }
   members.push({ name: "store", line: "store(namespace): a persistent JSON store that survives body restarts and is shared by every run that opens the same namespace (a name of 1-48 lowercase letters, digits, _ and -, starting with a letter; notes and body are the body's own). store(namespace).get(key) -> value, .set(key, value), .delete(key), .keys()." });
   return members;
+}
+
+/** One row of the facts table: a member agents wrote that does not exist (or is not what they took it for), and the real one. Cells are the reference's text; a wrong cell is never checked against a real bot. */
+export interface BotFact {
+  wrong: string;
+  right: string;
+}
+
+/** The members of the Mineflayer fork that agents' runs got wrong, one row per mistake seen in practice. The drift test (test/reference-drift.test.ts) holds every `bot.` member of the right cells to a real bot. */
+export const BOT_FACTS: readonly BotFact[] = [
+  { wrong: "`bot.entity.health`", right: "`bot.health` (a number)" },
+  { wrong: "`block.type`", right: '`block.name` (e.g. "oak_log"; `block.type` is a numeric id)' },
+  { wrong: "`bot.entities.values()`, `bot.entities.filter(f)`", right: "`Object.values(bot.entities)` (`bot.entities` is a plain object keyed by id, not a Map or an array)" },
+  { wrong: "`bot.inventory.items.filter(f)`", right: "`bot.inventory.items().filter(f)` (`items` is a method)" },
+  { wrong: "`bot.selectItem(item)`", right: '`await bot.equip(item, "hand")`' },
+  { wrong: "`bot.isRaining()`", right: "`bot.isRaining` (a boolean, not a method)" },
+  { wrong: "`bot.daylight()`, `bot.time.moment`", right: "`bot.time.timeOfDay` (ticks, 0-23999) or `bot.time.isDay` (a boolean)" },
+  { wrong: "`pos.floored()` on a plain `{ x, y, z }`", right: "`new Vec3(x, y, z).floored()` (only a Vec3 has `.floored()`)" },
+];
+
+/** One row of the goal table: what an agent wants to do, and the built-in routines (`<module>.<routine>`) that already do it. */
+export interface GoalBuiltin {
+  goal: string;
+  routines: readonly string[];
+}
+
+/**
+ * The goals agents hand-rolled although a built-in does them, in the order the reference lists them.
+ * A row is shown only where the body offers the module of each of its routines (`goalRows`), so the
+ * reference never points at a module the body lacks.
+ */
+export const GOAL_BUILTINS: readonly GoalBuiltin[] = [
+  { goal: "sell to or buy from a villager or wandering trader", routines: ["trade.offers", "trade.buy"] },
+  { goal: "make tools, or any item you can craft", routines: ["crafter.make"] },
+  { goal: "place a block", routines: ["place.place"] },
+  { goal: "sleep in a bed", routines: ["survival.sleep"] },
+  { goal: "find blocks (ores, logs, water, chests) around you", routines: ["explorer.scan"] },
+];
+
+/** The goal rows a body can show: those whose routines are all of modules it offers. */
+function goalRows(features: BodyFeatures): GoalBuiltin[] {
+  return GOAL_BUILTINS.filter(({ routines }) => routines.every((routine) => features.builtins.includes(routine.slice(0, routine.indexOf(".")))));
 }
 
 /**
@@ -107,7 +149,7 @@ function runTemplate(features: BodyFeatures): string {
   const lines = call?.lines ?? ["ctx.log(`standing at ${here.x},${here.y},${here.z}`);"];
   const result = call?.result ?? "return { at: here.toArray() };";
   return [
-    'import { Vec3 } from "vec3";',
+    'import { Vec3 } from "minebot-sdk/routine";',
     ...(call ? [`import * as ${call.module} from "minebot-sdk/routines/${call.module}";`] : []),
     "",
     "export default async (ctx, args) => {",
@@ -128,13 +170,15 @@ export function programApiDoc(features: BodyFeatures): string {
   const library = caps.routines
     ? ` It can also import the library's modules by file name (\`import { helper } from "./helper.ts"\`, with or without a query or fragment after the name: the module as saved when the run starts); importing an absolute path, a \`file:\` URL, or a relative path to anything but a module of the library fails.`
     : " This body has no library of saved modules, so a relative import fails.";
-  const sdk = caps.routines ? " such as minebot-sdk/routine" : "";
+  const facts = BOT_FACTS.map(({ wrong, right }) => `| ${wrong} | ${right} |`).join("\n");
   const slot = caps.reflexes ? "runs, calls and reflex firings" : "runs and calls";
   // The routine-related sections: the library's, then the built-ins' (each only where the body offers it).
   const routines = `${caps.routines ? `\n\n${routinesDoc(features)}` : ""}${caps.builtins ? `\n\n${builtinsDoc(features)}` : ""}`;
-  return `A run is a TypeScript or JavaScript module (types are stripped, not checked) that the body evaluates inside the bot host, against a live Mineflayer bot, afresh each time. Its result is its default export: \`export default async (ctx, args) => result\` is called with the run's context and the run's args (a JSON object, {} when none) and its awaited return is the result; any other default export is the result itself (awaited); a module without a default export has no result. A \`return\` statement outside a function is a syntax error, so the module cannot end with one. The result is sent back as JSON.
+  return `A run is a TypeScript or JavaScript module that the body type-checks, then evaluates inside the bot host, against a live Mineflayer bot, afresh each time. Its result is its default export: \`export default async (ctx, args) => result\` is called with the run's context and the run's args (a JSON object, {} when none) and its awaited return is the result; any other default export is the result itself (awaited); a module without a default export has no result. A \`return\` statement outside a function is a syntax error, so the module cannot end with one. The result is sent back as JSON.
 
-It can import Node's core modules (\`node:fs\`, \`node:os\`), the packages this body ships (mineflayer, mineflayer-pathfinder, vec3, minecraft-data, prismarine-*, zod), and \`minebot-sdk/<subpath>\`${sdk} (bare \`minebot-sdk\` does not resolve); require() of a package or a core module works too.${library}
+The type check runs before the run starts. A run with errors that would make it fail when it runs (such as a name that is not defined, a call of a member that does not exist, or the wrong number of arguments) does not start: its status is error and the errors are listed, each with its line and column; fix them and run again. Other type errors do not stop a run. Where the body cannot load TypeScript the check is skipped, and the run's log says so with one line, \`type check skipped: <reason>\`.
+
+It imports the authoring helpers from \`minebot-sdk/routine\` (\`import { goals, Movements, Vec3, z } from "minebot-sdk/routine"\`), and can import Node's core modules (\`node:fs\`, \`node:os\`), the packages this body ships (mineflayer, mineflayer-pathfinder, vec3, minecraft-data, prismarine-*, zod), and \`minebot-sdk/<subpath>\` (bare \`minebot-sdk\` does not resolve); require() of a package or a core module works too.${library}
 
 A complete run, to copy and change:
 
@@ -144,6 +188,12 @@ ${runTemplate(features)}
 
 ctx, the default function's first argument, has exactly: ${members.map((member) => member.name).join(", ")}.
 ${members.map((member) => `- ${member.line}`).join("\n")}
+
+Members of the bot that agents get wrong (the right column is what exists on this bot):
+
+| wrong | right |
+| --- | --- |
+${facts}
 
 One run at a time: ${slot} share one slot. On timeout or stop, the body halts pathfinding, digging and movement, ctx.sleep rejects, and the on() handlers that exist at that moment are removed. A timer or bot.on listener that you make yourself outlives the run, and one that throws after the run has ended restarts the bot host. If the run does not end within 5 seconds of the abort, the body kills the bot host and restarts it, also when the run blocks the host with synchronous code; the restart reconnects as the same player. Check ctx.signal.aborted in long loops so the run ends in time. globalThis is the host's: it persists between runs until the bot host restarts (after a crash, or when the body kills it for a run that does not stop).${routines}`;
 }
@@ -164,9 +214,14 @@ function routinesDoc(features: BodyFeatures): string {
 function builtinsDoc(features: BodyFeatures): string {
   const caps = capabilities(features);
   const example = features.builtins.includes("move") ? ", e.g. move.to" : "";
-  const imports = caps.routines ? ` A routine imports a module (import * as <module> from "minebot-sdk/routines/<module>") and calls its routines as <module>.<routine>(ctx, { ... }).` : "";
+  const imports = caps.routines ? ` A routine imports a module (import * as <module> from "minebot-sdk/routines/<module>") and calls its routines as await <module>.<routine>(ctx, { ... }).` : "";
   // Without a library the routines section, which says what a call is, is absent.
   const call = ` POST /call { name: "<module>.<routine>"${example}, args?, timeoutMs? } calls one as a run${caps.routines ? ", with no bind" : ""}, and answers like /run: status, result, error, logs.${caps.routines ? "" : " A call is a run: one at a time with the other runs, stopped by /stop, ended by its timeout."}`;
-  return `Built-in routines: ${features.builtins.join(", ")}. Reference: minebot builtins docs [module...] (GET /builtins/docs?names=), minebot builtins search <query> (GET /builtins/search?q=), minebot builtins source <module> (GET /builtins/source?name=); GET /builtins lists the modules with how often each built-in routine that has run succeeded and failed on this body.${imports}${call}`;
+  const rows = goalRows(features);
+  const goals =
+    rows.length === 0
+      ? ""
+      : `\n\nBefore you write it yourself, a built-in routine of this body already does it:\n\n| to | call |\n| --- | --- |\n${rows.map(({ goal, routines }) => `| ${goal} | ${routines.map((routine) => `\`${routine}\``).join(", ")} |`).join("\n")}`;
+  return `Built-in routines: ${features.builtins.join(", ")}. Reference: minebot builtins docs [module...] (GET /builtins/docs?names=), minebot builtins search <query> (GET /builtins/search?q=), minebot builtins source <module> (GET /builtins/source?name=); GET /builtins lists the modules with how often each built-in routine that has run succeeded and failed on this body.${imports}${call}${goals}`;
 }
 

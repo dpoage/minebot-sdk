@@ -167,9 +167,12 @@ describe("a preemption's abort is backed by the supervisor's deadline", () => {
 describe("a preemption after a run refused as busy still stops the run that executes", () => {
   /** Asks for a second /call while one executes: the fixture's /call, like the body's, has the runner refuse it. */
   const busy = (t: Scripted) => post(t, "/call", { source: "return 2;", timeoutMs: 1_000 });
-  /** The fixture's answer to a /call the runner refused. */
+  /** The fixture's answer to a /call the runner refused: the run slot's owner and how long it has held it. */
   async function refused(answer: Promise<{ status: number; body: unknown }>): Promise<void> {
-    assert.deepEqual(await answer, { status: 500, body: { error: new BusyError().message } });
+    const { status, body } = await answer;
+    assert.equal(status, 500);
+    assert.ok(typeof body === "object" && body !== null && "error" in body, JSON.stringify(body));
+    assert.match(String(body.error), /^busy: run_program has held the run slot for \d+ s; wait_for \["program_finished"\] or stop_program, then retry$/);
   }
 
   it("leaves the host alone when the executing program settles within the grace, and runs the preempting firing as preempted", { timeout: 30_000 }, async () => {

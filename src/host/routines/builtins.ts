@@ -60,13 +60,13 @@ function argumentsOf(routine: Routine): [string, z.ZodType][] {
   return args instanceof z.ZodObject ? Object.entries(args.shape).map(([name, schema]) => [name, schema as z.ZodType]) : [];
 }
 
-/** `move.to(ctx, { position, range?, timeoutMs? })`: the call shape, from the schema's keys; a routine that takes no arguments is `move.stop(ctx)`. */
+/** `await move.to(ctx, { position, range?, timeoutMs? })`: the call shape, from the schema's keys, with the `await` every call needs (a routine returns a promise); a routine that takes no arguments is `await move.stop(ctx)`. */
 function callShape(module: string, name: string, routine: Routine): string {
   const args = metaOf(routine)?.args;
-  if (args === undefined) return `${module}.${name}(ctx)`;
-  if (!(args instanceof z.ZodObject)) return `${module}.${name}(ctx, args)`;
+  if (args === undefined) return `await ${module}.${name}(ctx)`;
+  if (!(args instanceof z.ZodObject)) return `await ${module}.${name}(ctx, args)`;
   const keys = argumentsOf(routine).map(([key, schema]) => `${key}${schema.safeParse(undefined).success ? "?" : ""}`);
-  return keys.length === 0 ? `${module}.${name}(ctx)` : `${module}.${name}(ctx, { ${keys.join(", ")} })`;
+  return keys.length === 0 ? `await ${module}.${name}(ctx)` : `await ${module}.${name}(ctx, { ${keys.join(", ")} })`;
 }
 
 /** What a routine declares it returns, in the notation of its argument lines: `nothing` for a void result. */

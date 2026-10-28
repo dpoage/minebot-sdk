@@ -41,12 +41,42 @@ function templateOf(features: BodyFeatures): string {
 }
 
 describe("the program reference's run template", () => {
-  it("is one module an agent can copy: imports at the top, then `export default async (ctx, args)`, using Vec3", () => {
+  it("is one module an agent can copy: imports at the top, then `export default async (ctx, args)`, using Vec3 from minebot-sdk/routine", () => {
     for (const features of [EVERYTHING, NOTHING, { ...EVERYTHING, builtins: ["move"] }, { ...EVERYTHING, builtins: ["dig"] }]) {
       const template = templateOf(features);
-      assert.match(template, /^import \{ Vec3 \} from "vec3";\n(import \* as \w+ from "minebot-sdk\/routines\/\w+";\n)?\nexport default async \(ctx, args\) => \{$/m);
+      assert.match(template, /^import \{ Vec3 \} from "minebot-sdk\/routine";\n(import \* as \w+ from "minebot-sdk\/routines\/\w+";\n)?\nexport default async \(ctx, args\) => \{$/m);
       assert.match(template, /const here = new Vec3\(ctx\.bot\.entity\.position\.x, ctx\.bot\.entity\.position\.y, ctx\.bot\.entity\.position\.z\);/);
       assert.match(template, /\n\};$/);
+    }
+  });
+
+  // P2.1: what the reference teaches to import is what resolves for every agent, not the packages that only the body's own workspace has.
+  it("imports only minebot-sdk/routine and the offered built-in modules, in every code block of the reference", () => {
+    for (const features of [EVERYTHING, NOTHING, { ...EVERYTHING, builtins: ["move"] }, { ...EVERYTHING, builtins: ["inventory", "sense"] }]) {
+      const doc = programApiDoc(features);
+      const blocks = [...doc.matchAll(/```\w*\n([\s\S]*?)\n```/g)].map((found) => found[1]!);
+      assert.ok(blocks.length > 0);
+      const allowed = new Set(["minebot-sdk/routine", ...features.builtins.map((module) => `minebot-sdk/routines/${module}`)]);
+      for (const specifier of blocks.flatMap((block) => [...block.matchAll(/\bfrom "([^"]+)"/g)].map((found) => found[1]!))) {
+        assert.ok(allowed.has(specifier), `a code block imports ${specifier}`);
+      }
+      assert.doesNotMatch(doc, /from "(?:vec3|mineflayer-pathfinder)"/, "no import from vec3 or mineflayer-pathfinder anywhere in the reference");
+    }
+  });
+
+  it("shows the goal instance a pathfinder call takes and the import that has goals and Vec3", () => {
+    const doc = programApiDoc(EVERYTHING);
+    assert.ok(doc.includes('import { goals, Vec3 } from "minebot-sdk/routine"'));
+    assert.ok(doc.includes("await bot.pathfinder.goto(new goals.GoalNear(x, y, z, 1))"));
+  });
+
+  it("describes the run check, and does not say that types are not checked or name the comment that turns the check off", () => {
+    for (const features of [EVERYTHING, NOTHING]) {
+      const doc = programApiDoc(features);
+      assert.doesNotMatch(doc, /not checked|types are stripped/);
+      assert.doesNotMatch(doc, /ts-nocheck/);
+      assert.match(doc, /The type check runs before the run starts\. A run with errors that would make it fail when it runs .* does not start: its status is error and the errors are listed, each with its line and column/);
+      assert.match(doc, /Where the body cannot load TypeScript the check is skipped, and the run's log says so with one line, `type check skipped: <reason>`\./);
     }
   });
 

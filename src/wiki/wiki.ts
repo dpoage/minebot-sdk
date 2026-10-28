@@ -8,6 +8,7 @@ import { LessonInput, type LessonInput as LessonInputType, type PageMeta, type P
 import { countTokens, rankFields, type RankField } from "../rank.ts";
 import { PACKAGE_ROOT } from "../package.ts";
 import { readPages, tokens, visible, type WikiView } from "./page.ts";
+import { provenanceFor, shippedModules, staleMarks, type Shipped } from "./provenance.ts";
 
 /** Default location of the curated pages. */
 export const WIKI_DIR = path.join(PACKAGE_ROOT, "wiki");
@@ -44,7 +45,7 @@ function index(page: WikiPage): Indexed {
 }
 
 function summary(page: WikiPage): PageSummary {
-  return { id: page.id, title: page.meta.title, tags: page.meta.tags, status: page.status };
+  return { id: page.id, title: page.meta.title, tags: page.meta.tags, status: page.status, ...(page.stale ? { stale: page.stale } : {}) };
 }
 
 /** The line of the page that matches the most query terms (the first one on a tie), or its first line when none matches. */
@@ -69,23 +70,34 @@ export class Wiki {
   readonly root: string;
   readonly lessonsDir: string | undefined;
   readonly #curated: WikiPage[];
+  readonly #shipped: Shipped;
   #lessons: WikiPage[] = [];
   /** Modification time of the lessons directory when the lessons were read; other bodies add lessons to it too. */
   #lessonsStamp = -1;
   /** Search indexes by view, rebuilt when the lessons change. */
   readonly #indexes = new Map<string, Indexed[]>();
 
-  private constructor(root: string, lessonsDir: string | undefined) {
+  private constructor(root: string, lessonsDir: string | undefined, shipped: Shipped) {
     this.root = root;
     this.lessonsDir = lessonsDir;
+    this.#shipped = shipped;
     this.#curated = readPages(root, "", false).filter((p) => !p.id.startsWith("checks/"));
   }
 
-  /** Loads curated pages from `root` and lessons from `lessonsDir`. Throws on a malformed page. */
-  static load(root = WIKI_DIR, lessonsDir?: string): Wiki {
-    const wiki = new Wiki(root, lessonsDir);
+  /**
+   * Loads curated pages from `root` and lessons from `lessonsDir`. Throws on a malformed page.
+   * `shipped` is what the package ships, which lessons are written against and judged stale by; tests pass their own.
+   */
+  static load(root = WIKI_DIR, lessonsDir?: string, shipped: Shipped = shippedModules()): Wiki {
+    const wiki = new Wiki(root, lessonsDir, shipped);
     wiki.#refresh();
     return wiki;
+  }
+
+  /** The page, marked stale when a module its record names has changed since it was written. A page without a record stays as read. */
+  #judged(page: WikiPage): WikiPage {
+    const stale = staleMarks(this.#shipped, page.meta.provenance);
+    return stale ? { ...page, status: "stale-lesson", stale } : page;
   }
 
   /** Rereads the lessons when the directory changed, so lessons from other bodies show up. */
@@ -99,7 +111,7 @@ export class Wiki {
       stamp = 0;
     }
     if (stamp === this.#lessonsStamp) return;
-    this.#lessons = readPages(this.lessonsDir, LESSONS, true);
+    this.#lessons = readPages(this.lessonsDir, LESSONS, true).map((page) => this.#judged(page));
     this.#lessonsStamp = stamp;
     this.#indexes.clear();
   }
@@ -170,6 +182,7 @@ export class Wiki {
       verified_by: `unreviewed lesson from ${author}`,
       author,
       created: new Date().toISOString(),
+      provenance: provenanceFor(this.#shipped, lesson.title, lesson.tags),
     };
     const text = `---\n${stringifyYaml(meta)}---\n\n${lesson.body.trim()}\n`;
     await mkdir(this.lessonsDir, { recursive: true });
@@ -187,8 +200,8 @@ export class Wiki {
   }
 }
 
-/** Renders a page for an agent: status line, then the markdown. */
+/** Renders a page for an agent: status line, the stale mark when a module the lesson names has changed, then the markdown. */
 export function formatPage(page: WikiPage): string {
   const verified = page.meta.mc_version ? `verified on ${page.meta.mc_version} by ${page.meta.verified_by}` : page.meta.verified_by;
-  return `# ${page.meta.title}\n[${page.id} | ${page.status} | ${verified}]\n\n${page.body}`;
+  return `# ${page.meta.title}\n[${page.id} | ${page.status} | ${verified}]\n${page.stale ? `${page.stale}\n` : ""}\n${page.body}`;
 }

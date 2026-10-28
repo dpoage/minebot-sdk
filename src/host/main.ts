@@ -1,10 +1,11 @@
 // The bot host's entry: forked by the supervisor (src/body/host-process.ts) with its pid as the
 // only argument. It builds the world the supervisor's init describes, answers the API requests the
 // supervisor forwards, and exits on `shutdown`, when the channel closes, when its supervisor is gone,
-// or on an uncaught error, which it reports to the supervisor first.
+// or on an uncaught error that no run's code is active to take, which it reports to the supervisor first.
 import { inspect } from "node:util";
 import { insideDir, locateFrame } from "../program/frames.ts";
-import { supervisorPidOf, type FromHost, type HostCrash, type ToHost } from "../protocol/host.ts";
+import type { ContainOrigin } from "../program/runner.ts";
+import { crashDetail, supervisorPidOf, type FromHost, type HostCrash, type ToHost } from "../protocol/host.ts";
 import type { HostEvents, RunReporter } from "./channel.ts";
 import { watchSupervisor } from "./supervisor-watch.ts";
 import type { World } from "./world.ts";
@@ -31,10 +32,29 @@ let crashing = false;
 /** The world, once the init message has built it; a crash's frame is the one inside its routine library. */
 let world: World | undefined;
 
-// Not exiting on an uncaught error would resume a host whose state an error left half done: the host
-// reports the error and exits, and the supervisor replaces it.
-process.on("uncaughtException", crash);
-process.on("unhandledRejection", crash);
+// Not exiting on an uncaught error would resume a host whose state an error left half done. An error that reaches
+// here while a run's code is active (or within a macrotask of its end) belongs to that run: the runner ends the
+// run with it and halts the body before the next tick, and the host goes on. Any other error — no run, a run whose
+// end was reported, a world not built yet — is reported to the supervisor, and the host exits and is replaced.
+process.on("uncaughtException", (err) => handleUncaught(err, "exception"));
+process.on("unhandledRejection", (reason) => handleUncaught(reason, "rejection"));
+
+function handleUncaught(err: unknown, origin: ContainOrigin): void {
+  // The exit is on its way: a second error is not given to a run that will not report.
+  if (crashing) return;
+  let contained = false;
+  try {
+    contained = world?.body.runner.contain(err, origin) ?? false;
+  } catch {} // a failed containment is a crash
+  if (!contained) {
+    crash(err);
+    return;
+  }
+  try {
+    // Not through `console`: during a run it would add the error to the run's log a second time.
+    process.stderr.write(`[minebot] contained in the active run (${origin}): ${crashDetail(describeCrash(err, world?.routinesDir))}\n`);
+  } catch {}
+}
 
 const modules = Promise.all([import("./channel.ts"), import("./world.ts")]);
 

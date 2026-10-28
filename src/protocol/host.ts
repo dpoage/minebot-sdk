@@ -82,29 +82,50 @@ export function previewOf(end: { status: RunStatus; result?: unknown }, thrown?:
 export type FinishedEnd = { status: RunStatus; error?: string; logs?: string; durationMs: number };
 
 export type ProgramFinished = { status: RunStatus; durationMs: number; run: number; call?: string; error?: string; result?: string };
-export type TriggerFinished = { name: string; status: RunStatus; durationMs: number; error?: string; logs?: string };
+export type TriggerFinished = { name: string; status: RunStatus; durationMs: number; error?: string; logs?: string; diedDuringRun?: number };
 export type TriggerDisabled = { name: string; failures: number; reason: string };
 
 /**
  * The data of a `program_finished` event, built by the supervisor as it records the run's end: how the run ended, its seq
- * (the id `get_run` takes), and previews of its error and result. `view`'s previews are what the host reported of them;
- * without them the end's own error string stands in (the ends a dead host or a refused write leave the supervisor with).
+ * (the id `get_run` takes), and a preview of its result with its error. `view`'s previews are what the host reported of them.
+ * The error is the host's preview of the thrown message while that preview is part of the run's own error; when it is not —
+ * the host reported none, or one of another value — the end's own error stands in: an error that reached the process while
+ * the run's code was active ends the run first, and the program's own rejection of the abort can reach the host's preview
+ * afterwards, naming the abort instead of the error the run ended with.
  */
 export function programFinished(end: FinishedEnd, run: number, view: { call?: string } & RunPreview = {}): ProgramFinished {
+  const error = end.error === undefined ? undefined : view.errorLine !== undefined && previewNamesError(end.error, view.errorLine) ? view.errorLine : end.error;
   return {
     status: end.status,
     durationMs: end.durationMs,
     run,
     ...(view.call !== undefined && { call: view.call }),
-    ...(end.error !== undefined && { error: view.errorLine ?? errorPreview(end.error) }),
+    ...(error !== undefined && { error }),
     ...(end.status === "ok" && view.resultPreview !== undefined && { result: view.resultPreview }),
   };
 }
 
+/** Whether `preview` (cut as previews are) is the message a line of `error` carries, after the line's `<name>: `. */
+function previewNamesError(error: string, preview: string): boolean {
+  const text = preview.endsWith("…") ? preview.slice(0, -1) : preview;
+  if (text === "") return false;
+  return error.split("\n").some((line) => {
+    const named = line.indexOf(": ");
+    return line.startsWith(text) || (named !== -1 && line.slice(named + 2).startsWith(text));
+  });
+}
+
 /** The data of a `reflex_finished` event, built by the host that ran the firing and by the supervisor that ends it for a dead host. */
-export function triggerFinished(name: string, end: FinishedEnd): TriggerFinished {
+export function triggerFinished(name: string, end: FinishedEnd & { diedDuringRun?: number }): TriggerFinished {
   const logs = end.logs ? end.logs.slice(0, MAX_EVENT_LOGS) : undefined;
-  return { name, status: end.status, durationMs: end.durationMs, ...(end.error !== undefined && { error: end.error }), ...(logs && { logs }) };
+  return {
+    name,
+    status: end.status,
+    durationMs: end.durationMs,
+    ...(end.error !== undefined && { error: end.error }),
+    ...(logs && { logs }),
+    ...(end.diedDuringRun !== undefined && { diedDuringRun: end.diedDuringRun }),
+  };
 }
 
 /** Which definition of a reflex a firing ran: its name and when that definition was saved. */
