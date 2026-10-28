@@ -1,9 +1,9 @@
 ---
 title: Reflexes run a routine for you when an event arrives
-tags: [reflex, reflexes, bind, automatic, events, hurt, hunger, eat, flee, preempt, priority, cooldown, restart, when]
+tags: [reflex, reflexes, bind, automatic, events, hurt, hunger, eat, flee, preempt, priority, cooldown, restart, when, death, disable, breaker]
 requires: [reflexes]
 mc_version: "26.1"
-verified_by: "reflexes on chat and low_food, the queue, preemption, a restart, and self-disable checked on the dev server, 2026-10-22"
+verified_by: "reflexes on chat and low_food, the queue, preemption, a restart, and self-disable checked on the dev server, 2026-10-22; the death breaker by test/reflex-breaker.test.ts"
 ---
 
 A run starts when you ask for it. A reflex is a saved routine that the body starts for you when an event arrives, for example to eat when food is low. You bind the reflex, so the body does nothing that you did not ask for.
@@ -74,6 +74,12 @@ Each firing adds two events: `reflex_fired { name, event: { seq, type } }`, and 
 A reflex that fails three times in a row (an error or a timeout) disables itself and adds `reflex_disabled { name, failures, reason }`. Bind it again after you fix it: the new bind enables it. A `when` that throws counts as a failure.
 
 At start, the body reports `reflex_error` for a stored entry that it cannot load as a reflex, such as one saved before reflexes existed. The entry keeps its name until you run `minebot unbind <name>`.
+
+## Two deaths switch a reflex off
+
+A death counts against a reflex when it falls during that reflex's firing, or within 180 seconds after the firing ends. When 2 counted deaths fall within 10 minutes, the body disables the reflex and adds `reflex_disabled { name, failures, reason }` with the reason `the player died 2 times within 10 min during or right after its runs (last: drowned at 12 63 -4); bind it again with bind_routine and its full settings (list_routines shows them) to turn it back on`. A death that this breaker charges does not fire the reflex it disabled, so the reflex does not run on the death that broke it. Bind the reflex again to turn it back on, and fix what walks the player into the same danger first.
+
+This rule exists for reflexes that walk back to a grave. A grave under water, in lava, or at the bottom of a cliff kills the player again on the way, and a reflex that fires on every death turns one accident into eight.
 
 ## Rules for good reflexes
 

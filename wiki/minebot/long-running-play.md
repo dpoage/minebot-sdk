@@ -1,8 +1,8 @@
 ---
 title: Notes and status for long-running play
-tags: [notes, memory, plan, status, restart, context, long, persistent, deaths]
+tags: [notes, memory, plan, status, restart, context, long, persistent, deaths, drowning, float, water, respawn, death, digest]
 mc_version: "26.1"
-verified_by: "notes and status checked on the dev server, 2026-10-18"
+verified_by: "notes and status checked on the dev server, 2026-10-18; the idle float by test/autonomic.test.ts; the death event, spawn point, and digest line by test/deaths.test.ts and test/digest.test.ts"
 ---
 
 A body can run for days. Your context can be reset or compacted at any time, and the body can restart. These things persist and help you pick up where you left off.
@@ -43,6 +43,30 @@ It also shows progress toward the body's milestones. The server's statistics gra
 
 The operator usually sets milestones. `minebot milestones` prints them. A set is an ordered list, such as "obtain 2 logs" then "craft a stone pickaxe".
 <!-- /milestones -->
+
+## While nothing is running
+
+The body keeps the player alive between your runs. While no run is going and the player's eyes are in water, the body holds jump, so the player floats up instead of sinking. A water block, kelp, seagrass, a bubble column, and a waterlogged block all count as water. Your own run keeps control: the body lets go of its jump when a run starts and holds nothing while the run slot is taken, so a program that dives stays down.
+
+## Deaths and where you wake up
+
+Mineflayer respawns the player after a death, so a death costs time and the items you carried, not the session. `minebot observe --brief` then shows the last death and your respawn point:
+
+```
+last death 5m ago at -286 42 104 (drowned) | respawn: bed at 12 60 -3
+```
+
+The full observation has `lastDeath` (`time`, `position`, `cause`) and `spawnPoint`: the bed or respawn anchor the server confirmed for this host session, `null` once the server reset it to the world spawn, and absent while the session has not heard either way. The brief line says `respawn: world spawn` for the reset.
+
+The `death` event data is `position`, `cause`, and `dropped`. `cause` is the server's death message, which names the player, such as `ana drowned`, and `dropped` lists each item you carried as `{ name, count }`. `minebot wait --types death` blocks until one arrives, and `minebot events` shows the deaths you missed.
+
+Read the cause before you walk back to the grave. Drowning, lava, and a fall kill again on the same route, and the dropped items do not wait forever. Take air, another route, or another task first.
+
+If you use the MCP tools, every response starts with one `[since your last call] ...` line when something happened since your previous call: a death with its cause and place, a respawn, a bot host restart, or a kick. Read it before you plan the next step.
+
+<!-- reflexes -->
+A reflex that the body switched off appears in the same line as `reflex <name> disabled: <reason>`. Two deaths during or just after a reflex's run switch it off; bind it again to turn it back on, and read `minebot/triggers` first.
+<!-- /reflexes -->
 
 ## When nothing changes
 

@@ -87,17 +87,17 @@ By default, the MCP server serves the core tools. The agent acts through runs, a
 
 | Core tool | What it does |
 | - | - |
-| `observe` | Returns position, vitals, armor, effects, biome, open sky, inventory, nearby creatures, and run state as one line. `full: true` returns the complete JSON. |
+| `observe` | Returns position, vitals, armor, effects, biome, open sky, inventory, nearby creatures, run state, the spawn point, and the last death as one line. `full: true` returns the complete JSON. |
 | `run_program` | Runs a module and blocks until it returns, fails, or times out. Its description holds the run reference for this body. |
 | `stop_program` | Aborts the running run and halts movement, pathfinding, and digging. |
 | `get_run` | Returns a finished run's record: status, logs, and error or result. `seq` is the `run` field in the `data` of the run's `program_finished` event. Do not pass the event's own `seq`: if that number is also the seq of a kept run, `get_run` returns that other run without an error. Without `seq`, it returns the most recent finished run. The body keeps the last 20 finished runs, so a caller that detached (a timeout, a killed CLI) reads the outcome here instead of running again. |
-| `get_events` | Returns chat, damage, deaths, joins, disconnects, and what the player did or noticed (items picked up, blocks broken and placed, low health or food, hostile creatures near) since a cursor. |
-| `wait_for` | Blocks until a matching event arrives (chat, whisper, system message, night, day, hostile_near, low_health, low_food, item_picked_up, ...) or the timeout, then returns it. The cheap way to idle. |
+| `get_events` | Returns chat, damage, deaths, respawns, joins, disconnects, and what the player did or noticed (items picked up, blocks broken and placed, low health, food, or air, hostile creatures near) since a cursor. |
+| `wait_for` | Blocks until a matching event arrives (chat, whisper, system message, night, day, hostile_near, low_health, low_food, low_oxygen, item_picked_up, ...) or the timeout, then returns it. The cheap way to idle. |
 | `send_chat` | Sends a public chat message or a command as the player, or whispers to one player when you pass `to` (sent as `/msg`, so a leading `/` stays text and runs no command). Works while a run is going. |
 | `api_reference` | Returns the run reference for this body: what a run is and what `ctx` holds. |
 | `builtin_docs` | Returns the reference for the built-in routines: call shapes, arguments, and results. Only on a body that offers built-ins. |
 | `call_routine` | Calls an action (a saved routine that `bind_routine` bound to a name) or a built-in routine by its `<module>.<routine>` name, with JSON arguments. Blocks until the call returns, fails, or times out, and answers like `run_program`. Only on a body that offers routines or built-ins. |
-| `bind_routine` | Binds a name to a saved routine, as an action or, on a body with reflexes, as a reflex. With `source`, it saves the module first. Only on a body that offers routines. |
+| `bind_routine` | Binds a name to a saved routine, as an action or, on a body with reflexes, as a reflex. With `source`, it saves the module first. A routine that the library does not hold is refused: ``no routine named "<name>" in this body's routine library; save it first: pass its TypeScript as `source` to bind_routine (or routine_save), or run `npx minebot routines save <file>.ts`, then bind again``. Only on a body that offers routines. |
 
 `minebot mcp --tools full` also serves every other operation as a tool of its own:
 
@@ -118,11 +118,19 @@ By default, the MCP server serves the core tools. The agent acts through runs, a
 
 The MCP server reads the body endpoint on every call. If the body restarts, the MCP server keeps working.
 
+Every MCP tool response starts with one `[since your last call] ...` line when something happened to the body since the previous response. The first response of an MCP process has no line: the digest starts at the end of the event log as it was then. The line reports deaths, a respawn point, a bot host restart, a kick, and a reflex that the body disabled. Nothing else adds it: damage, blocks, chat, and the `low_*` events stay in `get_events`. A single death reads `died once, last: drowned at 12 60 -3`; several read `died 3 times (drowned 2, fell 1), last: drowned at 12 60 -3`. A respawn after a death reads `respawned at 12 61 -3 (4 blocks away)`. A disabled reflex reads `reflex <name> disabled: <reason>`. A restart reads `bot host restarted`. The parts are joined with `; `. A response with no news has no line. The digest runs in the MCP process, so an MCP server that started before an upgrade answers without it until you restart that MCP server.
+
 The MCP server asks the body which features it offers: before it connects, and before every tool call. It lists the built-in tools (`builtin_docs`, `list_builtins`, `builtin_search`, `builtin_source`) only when the body offers built-ins, the routine tools (`bind_routine`, `list_routines`, `routine_save`, `routine_source`, `routine_versions`, `routine_revert`, `unbind_routine`) only when the body offers routines, `call_routine` when the body offers either, the wiki tools only when the wiki is not `off`, and `wiki_add_lesson` only in `write` mode. `bind_routine` takes the reflex fields (`on`, `when`, and so on) only when the body also has reflexes. When the answer changes, tools appear or disappear and the server sends `notifications/tools/list_changed`. The `run_program` and `status` descriptions and `minebot api` describe only the offered features. While the body cannot be reached, the MCP server lists only the ungated tools of its tool set: `observe`, `run_program`, `api_reference`, `stop_program`, `get_run`, `get_events`, `wait_for`, and `send_chat`, plus `status` and the `notes_*` tools with `--tools full`.
 
 ## Runs
 
-A run is a TypeScript or JavaScript module. The body evaluates it inside the bot host, against the live bot, afresh each time. The body strips the types of a TypeScript module and does not check them. The result of a run is its default export:
+A run is a TypeScript or JavaScript module. The body type-checks it, strips the types, and evaluates it inside the bot host, against the live bot, afresh each time. The check refuses a run that would fail when it runs: a name that is not defined, a call of a member that does not exist, or the wrong number of arguments. A refused run does not start, and its status is `error` with this first line:
+
+```
+the run did not start: the type check found 1 error(s) in your code. Fix them and run again, or put // @ts-nocheck as the first line to run it unchecked.
+```
+
+Under it comes one line per error, `line <L>:<C> <message>` with the line and column in your source. Under a missing member of `bot` that the code calls, the next line names the member to use instead, such as `bot.selectItem does not exist: use bot.equip(item, "hand")`. Other type errors, such as an unresolved module or a type mismatch, do not stop a run. A check that cannot answer is skipped, and the run goes on: without the `typescript` package, or after 3 seconds, the run's log gets one line, `type check skipped: <reason>`. A run that fails at run time on a `bot` member that is not a function gets the same kind of line at the end of its error, such as `bot.selectItem does not exist: use bot.equip(item, "hand")` or `bot.isRaining is a boolean, not a function: read bot.isRaining`. The result of a run is its default export:
 
 - `export default <value>`: the result is the value. A promise is awaited.
 - `export default async (ctx, args) => result`: the body calls the function with the run's context and the run's `args` (a JSON object, `{}` when none) and awaits the result.
@@ -134,7 +142,7 @@ A `return` statement outside a function is a syntax error, so a run cannot end w
 
 | Member | What it is |
 | - | - |
-| `bot` | The Mineflayer bot, with the pathfinder plugin loaded. |
+| `bot` | The Mineflayer bot, with the pathfinder plugin loaded. The body refuses a `bot.pathfinder.goto` or `setGoal` value that is not a goal instance, before the pathfinder sees it: `bot.pathfinder.goto needs a goal object, e.g. await bot.pathfinder.goto(new goals.GoalNear(x, y, z, 1)) with goals from "minebot-sdk/routine"; it got <value>`. `null` still clears the goal through `setGoal`. |
 | `log(...)` | Appends to the output of the run. `console.log` appends too, and still prints where the host prints. |
 | `sleep(ms)` | Waits, and rejects when the run is aborted. |
 | `signal` | An `AbortSignal` that fires on timeout or stop. |
@@ -174,21 +182,23 @@ export default async (ctx: RoutineContext): Promise<string> => {
 
 Send a run from a file with `minebot run walk-to-log.ts`, or from stdin. `--args <json>` passes the `args` object to the default function, and `--timeout <ms>` limits the run. Without `--args`, `args` is `{}`. `null` is an argument, not a missing one: the CLI, HTTP, and MCP refuse it because `args` is a JSON object.
 
-A run ends with a `program_finished` event. Its data holds `status`, `durationMs`, and `run`, the run's seq. A call adds `call`, the routine's name. A failed run adds `error`, the first line of the error message, and a run that returned a value adds `result`, the value as JSON. `error` and `result` stop at 200 characters, and a longer text ends with `…`. To read the whole outcome later, pass the event's `data.run` (not the event's own `seq`) to `minebot runs <seq>`, `GET /runs/<seq>`, or the `get_run` tool. Without a seq, each returns the most recent finished run. `GET /runs/<seq>` answers HTTP 404 when no run has finished or when the seq is not among the last 20 finished runs; the message lists the kept seqs. A reflex firing is not a kept run.
+A run ends with a `program_finished` event. Its data holds `status`, `durationMs`, and `run`, the run's seq. A call adds `call`, the routine's name. A failed run adds `error`, the first line of the error message, and a run that returned a value adds `result`, the value as JSON. `error` and `result` stop at 200 characters, and a longer text ends with `…`. To read the whole outcome later, pass the event's `data.run` (not the event's own `seq`) to `minebot runs <seq>`, `GET /runs/<seq>`, or the `get_run` tool. Without a seq, each returns the most recent finished run. `GET /runs/<seq>` answers HTTP 404 when no run has finished or when the seq is not among the last 20 finished runs; the message lists the kept seqs. A reflex firing is not a kept run. A run during which the player died carries `diedDuringRun`, the number of deaths, in its record and in the run's own answer, and the printed record adds `died during this run (2 times); observe shows the last death`.
 
-The run reference that `api_reference` returns (and that `run_program` carries) holds a complete run to copy and change, after the paragraph on imports and before the list of `ctx` members. On a body with routines that offers `inventory`, `sense`, or `move` (the first one found in that order), the run calls one routine of that module that only reads state or stops what is not running.
+The run reference that `api_reference` returns (and that `run_program` carries) holds a complete run to copy and change, after the paragraph on imports and before the list of `ctx` members. On a body with routines that offers `inventory`, `sense`, or `move` (the first one found in that order), the run calls one routine of that module that only reads state or stops what is not running. After the `ctx` members comes a table of the bot members that agents get wrong, with the real member in the right column, and, on a body that offers built-in routines, a table of goals with the built-in routine that already does each one. The reference writes a built-in call with `await`, as `await <module>.<routine>(ctx, { ... })`, and, on a body with routines, the import that brings it in.
 
-The body runs one run at a time: runs, calls, and reflex firings share one slot. A second request gets HTTP 409. The default timeout is 60 seconds; the maximum is 30 minutes. If a run times out or stops, the body halts pathfinding, digging, and movement keys, `ctx.sleep` rejects, and the body removes the `on` handlers that exist at that moment. The run then gets a grace period to end. If it does not end, the body kills the bot host and restarts it: the restart reconnects as the same player, and the run answers with its `status` (`stopped` or `timeout`) and an `error` that says the run did not stop. Every way to abort a run has this kill deadline: a stop, a timeout, and a preemption by a reflex. The body kills the host 5.5 seconds after the abort (the 5 second grace plus a 0.5 second margin), also when the run blocks the host with synchronous code after it catches the abort. The restart can start late: it waits 1 second, and the wait doubles after each restart in quick succession, up to 60 seconds. See [How it works](#how-it-works). Long loops must check `ctx.signal.aborted` so the run ends in time.
+The body runs one run at a time: runs, calls, and reflex firings share one slot. A second request gets HTTP 409, and the refusal names the holder: `busy: call_routine "count" has held the run slot for 42 s; wait_for ["program_finished"] or stop_program, then retry`. The holder is `run_program`, `call_routine "<name>"`, or `reflex "<name>"`, and the event to wait for is its `program_finished` or `reflex_finished`. The default timeout is 60 seconds; the maximum is 30 minutes. If a run times out or stops, the body halts pathfinding, digging, and movement keys, `ctx.sleep` rejects, and the body removes the `on` handlers that exist at that moment. The run then gets a grace period to end. If it does not end, the body kills the bot host and restarts it: the restart reconnects as the same player, and the run answers with its `status` (`stopped` or `timeout`) and an `error` that says the run did not stop. Every way to abort a run has this kill deadline: a stop, a timeout, and a preemption by a reflex. The body kills the host 5.5 seconds after the abort (the 5 second grace plus a 0.5 second margin), also when the run blocks the host with synchronous code after it catches the abort. The restart can start late: it waits 1 second, and the wait doubles after each restart in quick succession, up to 60 seconds. See [How it works](#how-it-works). Long loops must check `ctx.signal.aborted` so the run ends in time.
 
 `globalThis` keeps its values between runs. A restart of the body clears them, and so does a restart of the bot host, the process that runs the modules. The bot host restarts after a crash, and when the body kills it for a run that does not stop. A timer or a `bot.on` listener that you create yourself outlives the run, and one that throws after the run has ended restarts the bot host.
 
-The body does not add notices to run results. Facts stay in the observation: it keeps the open-sky view and `programsWithoutChange`, and `minebot observe --brief` adds `no change for N runs` when 3 or more runs in a row changed neither position nor inventory.
+An error that reaches the bot host while a run's code is active ends that run instead of restarting the host: a throw in a timer, a throw in a `bot.on("physicsTick")` listener, or a rejected promise that nothing awaited. A rejection that arrives as the run ends counts as the run's too, for one more macrotask; a throw from a timer after the run has ended is a crash, and the supervisor restarts the host. The run's status is `error`, and its error is the throw's message; for a rejection, the message gains the line ` - this promise was not awaited; add await before the call`. Whatever the run's end, the body halts pathfinding, digging, held controls, and the item in use before the next run starts.
 
-The observation reports, besides position, vitals, inventory, and nearby creatures: `armor` (head, chest, legs, feet) and `offhand`, `effects` (name, `amplifier` where 0 is level I, seconds `remaining`), the `biome`, the block the player is `standingOn`, the block in the line of sight within 5 blocks (`lookingAt`), and the `light` at the feet. `light.sky` is absent when the chunk has no sky light data. The brief line adds the biome, and lists armor, the offhand item, and effects only while there are some.
+The body adds no notice text to run results beyond the `diedDuringRun` count. Facts stay in the observation: it keeps the open-sky view and `programsWithoutChange`, and `minebot observe --brief` adds `no change for N runs` when 3 or more runs in a row changed neither position nor inventory.
+
+The observation reports, besides position, vitals, inventory, and nearby creatures: `armor` (head, chest, legs, feet) and `offhand`, `effects` (name, `amplifier` where 0 is level I, seconds `remaining`), the `biome`, the block the player is `standingOn`, the block in the line of sight within 5 blocks (`lookingAt`), and the `light` at the feet. `light.sky` is absent when the chunk has no sky light data. `spawnPoint` is the bed or respawn anchor the server confirmed for this host session, `null` once the server reset it to the world spawn, and absent while this host session has not heard either way. `lastDeath` is the most recent death of this host session: its `time`, `position`, and `cause`. The brief line adds the biome, and lists armor, the offhand item, and effects only while there are some; it also adds `last death 5m ago at -286 42 104 (drowned)` and `respawn: bed at 12 60 -3`, or `respawn: world spawn`.
 
 Run `npm run minebot -- api` to print the run reference for a body. The `run_program` tool description contains the same text.
 
-Besides chat, damage, and deaths, the event log records what the player does and notices. Events about the player's own actions come from the actions themselves, so other players' actions and world updates do not produce them.
+Besides chat, damage, and deaths, the event log records what the player does and notices, its vitals crossing a threshold, and its spawn point. Events about the player's own actions come from the actions themselves, so other players' actions and world updates do not produce them.
 
 | Event | Data | When |
 | - | - | - |
@@ -199,6 +209,10 @@ Besides chat, damage, and deaths, the event log records what the player does and
 | `hostile_near` | `name`, `id`, `distance` | A hostile creature comes within 16 blocks. Once per creature: it fires again only after the creature was 32 blocks away or gone. Enderman, zombified piglin, and strider do not count. |
 | `low_health` | `health` | Health falls below 8. It fires again after health was back at 8 or more. |
 | `low_food` | `food` | Food falls below 6. It fires again after food was back at 6 or more. |
+| `low_oxygen` | `oxygen` | Air falls below 10 of 20. It fires again after air was back at 10 or more. |
+| `death` | `position`, `cause`, `dropped` | The player dies. `cause` is the server's death message, which names the player, such as `ana drowned`, and is absent when the server sent none. `dropped` lists the items the player carried as `{ name, count }`, and is absent when it carried none. |
+| `spawn` | `position` | The player spawns, after a join or a death. |
+| `spawn_reset` | `{}` | The server reset the player's spawn point to the world spawn. |
 
 ## Built-in routines
 
@@ -220,7 +234,7 @@ The SDK ships 19 built-in routine modules in `src/routines/`. Each module holds 
 | `farm` | | `till`, `plant`, `harvest`, `breed` |
 | `bucket` | | `fill`, `empty` |
 | `gatherer` | move, sense, dig, inventory, items | `gather`, `collectDrops` |
-| `crafter` | move, sense, place, inventory, craft, items, furnace | `make` |
+| `crafter` | move, sense, place, inventory, craft, items, furnace | `plan`, `make` |
 | `builder` | move, sense, dig, place, inventory | `materials`, `build`, `check`, `line`, `arc`, `fill`, `box`, `combine` |
 | `explorer` | move, sense, dig | `scan`, `explore`, `remember`, `places`, `waypoints`, `travel`, `surface` |
 | `social` | move, sense, inventory | `say`, `waitForChat`, `players`, `follow`, `give`, `gesture`, `sign`, `book` |
@@ -230,10 +244,15 @@ The first thirteen modules do one thing each. The last six build on them through
 
 What the routines do that a first call does not show:
 
-- `move.to` fails fast. After 12 seconds with no progress (no movement, no digging, and no block change near the bot), it throws `stuck at ...`. When the pathfinder ends without a way within `range`, it throws `could not reach ...` and names the cause.
+- `move.to` fails fast. After 12 seconds with no progress (no movement, no digging, and no block change near the bot), it throws `stuck at ...`. When the pathfinder ends without a way within `range`, it throws `could not reach ...` and names the cause. It throws `out of air at ...` when the breath bar falls under 10, `the path ended N blocks short` when a finished path leaves the player short, and `every way down is a drop of N blocks (the pathfinder drops at most 4) - dig or build stairs down, or pick a target on this level` when every route needs a deeper fall than the pathfinder takes.
+- `move.to` takes `allowDigOwnBuilds` (default `false`). The pathfinder never breaks a block that this body placed in this host session, and never scaffolds a cell under one within 16 blocks. A walk that is blocked by one throws `could not reach (10, 64, 0): every way goes through blocks you placed (e.g. oak_planks at (4, 64, 0)); open a door, break one yourself, or call move.to again with allowDigOwnBuilds: true`. Pass `allowDigOwnBuilds: true` to cut through what you built. The record of what the body placed lasts one host session: a bot host restart forgets it.
+- `dig.dig` reports success only after the server confirms the break. When the server does not confirm within 3 s, the call throws and the block is still there: `the server did not break <block> at <pos> within 3 s although it is in reach (...)`. A block whose box is 5.5 blocks or more from the eyes throws `the server refused to dig <block> at <pos>: its box is N blocks from your eyes and the server digs only closer than 5.5. Walk next to it with move.to({ position: { x: <x>, y: <y>, z: <z> }, range: 3 }), then dig again.`. Thin blocks, such as a torch, a sign, a flower, or short grass, are dug the same way as stone.
+- `survival.sleep` fails in daylight with `it is not night (time of day N); a bed works from 12541 to 23458, or in a thunderstorm; the window opens in N s. To wait for it, call survival.sleep with { wait: true } and a call timeout_ms of at least <ms>`. With `wait: true` it walks to the bed, waits there up to `timeoutMs` (default 660000), and sleeps when the window opens. Give the call a `timeout_ms` above the wait: the wait logs `... If this call's timeout_ms is shorter, it is cut off first: call again with timeout_ms >= <ms>`. A clock that never reaches night fails at once.
+- `combat.attack` returns `reason` when `killed` is false: the target is gone, still in reach when the time ran out, it outran you, or the way to it is blocked. Each reason ends with what to do next.
+- `items.recipes` returns every recipe for an item, one per variant, so `stick` lists 13. `crafter.plan({ item, count })` is the dry run: it returns `{ item, count, have, missing, alternatives }` and acts on nothing. `missing` holds the raw materials still to gather, `{}` means `crafter.make` can make the item now, and `alternatives` lists a material that would do instead.
 - `place.place` does not refuse a placement up front because another body stands in the cell. It tries, and then throws, with the cause, when the block does not end up in every cell it needs. It accepts the variants that placing an item gives (`wall_torch` for `torch`, `oak_wall_sign` for `oak_sign`). For a block of two cells (a door, a bed), it verifies both cells. It sneaks when it places against a block that opens a window or takes the item, such as a crafting table or a chest. It walks closer only when no neighbor face is within 5.0 blocks of the eyes.
 - `gatherer.collectDrops` returns `{ reached, unreachable }`. `reached` counts the positions it walked to (several stacks in one block count once), and `unreachable` lists the positions it could not reach.
-- `craft.craft` waits for the inventory to settle after the craft, and returns how many items the inventory gained. When the inventory has no room for the result, it throws `InventoryFullError`: the items fell at the bot's feet, and the message says how to recover them. When nothing arrives, it throws `crafted 0 of ...`.
+- `craft.craft` closes a window that earlier code left open before it crafts, and logs `closed the open <type> window first`. It waits for the inventory to settle after the craft, and returns how many items the inventory gained. When the inventory has no room for the result, it throws `InventoryFullError`: the items fell at the bot's feet, and the message says how to recover them. When nothing arrives, it throws `crafted 0 of ...`.
 - `builder.line`, `builder.arc`, `builder.fill`, `builder.box`, and `builder.combine` make a blueprint from a few numbers and return `{ origin, blueprint }` in world coordinates. `builder.build` and `builder.check` take that result as it is: `await builder.build(ctx, await builder.box(ctx, { from, to, wall: "cobblestone", roof: "cobblestone" }))`. A blueprint cell of `air` digs out the block there; it needs no material.
 - `trade.offers` walks to the nearest villager or wandering trader and returns its offers. `trade.buy` makes offer number `index` up to `times` times, and returns `{ traded, gave, got, shortfall? }`, measured from the inventory. `shortfall` says why a run that traded fewer than `times` times stopped early. When no trade happens at all, `trade.buy` throws and names the cause, such as `did not trade: the inventory has no room ...`.
 
@@ -409,6 +428,7 @@ A reflex run is a run, so the body runs one at a time. A firing that arrives whi
 
 - Each firing adds a `reflex_fired { name, event }` event and, when the run ends, `reflex_finished { name, status, durationMs, error?, logs? }`. A reflex run ends with `reflex_finished` and not with `program_finished`. An event that arrives while the body is not connected fires nothing.
 - A reflex that fails 3 times in a row (an error or a timeout) disables itself and adds `reflex_disabled { name, failures, reason }`. A failure never affects the body. No route enables a reflex again: bind it again. A new bind replaces the reflex, resets its counts, and enables it.
+- Deaths disable a reflex too. A death counts against a reflex when it falls during that reflex's firing or within 180 seconds after the firing ends. When 2 counted deaths fall within 10 minutes, the body disables the reflex and adds `reflex_disabled { name, failures, reason }` with the reason `the player died 2 times within 10 min during or right after its runs (last: drowned at 12 63 -4); bind it again with bind_routine and its full settings (list_routines shows them) to turn it back on`. A death that this breaker charges does not fire the reflex it disabled. Bind the reflex again to turn it back on. The rule exists for reflexes that walk the player back to a grave: an underwater grave that drowns the player again is not worth the loot.
 - Reflexes persist in the state directory, so they survive a restart of the body. The reflex statistics (fired counts and last status) restart at zero.
 - One name belongs to one action or reflex at a time. A bind that clashes with a name of another kind gets HTTP 409. Run `unbind` first.
 - A body keeps at most 50 reflexes. A body started with `--no-reflexes` has none, and `bind reflex` is unavailable there.
@@ -449,9 +469,9 @@ npm test
 
 `init` writes `package.json` (dependency `minebot-sdk`, dev dependencies `typescript` and `@types/node`), a strict `tsconfig.json`, `routines/hello.ts` (an example routine that says a message in chat, reports where the player stands, and counts the matching items in the bot's inventory itself, with no built-in), `runs/say-hello.ts` (a run that calls it), `test/hello.test.ts` (a routine test on the harness, run with `npm test`), `.gitignore`, and a README. It never overwrites a file that exists.
 
-A routine imports its helpers from `"minebot-sdk/routine"` and the built-in modules from `"minebot-sdk/routines/<module>"`. A run is a module like a routine, so it may use top-level `await` and `export default`. Its relative imports (`./hello.ts`) name modules of the body's library. The `tsconfig.json` lists `routines` and `runs` in `rootDirs`, so `tsc` reads a run's `./hello.ts` as `routines/hello.ts`. Give a run a file name that no routine has: `runs/hello.ts` would import itself. `minebot run` sends the file as it is, and the body strips the types.
+A routine imports its helpers from `"minebot-sdk/routine"` and the built-in modules from `"minebot-sdk/routines/<module>"`. A run is a module like a routine, so it may use top-level `await` and `export default`. Its relative imports (`./hello.ts`) name modules of the body's library. The `tsconfig.json` lists `routines` and `runs` in `rootDirs`, so `tsc` reads a run's `./hello.ts` as `routines/hello.ts`. Give a run a file name that no routine has: `runs/hello.ts` would import itself. `minebot run` sends the file as it is, and the body type-checks it before it runs and strips the types.
 
-The tsconfig uses the same compiler options as the check that the body runs when you save a routine (`erasableSyntaxOnly`, `verbatimModuleSyntax`, and the rest), so `npx tsc` and the body agree. `minebot init` does not upgrade a workspace: see [Migrating from kits, triggers and programs](#migrating-from-kits-triggers-and-programs).
+The tsconfig uses the same compiler options as the two checks that the body runs: the one on a routine save, and the one before a run starts (`erasableSyntaxOnly`, `verbatimModuleSyntax`, and the rest), so `npx tsc` and the body agree. `minebot init` does not upgrade a workspace: see [Migrating from kits, triggers and programs](#migrating-from-kits-triggers-and-programs).
 
 ## Test a routine
 
@@ -511,7 +531,9 @@ A body can run for days or weeks. The agent's context can be reset, the agent ha
 | Brief observation | The observation as one line, to keep the agent's context small. |
 | `explorer.surface` | Digs a staircase to open sky when the player is trapped underground. It tunnels sideways when a stair step is impossible, swims up through water, and avoids lava. Under water it checks the air supply first: it does not start a dig that the air cannot cover, and swims to air instead. |
 | `explorer.remember`, `explorer.places` | Typed place memory. `remember({ name, kind, tags, note, contents })` saves a chest, bed, farm, ore, base, portal, or other place with a note and, for a chest, its contents. `places({ kind, near, radius, limit })` lists them nearest first. `waypoints` and `travel` use the same places, and a store written before places existed loads as places of kind `other`. |
-| Blocking wait | `minebot wait` (also `POST /wait` and the `wait_for` MCP tool) blocks until a matching event arrives: chat or whisper from a player, a system message, `night`, `day`, `hostile_near`, `low_health`, `low_food`, `item_picked_up`, or any other event. Filters: types, sender, a regex over the message. The cheap way to idle. |
+| Blocking wait | `minebot wait` (also `POST /wait` and the `wait_for` MCP tool) blocks until a matching event arrives: chat or whisper from a player, a system message, `night`, `day`, `hostile_near`, `low_health`, `low_food`, `low_oxygen`, `item_picked_up`, or any other event. Filters: types, sender, a regex over the message. The cheap way to idle. |
+| Idle float | While no run or reflex holds the run slot and the player's eyes are in water, the body holds jump, so the player floats up instead of sinking and drowning between your calls. A water block, kelp, seagrass, a bubble column, and a waterlogged block all count. A run that dives keeps its own control: the float lets go of its jump when a run starts and holds nothing while the slot is taken. |
+| Death awareness | The `death` event carries the death's `position`, the server's `cause`, and the `dropped` items. `observe` reports `spawnPoint` and `lastDeath`, and the MCP tools report a death since your last call. Two deaths during or just after a reflex's run disable that reflex. See [Reflexes](#reflexes). |
 
 ```sh
 minebot notes set plan --bot ana "1. wood 2. stone tools 3. shelter"
@@ -532,6 +554,14 @@ Milestones count what the player obtained, from the statistics. `picked_up` alon
 
 If the connection drops, the body reconnects after 5 seconds. Each failed attempt doubles the wait, up to 5 minutes. A session that lasted at least 60 seconds resets the wait; a server that kicks the body right after it joins therefore sees the waits grow instead of a reconnect every 5 seconds. The event log records each scheduled reconnect.
 
+### After an upgrade
+
+An upgrade changes the code that the body and the MCP server run, and a running process keeps the code it started with. Do all three steps:
+
+1. Install the new version, and, in a checkout, run `npm run build` to compile `src/` to `dist/`. An installed package ships compiled JavaScript, so a rebuild is only for a checkout.
+2. Restart the body daemon (`minebot body`). Its bot host restarts with it: the player reconnects as the same player, and `globalThis`, the running run, and the reflex statistics are lost. Notes, routines, bindings, stores, and the other state files stay.
+3. Restart the agent's MCP session. A running MCP server keeps its old tool descriptions and adds no `[since your last call]` line until it restarts.
+
 ## Wiki
 
 The wiki is a set of markdown pages in `wiki/` about game mechanics, step-by-step flows, and quirks of Minecraft 26.1 and Mineflayer. Agents search it before they guess. For example, a search for the error text `Server refused to place crafting_table` finds the page that explains it.
@@ -551,6 +581,7 @@ Each page shows a status:
 - `stale`: someone confirmed the page on another version.
 - `unverified`: general knowledge that nobody has checked in game.
 - `lesson`: an agent wrote it, and nobody has reviewed it.
+- `stale-lesson`: an agent wrote it, and a module that it names changed since. The page then carries one `[stale: <module> changed since this lesson was written; check it against builtins docs <module> before relying on it]` line per module.
 
 The body's `--wiki` option controls access:
 
@@ -559,6 +590,8 @@ The body's `--wiki` option controls access:
 - `write`: the agent can also add lessons.
 
 Lessons go to `--lessons <dir>` (default `.minebot/lessons/`). Bodies that share the directory share their lessons: a body reads lessons that others add while it runs, and a lesson never overwrites another one (a taken name gets a number). The wiki mentions lessons to an agent only when the body is in `write` mode or lessons exist.
+
+A lesson records the SDK version it was written against, and the identity of each built-in module or shipped package that its title or tags name: a tag that is the module's name, or the name as a whole word in the title. When such a module changed since, the body marks the lesson `stale-lesson` and puts the `[stale: ...]` line above the body, so the reader checks the module's reference before trusting the lesson. A lesson without a record is never marked.
 
 Some pages name a check program in `wiki/checks/`. Run the checks against a live body after you change the Minecraft version or upgrade Mineflayer:
 

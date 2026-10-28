@@ -38,4 +38,6 @@ A bed is 3 wool of one color above 3 planks of one kind. Search `white_bed recip
 
 <!-- builtins:survival -->
 `minebot call survival.sleep` goes to the nearest bed and sleeps. `minebot call survival.sleep --args '{"at":[10,64,5]}'` uses the bed at that position. `minebot call survival.wake` gets up.
+
+In daylight the call fails and says how many seconds until night. `minebot call survival.sleep --args '{"wait":true}' --timeout 700000` walks to the bed, waits there, and sleeps when the window opens; the call needs a timeout above the wait or it is cut off first.
 <!-- /builtins:survival -->

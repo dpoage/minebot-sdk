@@ -70,6 +70,8 @@ A save prints the type check: `passed`, `failed` with the errors, or `skipped` w
 
 No command deletes a routine. `minebot unbind <name>` removes a binding and keeps the routine.
 
+A bind refuses a routine that the library does not hold, and the error says how to save it: ``no routine named "<name>" in this body's routine library; save it first: pass its TypeScript as `source` to bind_routine (or routine_save), or run `npx minebot routines save <file>.ts`, then bind again``. Save the module, then bind again.
+
 ## Calls
 
 `minebot call <name>` runs a bound action and prints the status, the logs, and the result. A call is a run:
@@ -101,7 +103,7 @@ minebot routines save note-chat.ts
 minebot bind reflex noter note-chat --on chat --cooldown 5000
 ```
 
-A reflex takes the options `--when`, `--from`, `--match`, `--cooldown`, `--timeout`, `--priority`, and `--preempt`. A reflex that fails three times in a row disables itself. Bind it again to turn it on: a new bind replaces the reflex and resets its counts. `minebot routines` lists the reflexes with what each did since the body started.
+A reflex takes the options `--when`, `--from`, `--match`, `--cooldown`, `--timeout`, `--priority`, and `--preempt`. A reflex that fails three times in a row disables itself, and two deaths during or just after its runs disable it too. Bind it again to turn it on: a new bind replaces the reflex and resets its counts. `minebot routines` lists the reflexes with what each did since the body started. See `minebot/triggers` for the death rule.
 
 An action and a reflex share one namespace. A bind with a name that the other kind holds is refused; run `minebot unbind <name>` first. A body keeps at most 50 reflexes. See `minebot/triggers` for when a reflex runs, its priority, and preemption.
 <!-- /reflexes -->
