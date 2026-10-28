@@ -24,6 +24,8 @@ export interface RunResult {
   error?: string;
   logs: string;
   durationMs: number;
+  /** How many times the player died while the run was active; absent when it did not. `observe` shows the last death. */
+  diedDuringRun?: number;
 }
 
 /**
@@ -44,6 +46,8 @@ export interface RunRecord {
   call?: { name: string; routine?: string; args: unknown };
   /** The args a module run was given. */
   args?: unknown;
+  /** How many times the player died while the run was active; absent when it did not. */
+  diedDuringRun?: number;
 }
 
 export interface BodyEvent {
@@ -84,6 +88,15 @@ export interface Vec {
   x: number;
   y: number;
   z: number;
+}
+
+/** The most recent death of this host session, as the observation reports it. */
+export interface DeathSummary {
+  /** ISO time the body saw the death. */
+  time: string;
+  position: Vec;
+  /** The server's death message, e.g. "Fartmastery drowned"; absent when the server sent none. */
+  cause?: string;
 }
 
 export interface ItemSummary {
@@ -149,6 +162,13 @@ export type Observation =
       sky: { open: boolean; cover?: string; solidAbove: number; waterAbove: number };
       /** Runs and calls in a row that ended with the same position and inventory. */
       programsWithoutChange: number;
+      /** The most recent death of this host session; absent until the player dies. */
+      lastDeath?: DeathSummary;
+      /**
+       * Where the player respawns: a bed or respawn anchor the server confirmed (the position it was set
+       * at); `null` once the server reset it to the world spawn; absent while this host session has not heard.
+       */
+      spawnPoint?: Vec | null;
     };
 
 export interface StatusResponse {
@@ -178,14 +198,17 @@ export type WikiMode = "off" | "read" | "write";
  * - stale: checked on another version; recheck before trusting.
  * - unverified: general knowledge, never checked in game.
  * - lesson: written by an agent; nobody has reviewed it.
+ * - stale-lesson: a lesson that names a module which changed since the lesson was written; `stale` says which and what to check.
  */
-export type PageStatus = "verified" | "stale" | "unverified" | "lesson";
+export type PageStatus = "verified" | "stale" | "unverified" | "lesson" | "stale-lesson";
 
 export interface WikiPage {
   /** Path without extension, e.g. `quirks/drops-fall-out-of-reach` or `lessons/end-crystals`. */
   id: string;
   meta: PageMeta;
   status: PageStatus;
+  /** Present exactly when `status` is `stale-lesson`: one `[stale: <module> changed since this lesson was written; check it against ... before relying on it]` mark per changed module. */
+  stale?: string;
   body: string;
 }
 
@@ -194,6 +217,8 @@ export interface PageSummary {
   title: string;
   tags: string[];
   status: PageStatus;
+  /** Present exactly when `status` is `stale-lesson`; the same text as `WikiPage.stale`. */
+  stale?: string;
 }
 
 export interface SearchHit extends PageSummary {

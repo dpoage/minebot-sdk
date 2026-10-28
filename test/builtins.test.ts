@@ -102,8 +102,8 @@ describe("reference text", () => {
     const docs = new Builtins({ stats: memoryStats() }).docs();
     for (const [module, name, routine] of ROUTINES) {
       const { keys, returns } = declared(routine);
-      // A routine that takes no arguments is called with the context alone.
-      const shape = keys.length === 0 ? `${module}.${name}(ctx)` : `${module}.${name}(ctx, { ${keys.map((key) => `${key.name}${key.optional ? "?" : ""}`).join(", ")} })`;
+      // A routine that takes no arguments is called with the context alone; every shape starts with `await` (P2.4).
+      const shape = keys.length === 0 ? `await ${module}.${name}(ctx)` : `await ${module}.${name}(ctx, { ${keys.map((key) => `${key.name}${key.optional ? "?" : ""}`).join(", ")} })`;
       const text = section(docs, shape);
       const lines = text.split("\n");
       assert.equal(lines[1], metaOf(routine)!.description, `${shape} description`);
@@ -137,7 +137,7 @@ describe("reference text", () => {
     routines.to = defineRoutine({ name: "move.to", description: "Walks somewhere else.", args: z.object({ position: z.number().default(123), speed: z.string().optional() }), returns: z.boolean() }, () => true);
     try {
       const docs = new Builtins({ offer: ["move"], stats: memoryStats() }).docs(["move"]);
-      assert.match(docs, /### move\.to\(ctx, \{ position\?, speed\? \}\)\nWalks somewhere else\.\n- position\?: number \(default 123\)\n- speed\?: string\nReturns: boolean/);
+      assert.match(docs, /### await move\.to\(ctx, \{ position\?, speed\? \}\)\nWalks somewhere else\.\n- position\?: number \(default 123\)\n- speed\?: string\nReturns: boolean/);
     } finally {
       routines.to = original;
     }
@@ -506,7 +506,7 @@ for (const name of builtins.offered) {
   assert.equal(builtins.source(name), shipped, name);
   assert.match(shipped, /defineRoutine/);
 }
-assert.match(builtins.docs(["move"]), /^### move\\.to\\(ctx, \\{ position/m);
+assert.match(builtins.docs(["move"]), /^### await move\\.to\\(ctx, \\{ position/m);
 console.log("published layout ok");
 `,
       );

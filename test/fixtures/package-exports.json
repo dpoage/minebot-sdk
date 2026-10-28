@@ -1,5 +1,6 @@
 {
   "client": [
+    "BOT_FACTS",
     "BindInput",
     "BindingName",
     "BodyApiError",
@@ -19,6 +20,7 @@
     "DEFAULT_TRIGGER_TIMEOUT_MS",
     "EndpointSchema",
     "EventsQuery",
+    "GOAL_BUILTINS",
     "KEPT_RUNS",
     "LessonInput",
     "MAX_NOTES",

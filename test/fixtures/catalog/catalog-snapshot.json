@@ -6,7 +6,7 @@
     "routines": [
       {
         "name": "to",
-        "description": "Walk within `range` blocks of `position` ({x,y,z} or [x,y,z]) and stop; the feet, or the block above them, within `range` counts as there. Throws, after stopping pathfinding, when `timeoutMs` passes, when 12 s go by with no progress (no movement, digging, or nearby block change: 'stuck at ...'), or when the pathfinder ends without a way within `range`, finding none or running out of search time ('could not reach ...'). Returns where the player stands once stopped.",
+        "description": "Walk within `range` blocks of `position` ({x,y,z} or [x,y,z]) and stop; the feet, or the block above them, within `range` counts as there. Throws, after stopping pathfinding, when `timeoutMs` passes, when 12 s go by with no progress (no movement, digging, or nearby block change: 'stuck at ...'), when the breath bar falls under 10 ('out of air ...'), when a finished path leaves the player short ('the path ended ... blocks short'), or when the pathfinder ends without a way within `range`, finding none or running out of search time ('could not reach ...'). A missing path names what blocked the way when a relaxed search finds one: a drop taller than the pathfinder falls, or a block the bot placed itself (`allowDigOwnBuilds: true` walks through those). Returns where the player stands once stopped.",
         "args": {
           "$schema": "https://json-schema.org/draft/2020-12/schema",
           "type": "object",
@@ -61,6 +61,10 @@
               "type": "integer",
               "exclusiveMinimum": 0,
               "maximum": 9007199254740991
+            },
+            "allowDigOwnBuilds": {
+              "default": false,
+              "type": "boolean"
             }
           },
           "required": [
@@ -237,7 +241,7 @@
     "routines": [
       {
         "name": "dig",
-        "description": "Dig the block at `at` ({x,y,z} or [x,y,z]), equipping the best tool and failing with the tools it needs when the inventory lacks them. Digs on while gravel or sand refills the position. Returns { block } — the last block dug, or null when the position was already clear.",
+        "description": "Dig the block at `at` ({x,y,z} or [x,y,z]) and wait for the server to confirm the break: signs, torches, flowers and grass are dug like stone. It does not walk: a block whose box is 5.5 blocks or more from your eyes (the server's reach) throws naming the block, the distance and the move.to call to make first. Equips the best tool and fails with the tools it needs when the inventory lacks them. Throws when the server does not break the block within 3 s (the block is then still there). Digs on while gravel or sand refills the position. Returns { block } — the last block dug, or null when the position was already clear (air or fluid).",
         "args": {
           "$schema": "https://json-schema.org/draft/2020-12/schema",
           "type": "object",
@@ -499,7 +503,7 @@
     "routines": [
       {
         "name": "craft",
-        "description": "Craft at least `count` (default 1) more of `item` from the inventory. A recipe that needs a crafting table uses one within 4 blocks, and the call fails when there is none. Returns how many the inventory gained once the result settled, and fails when that is none: when the inventory has no room for the result, the error says it fell at the bot's feet and how to recover it, and otherwise the error names the recipe's inputs.",
+        "description": "Craft at least `count` (default 1) more of `item` from the inventory. A window left open (a crafting table or chest) is closed before the craft runs. A recipe that needs a crafting table uses one within 4 blocks, and the call fails when there is none. Returns how many the inventory gained once the result settled, and fails when that is none: when the inventory has no room for the result, the error says it fell at the bot's feet and how to recover it, and otherwise the error names the recipe's inputs.",
         "args": {
           "$schema": "https://json-schema.org/draft/2020-12/schema",
           "type": "object",
@@ -563,7 +567,7 @@
     "routines": [
       {
         "name": "recipes",
-        "description": "Up to 3 recipes for `item`: [{ makes, requiresTable, ingredients: { name: count } }]. Fails for an unknown item.",
+        "description": "Every recipe for `item`, one per variant (a tagged ingredient such as planks or logs gives one recipe per wood, so stick lists 13): [{ makes, requiresTable, ingredients: { name: count } }]. Fails for an unknown item. To see what you still need to gather for it, call crafter.plan.",
         "args": {
           "$schema": "https://json-schema.org/draft/2020-12/schema",
           "type": "object",
@@ -1250,7 +1254,7 @@
       },
       {
         "name": "sleep",
-        "description": "Go to bed at `at` ({x,y,z} or [x,y,z]), or the nearest bed within 16 blocks, and sleep. Works at night (time of day 12541 to 23458) and in thunderstorms; fails with the reason otherwise, or when monsters are near the bed or the bed is occupied. Returns { sleeping, at } once asleep. Call `wake` or wait for morning to get up.",
+        "description": "Go to bed at `at` ({x,y,z} or [x,y,z]), or the nearest bed within 16 blocks, and sleep. A bed works at night (time of day 12541 to 23458) and in thunderstorms; at other times it fails saying how many seconds until night. With `wait: true` it walks to the bed, waits there (at most `timeoutMs`, default 660000), and sleeps when night comes; give the call a timeout_ms longer than the wait (up to 11 minutes) or it is cut off first. It fails at once when the clock is stopped or the wait exceeds `timeoutMs`, and when monsters are near the bed or the bed is occupied. Returns { sleeping, at } once asleep. Call `wake` or wait for morning to get up.",
         "args": {
           "$schema": "https://json-schema.org/draft/2020-12/schema",
           "type": "object",
@@ -1294,6 +1298,16 @@
                   "maxItems": 3
                 }
               ]
+            },
+            "wait": {
+              "default": false,
+              "type": "boolean"
+            },
+            "timeoutMs": {
+              "default": 660000,
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
             }
           }
         },
@@ -1404,7 +1418,7 @@
     "routines": [
       {
         "name": "attack",
-        "description": "Hit one creature until it dies. `target` is an entity id or a name ('zombie'; the nearest match, a player's username works too). Walks up to it, holds the best sword or axe from the inventory, and hits once per weapon cooldown. Gives up after `timeoutMs` (default 20000). Returns { target, killed, damageTaken, weapon }.",
+        "description": "Hit one creature until it dies. `target` is an entity id or a name ('zombie'; the nearest match, a player's username works too). Walks up to it, holds the best sword or axe from the inventory, and hits once per weapon cooldown. Gives up after `timeoutMs` (default 20000). Returns { target, killed, damageTaken, weapon, reason }; when `killed` is false, `reason` is one line that names why it gave up (gone, still in reach, outran, blocked) and what to do next.",
         "args": {
           "$schema": "https://json-schema.org/draft/2020-12/schema",
           "type": "object",
@@ -1451,6 +1465,9 @@
                 "string",
                 "null"
               ]
+            },
+            "reason": {
+              "type": "string"
             }
           },
           "required": [
@@ -2370,7 +2387,7 @@
   },
   {
     "name": "crafter",
-    "description": "Craft and smelt item chains from the inventory, finding or placing a crafting table or furnace when needed.",
+    "description": "Plan, craft, and smelt item chains: crafter.plan lists the raw materials still missing for an item; crafter.make crafts and smelts it from the inventory, finding or placing a crafting table or furnace when needed.",
     "uses": [
       "move",
       "sense",
@@ -2406,6 +2423,73 @@
         "returns": {
           "$schema": "https://json-schema.org/draft/2020-12/schema",
           "type": "number"
+        }
+      },
+      {
+        "name": "plan",
+        "description": "Say what `count` (default 1) of `item` still needs, without doing anything: a dry run of crafter.make over the inventory and the crafting table and furnace within 32 blocks. Returns { item, count, have, missing, alternatives }. `have` is what the inventory holds now. `missing` is { item: n } of the raw materials still to gather (oak_log, cobblestone, raw_iron, coal, ...), counting what a crafting table or furnace you lack would take (logs; 8 cobblestone) and coal for fuel (charcoal, planks, and logs burn too); `{}` means crafter.make can make it now. An ore block is never named: mine it for its raw item. Where several recipes need the same amount it names the commonest material, and `alternatives` lists the others that would do instead ({ cobblestone: [cobbled_deepslate, blackstone] }). Fails for an unknown item.",
+        "args": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "item": {
+              "type": "string",
+              "minLength": 1
+            },
+            "count": {
+              "default": 1,
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            }
+          },
+          "required": [
+            "item"
+          ]
+        },
+        "returns": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "item": {
+              "type": "string"
+            },
+            "count": {
+              "type": "number"
+            },
+            "have": {
+              "type": "number"
+            },
+            "missing": {
+              "type": "object",
+              "propertyNames": {
+                "type": "string"
+              },
+              "additionalProperties": {
+                "type": "number"
+              }
+            },
+            "alternatives": {
+              "type": "object",
+              "propertyNames": {
+                "type": "string"
+              },
+              "additionalProperties": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "required": [
+            "item",
+            "count",
+            "have",
+            "missing",
+            "alternatives"
+          ],
+          "additionalProperties": false
         }
       }
     ]

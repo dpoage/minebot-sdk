@@ -1,7 +1,8 @@
 // Type-checking a routine when it is saved: the routine check types a library module as the body loads it.
 // TypeScript is an optional peer dependency: without it the check is skipped and says so. It never blocks a save.
 import { execFile } from "node:child_process";
-import { access, copyFile, mkdir, mkdtemp, readdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { rmSync } from "node:fs";
+import { access, copyFile, mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -10,6 +11,7 @@ import { PACKAGE_ROOT } from "../package.ts";
 import type { TypeCheck } from "../protocol/index.ts";
 import { ROUTINE_COMPILER_OPTIONS } from "../protocol/routine-tsconfig.ts";
 import { RoutineLibrary } from "./routines/library.ts";
+import { checkedText, type Diagnostic, lineColumn, parseDiagnostics, refusing, renderRefusal, RUN_CHECK_FILE } from "./typecheck-run.ts";
 
 const run = promisify(execFile);
 
@@ -39,28 +41,28 @@ function diagnosticsFor(lines: readonly string[], file: string): string[] {
   return diagnostics.map((group) => group.join("\n"));
 }
 
-/** Runs the compiler on the project in `dir` and reads its answer for `file`. */
-async function compile(tsc: string, dir: string, file: string, signal: AbortSignal | undefined): Promise<TypeCheck> {
+/** What the compiler did with a project: passed it, could not answer, or printed diagnostics (`notRun` says why its exit was not a compile). */
+type Compiled = { status: "passed" } | { status: "skipped"; reason: string } | { status: "output"; lines: string[]; notRun?: string };
+
+/** Runs the compiler on the project in `dir`; it is killed at `timeoutMs` or when `signal` aborts, and either is a skip. */
+async function compile(tsc: string, dir: string, signal: AbortSignal | undefined, timeoutMs: number): Promise<Compiled> {
   try {
-    await run(process.execPath, [tsc, "-p", dir, "--pretty", "false"], { cwd: dir, timeout: TIMEOUT_MS, signal, maxBuffer: 4 * 1024 * 1024 });
+    await run(process.execPath, [tsc, "-p", dir, "--pretty", "false"], { cwd: dir, timeout: timeoutMs, signal, maxBuffer: 4 * 1024 * 1024 });
     return { status: "passed" };
   } catch (err) {
     // promisified execFile rejects with the error of the child, carrying its output and exit code.
     const failed = err as { stdout?: string; stderr?: string; killed?: boolean; code?: unknown };
     if (signal?.aborted) return { status: "skipped", reason: "the type check was aborted" };
-    if (failed.killed) return { status: "skipped", reason: `the type check took longer than ${TIMEOUT_MS / 1000} s` };
+    if (failed.killed) return { status: "skipped", reason: `the type check took longer than ${timeoutMs / 1000} s` };
     const lines = (failed.stdout ?? "").split(/\r?\n/).filter((line) => line.trim() !== "");
-    const errors = diagnosticsFor(lines, file);
-    if (errors.length > 0) return { status: "failed", errors };
-    if (typeof failed.code !== "number" || lines.length === 0) {
-      return { status: "skipped", reason: `the type checker did not run: ${(failed.stderr || String(err)).trim().split(/\r?\n/)[0]}` };
-    }
-    // An error tied to no file (a bad option, a missing library) means the check itself is broken.
-    const global = lines.find((line) => line.startsWith("error TS"));
-    if (global) return { status: "skipped", reason: `the type checker failed: ${global}` };
-    // Only the package's own files errored: nothing for the routine's author to fix.
-    return { status: "passed" };
+    const notRun = typeof failed.code !== "number" || lines.length === 0 ? `the type checker did not run: ${(failed.stderr || String(err)).trim().split(/\r?\n/)[0]}` : undefined;
+    return { status: "output", lines, notRun };
   }
+}
+
+/** The line of the compiler's output that names no file (a bad option, a missing library), which means the check itself is broken. */
+function globalError(lines: readonly string[]): string | undefined {
+  return lines.find((line) => line.startsWith("error TS"));
 }
 
 /** Node's lookup path for a package imported from the package's own location: its `node_modules`, then each ancestor's (an installed package has its dependencies hoisted above it). */
@@ -141,6 +143,38 @@ function routineTsconfig(file: string, nodeTypes: boolean): string {
 }
 
 /**
+ * Builds the project of a check in a temporary directory and returns its real path (the caller removes
+ * it): a copy of each of `modules` of the library in `dir`, the packages the body resolves, and the
+ * routine options, with `entry` the file the compiler is pointed at. `entry` is a library module or, when
+ * `text` is given, a file of that text the library does not have.
+ */
+async function buildProject(dir: string | undefined, modules: readonly string[], entry: { file: string; text?: string }): Promise<string> {
+  let project = await mkdtemp(path.join(tmpdir(), "minebot-routine-check-"));
+  try {
+    // The compiler names each file relative to its working directory, which it knows by its real path:
+    // through a symlink (a linked TMPDIR) it would print `../../<link>/<name>.ts(...)`, and the routine's
+    // errors would not be recognised as the routine's.
+    project = await realpath(project);
+    // Copies, not links: tsc resolves a linked file's packages from where it really is, not from here.
+    if (dir !== undefined) await Promise.all(modules.map((module) => copyFile(path.join(dir, `${module}.ts`), path.join(project, `${module}.ts`))));
+    if (entry.text !== undefined) await writeFile(path.join(project, entry.file), entry.text);
+    await linkPackages(project);
+    // Without a module package scope, nodenext treats the routine as CommonJS, and it loads as ESM.
+    await writeFile(path.join(project, "package.json"), '{ "type": "module" }\n');
+    const nodeTypes = await access(path.join(project, "node_modules/@types/node")).then(() => true, () => false);
+    if (!nodeTypes) await writeFile(path.join(project, REQUIRE_DECLARATION), REQUIRE_TYPES);
+    await writeFile(path.join(project, "tsconfig.json"), routineTsconfig(entry.file, nodeTypes));
+    return project;
+  } catch (err) {
+    await rm(project, { recursive: true, force: true }).catch(() => {});
+    throw err;
+  }
+}
+
+/** The reason a check is skipped when `typescript` does not resolve. */
+const NO_TYPESCRIPT = "typescript is not installed next to minebot-sdk (an optional peer dependency)";
+
+/**
  * Type-checks routine `name` of the library in `dir`. The check sees the other library modules (so
  * `./helper.ts` resolves) and the packages the body resolves for them, and reports only the errors in
  * the routine's own file: a helper's errors belong to the helper's own check. Nothing is evaluated.
@@ -148,28 +182,233 @@ function routineTsconfig(file: string, nodeTypes: boolean): string {
  */
 export async function typeCheckRoutine(dir: string, name: string, signal?: AbortSignal): Promise<TypeCheck> {
   const tsc = compilerScript();
-  if (!tsc) return { status: "skipped", reason: "typescript is not installed next to minebot-sdk (an optional peer dependency); install it to type-check routines" };
+  if (!tsc) return { status: "skipped", reason: `${NO_TYPESCRIPT}; install it to type-check routines` };
   let project: string | undefined;
   try {
     const modules = new RoutineLibrary({ dir, savedBy: "typecheck" }).list().map((routine) => routine.name);
     if (!modules.includes(name)) return { status: "skipped", reason: `there is no routine "${name}" to check` };
-    project = await mkdtemp(path.join(tmpdir(), "minebot-routine-check-"));
-    // The compiler names each file relative to its working directory, which it knows by its real path:
-    // through a symlink (a linked TMPDIR) it would print `../../<link>/<name>.ts(...)`, and the routine's
-    // errors would not be recognised as the routine's.
-    project = await realpath(project);
-    // Copies, not links: tsc resolves a linked file's packages from where it really is, not from here.
-    await Promise.all(modules.map((module) => copyFile(path.join(dir, `${module}.ts`), path.join(project!, `${module}.ts`))));
-    await linkPackages(project);
-    // Without a module package scope, nodenext treats the routine as CommonJS, and it loads as ESM.
-    await writeFile(path.join(project, "package.json"), '{ "type": "module" }\n');
-    const nodeTypes = await access(path.join(project, "node_modules/@types/node")).then(() => true, () => false);
-    if (!nodeTypes) await writeFile(path.join(project, REQUIRE_DECLARATION), REQUIRE_TYPES);
-    await writeFile(path.join(project, "tsconfig.json"), routineTsconfig(`${name}.ts`, nodeTypes));
-    return await compile(tsc, project, `${name}.ts`, signal);
+    project = await buildProject(dir, modules, { file: `${name}.ts` });
+    const compiled = await compile(tsc, project, signal, TIMEOUT_MS);
+    if (compiled.status !== "output") return compiled;
+    const errors = diagnosticsFor(compiled.lines, `${name}.ts`);
+    if (errors.length > 0) return { status: "failed", errors };
+    if (compiled.notRun) return { status: "skipped", reason: compiled.notRun };
+    const global = globalError(compiled.lines);
+    if (global) return { status: "skipped", reason: `the type checker failed: ${global}` };
+    // Only the package's own files errored: nothing for the routine's author to fix.
+    return { status: "passed" };
   } catch (err) {
     return { status: "skipped", reason: `the type check could not run: ${err instanceof Error ? err.message : String(err)}` };
   } finally {
     if (project) await rm(project, { recursive: true, force: true }).catch(() => {});
   }
+}
+
+/** How long the check of a run may take before it is skipped. */export const RUN_CHECK_BUDGET_MS = 3000;
+
+/** The editor API of the installed TypeScript, or undefined when it is not installed (an optional peer dependency). */
+async function warmModule(): Promise<typeof import("typescript/unstable/async") | undefined> {
+  try {
+    return await import("typescript/unstable/async");
+  } catch {
+    return undefined;
+  }
+}
+
+/** The warm checker of this process: the compiler's own API, one child process, one project kept open, its run file rewritten per check. */
+interface Warm {
+  readonly api: import("typescript/unstable/async").API;
+  readonly dir: string;
+  readonly config: string;
+  readonly entry: string;
+  /** The library modules the project holds, by file name. */
+  texts: Map<string, string>;
+  /** Whether the project has been opened with the API; the first snapshot opens it, and it stays open. */
+  opened: boolean;
+}
+
+/** The warm checker, opened on the first check that needs it (`null` when the API is not installed), and one check at a time: the project is one directory. */
+let warm: Promise<Warm | null> | undefined;
+let warmQueue: Promise<unknown> = Promise.resolve();
+
+/** Opens the warm checker: a project like `buildProject`'s, in a directory that outlives the check. */
+async function openWarm(): Promise<Warm | null> {
+  const module = await warmModule();
+  if (!module) return null;
+  const dir = await realpath(await mkdtemp(path.join(tmpdir(), "minebot-run-check-")));
+  try {
+    await linkPackages(dir);
+    // Without a module package scope, nodenext treats the run as CommonJS, and it loads as ESM.
+    await writeFile(path.join(dir, "package.json"), '{ "type": "module" }\n');
+    const nodeTypes = await access(path.join(dir, "node_modules/@types/node")).then(() => true, () => false);
+    if (!nodeTypes) await writeFile(path.join(dir, REQUIRE_DECLARATION), REQUIRE_TYPES);
+    await writeFile(path.join(dir, "tsconfig.json"), routineTsconfig(RUN_CHECK_FILE, nodeTypes));
+    const api = new module.API();
+    // The compiler child and the project live as long as this process: both go with it.
+    process.once("exit", () => {
+      void api.close().catch(() => {});
+      rmSync(dir, { recursive: true, force: true });
+    });
+    return { api, dir, config: path.join(dir, "tsconfig.json"), entry: path.join(dir, RUN_CHECK_FILE), texts: new Map(), opened: false };
+  } catch (err) {
+    await rm(dir, { recursive: true, force: true }).catch(() => {});
+    throw err;
+  }
+}
+
+/** The warm checker, opened once per process: `null` when the API is not installed, and a failed open is retried by the next check. */
+async function warmState(): Promise<Warm | null> {
+  if (!warm) {
+    const opening = openWarm();
+    warm = opening;
+    opening.catch(() => {
+      if (warm === opening) warm = undefined;
+    });
+  }
+  return warm;
+}
+
+/** The diagnostics of `text`, checked by the warm backend, for the run in `libraryDir`. */
+async function warmCheck(state: Warm, libraryDir: string | undefined, text: string): Promise<Diagnostic[]> {
+  const modules = new Map<string, string>();
+  if (libraryDir !== undefined) {
+    for (const routine of new RoutineLibrary({ dir: libraryDir, savedBy: "typecheck" }).list()) {
+      modules.set(`${routine.name}.ts`, await readFile(path.join(libraryDir, `${routine.name}.ts`), "utf8"));
+    }
+  }
+  const changed: string[] = [state.entry];
+  const created: string[] = [];
+  const deleted: string[] = [];
+  for (const [file, source] of modules) {
+    if (state.texts.get(file) === source) continue;
+    await writeFile(path.join(state.dir, file), source);
+    (state.texts.has(file) ? changed : created).push(path.join(state.dir, file));
+  }
+  for (const file of state.texts.keys()) {
+    if (modules.has(file)) continue;
+    await rm(path.join(state.dir, file), { force: true });
+    deleted.push(path.join(state.dir, file));
+  }
+  state.texts = new Map(modules);
+  await writeFile(state.entry, text);
+  const snapshot = await state.api.updateSnapshot(state.opened ? { fileChanges: { changed, created, deleted } } : { openProjects: [state.config] });
+  state.opened = true;
+  try {
+    const project = snapshot.getProject(state.config);
+    if (!project) throw new Error("the compiler did not open the run's project");
+    const found = [
+      ...(await project.program.getSyntacticDiagnostics(state.entry)),
+      ...(await project.program.getSemanticDiagnostics(state.entry)),
+    ];
+    return found.flatMap((d) => {
+      if (d.fileName !== undefined && d.fileName !== state.entry) return [];
+      const { line, column } = lineColumn(text, d.pos);
+      return [{ line, column, code: d.code, message: (d.text ?? "").split("\n")[0]! }];
+    });
+  } finally {
+    await snapshot.dispose().catch(() => {});
+  }
+}
+
+/** The options of a run's type check: the run's abort signal and how long the check may take. */
+export interface RunCheckOptions {
+  /** The run's own end: once it aborts, the check answers `skipped` instead of waiting. */
+  signal?: AbortSignal;
+  /** How long the check may take, in milliseconds, before it is skipped. */
+  budgetMs?: number;
+}
+
+/**
+ * Type-checks the source of a run as the body evaluates it: a module whose imports resolve as a
+ * library module's do (`libraryDir` is the library's directory, or undefined when the body has none), with
+ * the parameters of its default function typed as the run calls it (`ctx` a `RoutineContext`, `args`
+ * `any`). `failed.errors` are the diagnostics that refuse the run, each `line <L>:<C> <message>` at its
+ * position in `source` with the real member under it when one is known; any other diagnostic leaves the
+ * run to run. Nothing is evaluated.
+ *
+ * The warm backend (`typescript/unstable/async`, held open by the host) answers in a few hundred
+ * milliseconds; it falls back to the compiler's command line when the API is not installed or fails.
+ * Never rejects: a check that cannot answer within `opts.budgetMs`, or at all, or is aborted by
+ * `opts.signal`, is `skipped`.
+ */
+export async function typeCheckRun(libraryDir: string | undefined, source: string, opts: RunCheckOptions = {}): Promise<TypeCheck> {
+  const { signal } = opts;
+  const budgetMs = opts.budgetMs ?? RUN_CHECK_BUDGET_MS;
+  const deadline = Date.now() + budgetMs;
+  const tsc = compilerScript();
+  if (!tsc) return { status: "skipped", reason: NO_TYPESCRIPT };
+  if (/^\s*\/\/\s*@ts-nocheck\b/.test(source)) return { status: "passed" };
+  if (signal?.aborted) return { status: "skipped", reason: "the type check was aborted" };
+  const text = checkedText(source);
+  const answered = (found: Diagnostic[]): TypeCheck => {
+    const refused = refusing(found, text);
+    return refused.length > 0 ? { status: "failed", errors: refused.map((d) => renderRefusal(d, text)) } : { status: "passed" };
+  };
+  try {
+    const state = await warmState();
+    if (state !== null) {
+      // The check ends with the run (an abort) or the budget; a check the API is still working on settles behind the next one.
+      const limit = AbortSignal.any([...(signal ? [signal] : []), AbortSignal.timeout(Math.max(deadline - Date.now(), 1))]);
+      const work = serialized(() => warmCheck(state, libraryDir, text));
+      return answered(await untilAborted(work, limit));
+    }
+  } catch {
+    if (signal?.aborted) return { status: "skipped", reason: "the type check was aborted" };
+    if (Date.now() >= deadline) return { status: "skipped", reason: `the type check took longer than ${budgetMs / 1000} s` };
+    // A backend that cannot answer is not the run's to fix: the command line answers instead (and a check that cannot is a skip).
+  }
+  let project: string | undefined;
+  try {
+    const modules = libraryDir === undefined ? [] : new RoutineLibrary({ dir: libraryDir, savedBy: "typecheck" }).list().map((routine) => routine.name);
+    project = await buildProject(libraryDir, modules, { file: RUN_CHECK_FILE, text });
+    const left = deadline - Date.now();
+    if (left <= 0) return { status: "skipped", reason: `the type check took longer than ${budgetMs / 1000} s` };
+    const compiled = await compile(tsc, project, signal, left);
+    if (compiled.status !== "output") return compiled;
+    const found = parseDiagnostics(compiled.lines, RUN_CHECK_FILE);
+    if (found.length === 0 && compiled.notRun) return { status: "skipped", reason: compiled.notRun };
+    const global = globalError(compiled.lines);
+    if (found.length === 0 && global) return { status: "skipped", reason: `the type checker failed: ${global}` };
+    return answered(found);
+  } catch (err) {
+    return { status: "skipped", reason: `the type check could not run: ${err instanceof Error ? err.message : String(err)}` };
+  } finally {
+    if (project) await rm(project, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+/** Runs `work` after every check started before it. */
+function serialized<T>(work: () => Promise<T>): Promise<T> {
+  const next = warmQueue.then(work, work);
+  warmQueue = next.catch(() => {});
+  return next;
+}
+
+/**
+ * Closes the warm checker and removes its project. The body never calls this (its compiler child goes with the
+ * process); a script or a test that will not check another run does, because the child keeps the process alive.
+ * The next check opens a new one.
+ */
+export async function closeRunCheck(): Promise<void> {
+  const opening = warm;
+  warm = undefined;
+  await warmQueue.catch(() => {});
+  const state = await opening?.catch(() => null);
+  if (state === null || state === undefined) return;
+  await state.api.close().catch(() => {});
+  await rm(state.dir, { recursive: true, force: true }).catch(() => {});
+}
+
+/**
+ * `promise`, rejected with the reason of `limit` once it aborts — the promise itself is left to settle, so what it holds
+ * (the project's file writes, one snapshot) stays one check's. Its listener is removed when either settles.
+ */
+function untilAborted<T>(promise: Promise<T>, limit: AbortSignal): Promise<T> {
+  const aborted = Promise.withResolvers<never>();
+  if (limit.aborted) aborted.reject(limit.reason);
+  const stop = () => aborted.reject(limit.reason);
+  limit.addEventListener("abort", stop, { once: true });
+  const done = () => limit.removeEventListener("abort", stop);
+  promise.then(done, done);
+  return Promise.race([promise, aborted.promise]);
 }

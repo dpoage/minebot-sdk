@@ -36,8 +36,8 @@ const FORBIDDEN_WORDS: Record<Capability, RegExp> = {
   lessons: /\blearned\b|add a lesson|wiki lesson|wiki_add_lesson|addLesson/i,
   milestones: /\bmilestones?\b|minebot milestones|body's milestones/i,
   reflexes: /\breflexes?\b|reflex_|--no-reflexes|\btriggers?\b|trigger_|--no-triggers/i,
-  // A body without a routine library still describes its built-ins, which a routine imports: "built-in routine" and the <module>.<routine> call name are theirs.
-  routines: /(?<!built-in |\.<)\broutines?\b|bind_routine|--no-routines|\/bind\b|defineRoutine/i,
+  // A body without a routine library still describes its built-ins, which a routine imports: "built-in routine" and the <module>.<routine> call name are theirs. `minebot-sdk/routine` is the package's authoring subpath (Vec3, goals), named whether or not the body has a library.
+  routines: /(?<!built-in |\.<|minebot-sdk\/)\broutines?\b|bind_routine|--no-routines|\/bind\b|defineRoutine/i,
   builtins: /built-in routines?\b|\bbuiltins?\b|builtin_|minebot-sdk\/routines\/|<module>\.<routine>/i,
   // Calls are served for the library's actions and for built-ins: the words of the call surfaces go only when neither is offered.
   call: /call_routine|\/call\b|\bcall <|minebot call|\bcall: /i,
@@ -197,14 +197,20 @@ describe("the capability table", () => {
     }
   });
 
-  it("names an offered module only in the program reference's one built-in line: the commands, the tools and the rest of the reference do not depend on which modules are offered", () => {
+  it("names an offered module only in the program reference's built-in line and goal table: the commands, the tools and the rest of the reference do not depend on which modules are offered", () => {
     const few = { ...EVERYTHING, builtins: ["move"] };
     const many = { ...EVERYTHING, builtins: ["move", "gatherer", "crafter"] };
     for (const toolSet of TOOL_SETS) assert.deepEqual(toolPlan(few, toolSet), toolPlan(many, toolSet), toolSet);
     assert.equal(usageFor(few, false), usageFor(many, false));
     const line = /^Built-in routines: .*$/m;
+    // P2.5: the goal table is the one other section that names offered modules, a row at a time; it is the last section of the reference.
+    const GOALS = "\n\nBefore you write it yourself, a built-in routine of this body already does it:";
+    const rest = (doc: string) => (doc.includes(GOALS) ? doc.slice(0, doc.indexOf(GOALS)) : doc).replace(line, "");
     assert.match(programApiDoc(many), /^Built-in routines: move, gatherer, crafter\./m);
-    assert.equal(programApiDoc(few).replace(line, ""), programApiDoc(many).replace(line, ""));
+    assert.equal(rest(programApiDoc(few)), rest(programApiDoc(many)));
+    // Offering crafter offers the row about it, and offering move alone offers no row at all.
+    assert.match(programApiDoc(many), /\| make tools, or any item you can craft \| `crafter\.make` \|/);
+    assert.doesNotMatch(programApiDoc(few), /already does it/);
     // And with the library off, the line only describes how to look them up.
     const withoutLibrary = programApiDoc({ ...many, routines: false });
     assert.match(withoutLibrary, /^Built-in routines: move, gatherer, crafter\. Reference: minebot builtins docs/m);

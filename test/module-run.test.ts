@@ -13,6 +13,7 @@ import { RoutineLoader } from "../src/host/routines/loader.ts";
 import { hungCause, restartedError } from "../src/protocol/host.ts";
 import type { RunResult } from "../src/protocol/index.ts";
 import { FakeBody, GRACE_MS, removeScratch, startFakeBody, type FakeBodyOptions } from "./fixtures/host/fake-body.ts";
+import { withoutCheckSkip } from "./fixtures/without-check-skip.ts";
 
 const scratch = mkdtempSync(path.join(tmpdir(), "minebot-module-run-"));
 after(() => {
@@ -41,7 +42,7 @@ describe("what a run answers", () => {
     await using({}, async (body) => {
       const code = "export default async (ctx: { log(...a: unknown[]): void }, args: { n: number }) => {\n  ctx.log('n', args.n);\n  return { double: args.n * 2 };\n};\n";
       const answer = runOf(await run(body, code, { n: 21 }));
-      assert.deepEqual({ status: answer.status, result: answer.result, logs: answer.logs }, { status: "ok", result: { double: 42 }, logs: "n 21" });
+      assert.deepEqual({ status: answer.status, result: answer.result, logs: withoutCheckSkip(answer.logs) }, { status: "ok", result: { double: 42 }, logs: "n 21" });
     });
   });
 
@@ -73,7 +74,7 @@ export default defineRoutine({ args: z.object({ n: z.number().default(3) }), ret
       const none = runOf(await run(body, "export const unused = 1;"));
       assert.deepEqual({ status: none.status, result: none.result }, { status: "ok", result: undefined });
       const empty = runOf(await run(body, "console.log('top level');"));
-      assert.deepEqual({ status: empty.status, result: empty.result, logs: empty.logs }, { status: "ok", result: undefined, logs: "top level" });
+      assert.deepEqual({ status: empty.status, result: empty.result, logs: withoutCheckSkip(empty.logs) }, { status: "ok", result: undefined, logs: "top level" });
     });
   });
 
@@ -187,7 +188,7 @@ export default {
   it("imports a library module by file name as the library has it when the run starts", async () => {
     await using({}, async (body) => {
       body.writeRoutines({ shared: "export const answer = 41;\nexport default () => 'routine';\n", other: "import { answer } from './shared.ts';\nexport const next = answer + 1;\n" });
-      const code = "import { answer } from './shared.ts';\nimport { next } from './other.ts';\nimport routine from './shared.ts';\nexport default { answer, next, routine: routine({} as never, {}) };\n";
+      const code = "// @ts-nocheck\nimport { answer } from './shared.ts';\nimport { next } from './other.ts';\nimport routine from './shared.ts';\nexport default { answer, next, routine: routine({} as never, {}) };\n";
       assert.deepEqual(runOf(await run(body, code)).result, { answer: 41, next: 42, routine: "routine" });
       body.writeRoutines({ shared: "export const answer = 99;\nexport default () => 'changed';\n" });
       assert.deepEqual(runOf(await run(body, code)).result, { answer: 99, next: 100, routine: "changed" });
@@ -456,8 +457,8 @@ describe("console output during a run", () => {
   it("lands in the log of the run that wrote it, and in no other", async () => {
     await using({}, async (body) => {
       const first = runOf(await run(body, "export default () => {\n  console.log('a', { n: 1 });\n  console.info('b');\n  console.warn('c');\n  console.error('d');\n  console.debug('e');\n};\n"));
-      assert.equal(first.logs, "a { n: 1 }\nb\nc\nd\ne");
-      assert.equal(runOf(await run(body, "export default () => 1;")).logs, "");
+      assert.equal(withoutCheckSkip(first.logs), "a { n: 1 }\nb\nc\nd\ne");
+      assert.equal(withoutCheckSkip(runOf(await run(body, "export default () => 1;")).logs), "");
     });
   });
 });

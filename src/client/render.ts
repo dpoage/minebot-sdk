@@ -11,7 +11,8 @@ const json = (value: unknown) => JSON.stringify(value, null, 2);
  */
 export function formatRun(run: RunResult | RunRecord): string {
   const named = "seq" in run ? `run ${run.seq}${run.call === undefined ? "" : ` (call ${run.call.name})`}: ` : "";
-  const parts = [`${named}status: ${run.status} (${run.durationMs} ms)`];
+  const died = run.diedDuringRun === undefined ? "" : `\ndied during this run (${run.diedDuringRun} ${run.diedDuringRun === 1 ? "time" : "times"}); observe shows the last death`;
+  const parts = [`${named}status: ${run.status} (${run.durationMs} ms)${died}`];
   if (run.logs) parts.push(`logs:\n${run.logs}`);
   if (run.error) parts.push(`error:\n${run.error}`);
   if (run.result !== undefined) parts.push(`result:\n${typeof run.result === "string" ? run.result : json(run.result)}`);
@@ -131,7 +132,7 @@ export function formatNotes(notes: Note[]): string {
   return notes.map((n) => `## ${n.key} (${n.updated})\n${n.text}`).join("\n\n");
 }
 
-/** Renders wiki search hits, one per line with a snippet. */
+/** Renders wiki search hits, one per line with a snippet. A hit whose lesson names a module that changed carries its stale mark. */
 export function formatHits(hits: SearchHit[]): string {
-  return hits.map((h) => `${h.id} [${h.status}] ${h.title}\n  ${h.snippet}`).join("\n");
+  return hits.map((h) => `${h.id} [${h.status}] ${h.title}${h.stale ? ` ${h.stale}` : ""}\n  ${h.snippet}`).join("\n");
 }

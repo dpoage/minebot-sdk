@@ -464,6 +464,51 @@ describe("a reflex's invalid match, on every bind path", () => {
   });
 });
 
+/** B1: what a bind of a routine the library lacks answers, in full, whichever way it comes in. */
+const NO_ROUTINE = (name: string): string =>
+  `no routine named "${name}" in this body's routine library; save it first: pass its TypeScript as \`source\` to bind_routine (or routine_save), or run \`npx minebot routines save <file>.ts\`, then bind again`;
+
+describe("a bind of a routine the library lacks (B1)", () => {
+  let body: FakeBody;
+  let server: Server;
+  const mcp = new Client({ name: "test", version: "0" });
+
+  before(async () => {
+    body = await startFakeBody();
+    body.writeRoutines({ r1: "export default () => 1;\n" });
+    server = createServer(async (req, res) => {
+      const raw = await text(req);
+      const answer = await body.request(req.method!, req.url!, raw === "" ? undefined : JSON.parse(raw));
+      res.statusCode = answer.status;
+      res.setHeader("content-type", "application/json");
+      res.end(JSON.stringify(answer.body));
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const env = { ...process.env, MINEBOT_URL: `http://127.0.0.1:${(server.address() as AddressInfo).port}`, MINEBOT_TOKEN: "" } as Record<string, string>;
+    await mcp.connect(new StdioClientTransport({ command: process.execPath, args: [...process.execArgv, path.join(import.meta.dirname, "..", "src", "cli.ts"), "mcp"], env, stderr: "ignore" }));
+  });
+  after(async () => {
+    await mcp.close();
+    server.close();
+    await body.close();
+  });
+
+  const asked = { action: { kind: "action", name: "act", routine: "ghost" }, reflex: { kind: "reflex", name: "rfx", routine: "ghost", on: ["hurt"] } } as const;
+
+  for (const kind of KINDS) {
+    it(`answers a ${kind} bind over HTTP with 404 naming the routine, the library, and both ways to save it, and binds nothing`, async () => {
+      assert.deepEqual(await body.request("POST", "/bind", asked[kind]), { status: 404, body: { error: NO_ROUTINE("ghost") } });
+      assert.deepEqual(await listed(body), []);
+    });
+
+    it(`gives a ${kind} bind_routine call without source that same message as the tool's answer`, async () => {
+      const answer = (await mcp.callTool({ name: "bind_routine", arguments: asked[kind] })) as { content: { text: string }[]; isError?: boolean };
+      assert.deepEqual([answer.isError, answer.content[0]!.text], [true, NO_ROUTINE("ghost")]);
+      assert.deepEqual(await listed(body), []);
+    });
+  }
+});
+
 describe("stored entries the reflexes skip", () => {
   const stored = { code: codeEntry, "key.login": { ...codeEntry, run: "bot.chat('/key x')" }, junk: { on: "hurt", routine: 5 }, good: reflexEntry };
   const triggersFile = (body: FakeBody) => JSON.parse(readFileSync(path.join(body.stateDir, "triggers.json"), "utf8")) as Record<string, unknown>;

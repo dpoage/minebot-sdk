@@ -1,9 +1,10 @@
 // The observation projection: the live bot as one JSON object, and that object as one line.
 import type { Bot } from "mineflayer";
 import { biomeAt } from "../mc/biome.ts";
+import { sensesOf } from "../mc/deaths.ts";
 import { activeEffects } from "../mc/effects.ts";
 import { skyAbove, type SkyView } from "../mc/sky.ts";
-import type { EntitySummary, ItemSummary, Observation } from "../protocol/index.ts";
+import type { DeathSummary, EntitySummary, ItemSummary, Observation } from "../protocol/index.ts";
 import { round, vec } from "../mc/position.ts";
 
 const NEARBY_ENTITY_RADIUS = 32;
@@ -40,6 +41,7 @@ export function observation(
   const feetBlock = bot.blockAt(feet);
   const sight = bot.blockAtCursor(SIGHT_RANGE);
   const sky = skyAbove(bot, self.position);
+  const senses = sensesOf(bot);
   const nearbyEntities: EntitySummary[] = Object.values(bot.entities)
     .filter((e) => e !== self && e.position.distanceTo(self.position) <= NEARBY_ENTITY_RADIUS)
     .map((e) => ({
@@ -86,6 +88,8 @@ export function observation(
     program: extras.program,
     sky,
     programsWithoutChange: extras.programsWithoutChange,
+    ...(senses.lastDeath && { lastDeath: senses.lastDeath }),
+    ...(senses.spawnPoint !== undefined && { spawnPoint: senses.spawnPoint }),
   };
 }
 
@@ -94,6 +98,15 @@ function describeSky(sky: SkyView): string {
   if (sky.waterAbove === 0) return `underground: ${sky.solidAbove} blocks above`;
   if (sky.solidAbove === 0) return `under water: ${sky.waterAbove} blocks of water above`;
   return `underground and under water: ${sky.solidAbove} solid and ${sky.waterAbove} water blocks above`;
+}
+
+/** `last death 5m ago at -286 42 104 (drowned)`: the cause without the player's name, since the line is theirs. */
+function describeDeath(death: DeathSummary, username: string): string {
+  const seen = Date.parse(death.time);
+  const minutes = Number.isFinite(seen) ? Math.max(0, Math.floor((Date.now() - seen) / 60_000)) : 0;
+  const cause = death.cause?.replaceAll(username, "").replace(/\s+/g, " ").trim();
+  const at = `${Math.floor(death.position.x)} ${Math.floor(death.position.y)} ${Math.floor(death.position.z)}`;
+  return `last death ${minutes}m ago at ${at}${cause ? ` (${cause})` : ""}`;
 }
 
 /** The observation as one short line, for agents with small context windows. */
@@ -114,6 +127,14 @@ export function brief(o: Observation & { connected: true; program: { running: bo
   return [
     `${o.username} in ${o.dimension.replace(/^minecraft:/, "")} at ${Math.floor(x)} ${Math.floor(y)} ${Math.floor(z)} (${o.biome})`,
     `health ${Math.round(o.health)}/20 food ${o.food}/20${o.oxygen < 20 ? ` air ${o.oxygen}/20` : ""}`,
+    ...(o.lastDeath ? [describeDeath(o.lastDeath, o.username)] : []),
+    ...(o.spawnPoint !== undefined
+      ? [
+          o.spawnPoint === null
+            ? "respawn: world spawn"
+            : `respawn: bed at ${Math.floor(o.spawnPoint.x)} ${Math.floor(o.spawnPoint.y)} ${Math.floor(o.spawnPoint.z)}`,
+        ]
+      : []),
     `${o.isDay ? "day" : "night"} (time ${o.timeOfDay})`,
     describeSky(o.sky),
     `holding ${o.heldItem?.name ?? "nothing"}${o.offhand ? `, offhand ${o.offhand.name}` : ""}`,

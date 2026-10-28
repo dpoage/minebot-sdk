@@ -45,6 +45,9 @@ Body in markdown.
 | `verified_by` | yes | How the page was confirmed: a check module, a test, or a dated observation. |
 | `check` | no | A module in `checks/` that succeeds while the page is true. |
 | `requires` | no | Features a body needs for the page to make sense: `builtins`, `milestones`, `reflexes`, `routines`. Bodies without one do not see the page. |
+| `provenance` | no | Lessons only, and written by the body, not by hand. The SDK version the lesson was written against, and the identity of each built-in module or shipped package that its title or tags name. |
+
+A lesson names a module when one of its tags is the module's name, or when the name is a whole word in its title. The body compares each recorded identity with the module as it ships now, so a lesson that teaches what a module used to do can be marked. A hand-edited or future-format record is ignored: the lesson is then never marked.
 
 ## Features
 
@@ -65,6 +68,7 @@ Search results and pages show a status:
 - `stale`: `mc_version` is a different version. Confirm the page again before you trust it.
 - `unverified`: the page has no `mc_version`.
 - `lesson`: an agent wrote it, and nobody has reviewed it.
+- `stale-lesson`: an agent wrote it, and a module that it names changed since. The page then carries a `[stale: <module> changed since this lesson was written; check it against builtins docs <module> before relying on it]` mark for each changed module, joined on one line with spaces above the body.
 
 ## Rules
 

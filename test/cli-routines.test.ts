@@ -44,6 +44,8 @@ async function stubBody(features: BodyFeatures, answers: Answers): Promise<{ url
     const url = new URL(req.url!, "http://stub");
     res.setHeader("content-type", "application/json");
     if (url.pathname === "/features" || url.pathname === "/api") return void res.end(JSON.stringify(url.pathname === "/features" ? features : { doc: "the program reference" }));
+    // The digest that begins every MCP response polls the event log; an empty log is not a tool's request.
+    if (url.pathname === "/events") return void res.end(JSON.stringify({ events: [], next: 0 }));
     seen.push({ method: req.method!, url: req.url!, body: raw === "" ? undefined : JSON.parse(raw) });
     const answer = answers[`${req.method} ${url.pathname}`] ?? { status: 404, body: { error: `the stub has no answer for ${req.method} ${url.pathname}` } };
     res.statusCode = answer.status;
@@ -319,7 +321,7 @@ describe("the built-in commands of the CLI and tools of the MCP server, against 
     { name: "gatherer", description: "Gather.", uses: ["move"], routines: ["gather"], stats: {} },
   ];
   const HITS: BuiltinSearchHit[] = [{ module: "move", score: 4.2, text: "Walk." }, { module: "move", routine: "to", score: 3.1, text: "Walk within range.", stats: { ok: 3, failed: 1 } }];
-  const DOCS = "## move\nWalk.\nUses no other built-in modules.\n### move.to(ctx, { position })";
+  const DOCS = "## move\nWalk.\nUses no other built-in modules.\n### await move.to(ctx, { position })";
   const SOURCE = "export const description = 'Walk.';\n";
   const requests = (stub: { seen: Seen[] }) => stub.seen.map((request) => `${request.method} ${request.url}`);
   const answers: Answers = {

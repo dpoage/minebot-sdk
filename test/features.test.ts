@@ -220,7 +220,7 @@ describe("tier visibility on a running body", () => {
     assert.match(help.out, /builtins docs \[module\.\.\.\]/);
     const docs = await cli(body, "builtins", "docs", "gatherer");
     assert.equal(docs.code, 0, docs.out);
-    assert.match(docs.out, /^## gatherer\n.*\nUses: move, sense, dig, inventory, items\.\n### gatherer\.gather\(ctx, \{ /);
+    assert.match(docs.out, /^## gatherer\n.*\nUses: move, sense, dig, inventory, items\.\n### await gatherer\.gather\(ctx, \{ /);
     const withheld = await cli(body, "builtins", "docs", "place");
     assert.equal(withheld.code, 1);
     assert.match(withheld.out, /unknown built-in module "place"; offered: move, sense, dig, inventory, items, gatherer/);
@@ -264,7 +264,8 @@ describe("tier visibility on a running body", () => {
     assert.doesNotMatch(doc, WIKI_WORDS);
     assert.doesNotMatch(doc, MILESTONE_WORDS);
     assert.doesNotMatch(doc, /trigger/i);
-    assert.doesNotMatch(doc, /routine/i);
+    // P2.1: every body's run template imports Vec3 from `minebot-sdk/routine`, the package's authoring subpath; the library's own words stay off.
+    assert.doesNotMatch(doc, /(?<!minebot-sdk\/)routine/i);
   });
 
   it("gives the CLI of a raw body no commands for features it lacks", async () => {

@@ -305,7 +305,7 @@ async function main(): Promise<number> {
         case "search": {
           const { hits } = await client.wikiSearch(args.join(" "), Number(opts.limit));
           if (hits.length === 0) console.log("no matching pages");
-          for (const h of hits) console.log(`${h.id}  [${h.status}]  ${h.title}\n    ${h.snippet}`);
+          for (const h of hits) console.log(`${h.id}  [${h.status}]  ${h.title}${h.stale ? `  ${h.stale}` : ""}\n    ${h.snippet}`);
           return 0;
         }
         case "read":
@@ -314,7 +314,7 @@ async function main(): Promise<number> {
           return 0;
         case "list": {
           const { pages, mode } = await client.wikiList(args[0]);
-          for (const p of pages) console.log(`${p.id}  [${p.status}]  ${p.title}`);
+          for (const p of pages) console.log(`${p.id}  [${p.status}]  ${p.title}${p.stale ? `  ${p.stale}` : ""}`);
           console.log(`\n${pages.length} pages; wiki is ${mode} on this body`);
           return 0;
         }

@@ -1,0 +1,653 @@
+{
+  "_about": "Packets as minecraft-protocol decoded them from a Minecraft 26.1 dev server (mineflayer 4.39.0, offline login, the dimension_type registry_data and the first login, update_health and update_time of the session); the drift test (test/reference-drift.test.ts) feeds them to a stub client. Recorded 2026-10-27 on the pool; regenerate by connecting a mineflayer bot to a 26.1 server and keeping each packet's data.",
+  "version": "26.1",
+  "registry_data": {
+    "id": "minecraft:dimension_type",
+    "entries": [
+      {
+        "key": "minecraft:overworld",
+        "value": {
+          "type": "compound",
+          "value": {
+            "default_clock": {
+              "type": "string",
+              "value": "minecraft:overworld"
+            },
+            "has_ender_dragon_fight": {
+              "type": "byte",
+              "value": 0
+            },
+            "ambient_light": {
+              "type": "float",
+              "value": 0
+            },
+            "monster_spawn_block_light_limit": {
+              "type": "int",
+              "value": 0
+            },
+            "infiniburn": {
+              "type": "string",
+              "value": "#minecraft:infiniburn_overworld"
+            },
+            "has_skylight": {
+              "type": "byte",
+              "value": 1
+            },
+            "timelines": {
+              "type": "string",
+              "value": "#minecraft:in_overworld"
+            },
+            "coordinate_scale": {
+              "type": "double",
+              "value": 1
+            },
+            "logical_height": {
+              "type": "int",
+              "value": 384
+            },
+            "attributes": {
+              "type": "compound",
+              "value": {
+                "minecraft:audio/background_music": {
+                  "type": "compound",
+                  "value": {
+                    "default": {
+                      "type": "compound",
+                      "value": {
+                        "max_delay": {
+                          "type": "int",
+                          "value": 24000
+                        },
+                        "sound": {
+                          "type": "string",
+                          "value": "minecraft:music.game"
+                        },
+                        "min_delay": {
+                          "type": "int",
+                          "value": 12000
+                        }
+                      }
+                    },
+                    "creative": {
+                      "type": "compound",
+                      "value": {
+                        "max_delay": {
+                          "type": "int",
+                          "value": 24000
+                        },
+                        "sound": {
+                          "type": "string",
+                          "value": "minecraft:music.creative"
+                        },
+                        "min_delay": {
+                          "type": "int",
+                          "value": 12000
+                        }
+                      }
+                    }
+                  }
+                },
+                "minecraft:visual/cloud_height": {
+                  "type": "float",
+                  "value": 192.3300018310547
+                },
+                "minecraft:visual/fog_color": {
+                  "type": "string",
+                  "value": "#c0d8ff"
+                },
+                "minecraft:visual/ambient_light_color": {
+                  "type": "string",
+                  "value": "#0a0a0a"
+                },
+                "minecraft:visual/sky_color": {
+                  "type": "string",
+                  "value": "#78a7ff"
+                },
+                "minecraft:audio/ambient_sounds": {
+                  "type": "compound",
+                  "value": {
+                    "mood": {
+                      "type": "compound",
+                      "value": {
+                        "tick_delay": {
+                          "type": "int",
+                          "value": 6000
+                        },
+                        "offset": {
+                          "type": "double",
+                          "value": 2
+                        },
+                        "sound": {
+                          "type": "string",
+                          "value": "minecraft:ambient.cave"
+                        },
+                        "block_search_extent": {
+                          "type": "int",
+                          "value": 8
+                        }
+                      }
+                    }
+                  }
+                },
+                "minecraft:visual/cloud_color": {
+                  "type": "string",
+                  "value": "#ccffffff"
+                }
+              }
+            },
+            "min_y": {
+              "type": "int",
+              "value": -64
+            },
+            "monster_spawn_light_level": {
+              "type": "compound",
+              "value": {
+                "min_inclusive": {
+                  "type": "int",
+                  "value": 0
+                },
+                "max_inclusive": {
+                  "type": "int",
+                  "value": 7
+                },
+                "type": {
+                  "type": "string",
+                  "value": "minecraft:uniform"
+                }
+              }
+            },
+            "has_ceiling": {
+              "type": "byte",
+              "value": 0
+            },
+            "height": {
+              "type": "int",
+              "value": 384
+            }
+          }
+        }
+      },
+      {
+        "key": "minecraft:overworld_caves",
+        "value": {
+          "type": "compound",
+          "value": {
+            "default_clock": {
+              "type": "string",
+              "value": "minecraft:overworld"
+            },
+            "has_ender_dragon_fight": {
+              "type": "byte",
+              "value": 0
+            },
+            "ambient_light": {
+              "type": "float",
+              "value": 0
+            },
+            "monster_spawn_block_light_limit": {
+              "type": "int",
+              "value": 0
+            },
+            "infiniburn": {
+              "type": "string",
+              "value": "#minecraft:infiniburn_overworld"
+            },
+            "has_skylight": {
+              "type": "byte",
+              "value": 1
+            },
+            "timelines": {
+              "type": "string",
+              "value": "#minecraft:in_overworld"
+            },
+            "coordinate_scale": {
+              "type": "double",
+              "value": 1
+            },
+            "logical_height": {
+              "type": "int",
+              "value": 384
+            },
+            "attributes": {
+              "type": "compound",
+              "value": {
+                "minecraft:audio/background_music": {
+                  "type": "compound",
+                  "value": {
+                    "default": {
+                      "type": "compound",
+                      "value": {
+                        "max_delay": {
+                          "type": "int",
+                          "value": 24000
+                        },
+                        "sound": {
+                          "type": "string",
+                          "value": "minecraft:music.game"
+                        },
+                        "min_delay": {
+                          "type": "int",
+                          "value": 12000
+                        }
+                      }
+                    },
+                    "creative": {
+                      "type": "compound",
+                      "value": {
+                        "max_delay": {
+                          "type": "int",
+                          "value": 24000
+                        },
+                        "sound": {
+                          "type": "string",
+                          "value": "minecraft:music.creative"
+                        },
+                        "min_delay": {
+                          "type": "int",
+                          "value": 12000
+                        }
+                      }
+                    }
+                  }
+                },
+                "minecraft:visual/cloud_height": {
+                  "type": "float",
+                  "value": 192.3300018310547
+                },
+                "minecraft:visual/fog_color": {
+                  "type": "string",
+                  "value": "#c0d8ff"
+                },
+                "minecraft:visual/ambient_light_color": {
+                  "type": "string",
+                  "value": "#0a0a0a"
+                },
+                "minecraft:visual/sky_color": {
+                  "type": "string",
+                  "value": "#78a7ff"
+                },
+                "minecraft:audio/ambient_sounds": {
+                  "type": "compound",
+                  "value": {
+                    "mood": {
+                      "type": "compound",
+                      "value": {
+                        "tick_delay": {
+                          "type": "int",
+                          "value": 6000
+                        },
+                        "offset": {
+                          "type": "double",
+                          "value": 2
+                        },
+                        "sound": {
+                          "type": "string",
+                          "value": "minecraft:ambient.cave"
+                        },
+                        "block_search_extent": {
+                          "type": "int",
+                          "value": 8
+                        }
+                      }
+                    }
+                  }
+                },
+                "minecraft:visual/cloud_color": {
+                  "type": "string",
+                  "value": "#ccffffff"
+                }
+              }
+            },
+            "min_y": {
+              "type": "int",
+              "value": -64
+            },
+            "monster_spawn_light_level": {
+              "type": "compound",
+              "value": {
+                "min_inclusive": {
+                  "type": "int",
+                  "value": 0
+                },
+                "max_inclusive": {
+                  "type": "int",
+                  "value": 7
+                },
+                "type": {
+                  "type": "string",
+                  "value": "minecraft:uniform"
+                }
+              }
+            },
+            "has_ceiling": {
+              "type": "byte",
+              "value": 1
+            },
+            "height": {
+              "type": "int",
+              "value": 384
+            }
+          }
+        }
+      },
+      {
+        "key": "minecraft:the_end",
+        "value": {
+          "type": "compound",
+          "value": {
+            "default_clock": {
+              "type": "string",
+              "value": "minecraft:the_end"
+            },
+            "has_ender_dragon_fight": {
+              "type": "byte",
+              "value": 1
+            },
+            "ambient_light": {
+              "type": "float",
+              "value": 0.25
+            },
+            "monster_spawn_block_light_limit": {
+              "type": "int",
+              "value": 0
+            },
+            "has_fixed_time": {
+              "type": "byte",
+              "value": 1
+            },
+            "infiniburn": {
+              "type": "string",
+              "value": "#minecraft:infiniburn_end"
+            },
+            "has_skylight": {
+              "type": "byte",
+              "value": 1
+            },
+            "skybox": {
+              "type": "string",
+              "value": "end"
+            },
+            "timelines": {
+              "type": "string",
+              "value": "#minecraft:in_end"
+            },
+            "coordinate_scale": {
+              "type": "double",
+              "value": 1
+            },
+            "logical_height": {
+              "type": "int",
+              "value": 256
+            },
+            "attributes": {
+              "type": "compound",
+              "value": {
+                "minecraft:audio/background_music": {
+                  "type": "compound",
+                  "value": {
+                    "default": {
+                      "type": "compound",
+                      "value": {
+                        "replace_current_music": {
+                          "type": "byte",
+                          "value": 1
+                        },
+                        "max_delay": {
+                          "type": "int",
+                          "value": 24000
+                        },
+                        "sound": {
+                          "type": "string",
+                          "value": "minecraft:music.end"
+                        },
+                        "min_delay": {
+                          "type": "int",
+                          "value": 6000
+                        }
+                      }
+                    }
+                  }
+                },
+                "minecraft:visual/fog_color": {
+                  "type": "string",
+                  "value": "#181318"
+                },
+                "minecraft:visual/ambient_light_color": {
+                  "type": "string",
+                  "value": "#3f473f"
+                },
+                "minecraft:visual/sky_color": {
+                  "type": "string",
+                  "value": "#000000"
+                },
+                "minecraft:audio/ambient_sounds": {
+                  "type": "compound",
+                  "value": {
+                    "mood": {
+                      "type": "compound",
+                      "value": {
+                        "tick_delay": {
+                          "type": "int",
+                          "value": 6000
+                        },
+                        "offset": {
+                          "type": "double",
+                          "value": 2
+                        },
+                        "sound": {
+                          "type": "string",
+                          "value": "minecraft:ambient.cave"
+                        },
+                        "block_search_extent": {
+                          "type": "int",
+                          "value": 8
+                        }
+                      }
+                    }
+                  }
+                },
+                "minecraft:visual/sky_light_color": {
+                  "type": "string",
+                  "value": "#ac60cd"
+                },
+                "minecraft:visual/sky_light_factor": {
+                  "type": "float",
+                  "value": 0
+                }
+              }
+            },
+            "min_y": {
+              "type": "int",
+              "value": 0
+            },
+            "monster_spawn_light_level": {
+              "type": "int",
+              "value": 15
+            },
+            "has_ceiling": {
+              "type": "byte",
+              "value": 0
+            },
+            "height": {
+              "type": "int",
+              "value": 256
+            }
+          }
+        }
+      },
+      {
+        "key": "minecraft:the_nether",
+        "value": {
+          "type": "compound",
+          "value": {
+            "cardinal_light": {
+              "type": "string",
+              "value": "nether"
+            },
+            "has_ender_dragon_fight": {
+              "type": "byte",
+              "value": 0
+            },
+            "ambient_light": {
+              "type": "float",
+              "value": 0.10000000149011612
+            },
+            "monster_spawn_block_light_limit": {
+              "type": "int",
+              "value": 15
+            },
+            "has_fixed_time": {
+              "type": "byte",
+              "value": 1
+            },
+            "infiniburn": {
+              "type": "string",
+              "value": "#minecraft:infiniburn_nether"
+            },
+            "has_skylight": {
+              "type": "byte",
+              "value": 0
+            },
+            "skybox": {
+              "type": "string",
+              "value": "none"
+            },
+            "timelines": {
+              "type": "string",
+              "value": "#minecraft:in_nether"
+            },
+            "coordinate_scale": {
+              "type": "double",
+              "value": 8
+            },
+            "logical_height": {
+              "type": "int",
+              "value": 128
+            },
+            "attributes": {
+              "type": "compound",
+              "value": {
+                "minecraft:visual/fog_end_distance": {
+                  "type": "float",
+                  "value": 96
+                },
+                "minecraft:visual/default_dripstone_particle": {
+                  "type": "compound",
+                  "value": {
+                    "type": {
+                      "type": "string",
+                      "value": "minecraft:dripping_dripstone_lava"
+                    }
+                  }
+                },
+                "minecraft:gameplay/sky_light_level": {
+                  "type": "float",
+                  "value": 4
+                },
+                "minecraft:visual/ambient_light_color": {
+                  "type": "string",
+                  "value": "#302821"
+                },
+                "minecraft:gameplay/piglins_zombify": {
+                  "type": "byte",
+                  "value": 0
+                },
+                "minecraft:gameplay/fast_lava": {
+                  "type": "byte",
+                  "value": 1
+                },
+                "minecraft:visual/sky_light_color": {
+                  "type": "string",
+                  "value": "#7a7aff"
+                },
+                "minecraft:visual/sky_light_factor": {
+                  "type": "float",
+                  "value": 0
+                },
+                "minecraft:gameplay/water_evaporates": {
+                  "type": "byte",
+                  "value": 1
+                },
+                "minecraft:visual/fog_start_distance": {
+                  "type": "float",
+                  "value": 10
+                }
+              }
+            },
+            "min_y": {
+              "type": "int",
+              "value": 0
+            },
+            "monster_spawn_light_level": {
+              "type": "int",
+              "value": 7
+            },
+            "has_ceiling": {
+              "type": "byte",
+              "value": 1
+            },
+            "height": {
+              "type": "int",
+              "value": 256
+            }
+          }
+        }
+      }
+    ]
+  },
+  "login": {
+    "entityId": 35,
+    "isHardcore": false,
+    "worldNames": [
+      "minecraft:overworld",
+      "minecraft:the_nether",
+      "minecraft:the_end"
+    ],
+    "maxPlayers": 20,
+    "viewDistance": 8,
+    "simulationDistance": 8,
+    "reducedDebugInfo": false,
+    "enableRespawnScreen": true,
+    "doLimitedCrafting": false,
+    "worldState": {
+      "dimension": 0,
+      "name": "minecraft:overworld",
+      "hashedSeed": [
+        3768195,
+        375014193
+      ],
+      "gamemode": "survival",
+      "previousGamemode": 255,
+      "isDebug": false,
+      "isFlat": false,
+      "portalCooldown": 0,
+      "seaLevel": 63
+    },
+    "enforcesSecureChat": false
+  },
+  "update_health": {
+    "health": 20,
+    "food": 20,
+    "foodSaturation": 5
+  },
+  "update_time": {
+    "age": [
+      0,
+      205
+    ],
+    "clockUpdates": [
+      {
+        "id": 0,
+        "totalTicks": 263,
+        "partialTick": 0,
+        "rate": 1
+      },
+      {
+        "id": 1,
+        "totalTicks": 263,
+        "partialTick": 0,
+        "rate": 1
+      }
+    ]
+  }
+}

@@ -20,9 +20,12 @@ const BLOCKER = "export default (): never => {\n  for (;;) {}\n};\n";
 const PID = "export default () => process.pid;\n";
 const SAY = "export default async (ctx, args) => {\n  ctx.bot.emit('chat', args.from, args.message);\n};\n";
 
-/** A routine that makes the body hear a chat message, then runs `rest`. */
+/**
+ * A routine that makes the body hear a chat message, then runs `rest`. Its source runs unchecked: `ctx.bot.emit`
+ * is variadic at run time, and its typed signature takes every argument of the event map, which the check would refuse.
+ */
 const saysThen = (from: string, message: string, rest: string): string =>
-  `export default async (ctx) => {\n  ctx.bot.emit('chat', ${JSON.stringify(from)}, ${JSON.stringify(message)});\n${rest}\n};\n`;
+  `// @ts-nocheck\nexport default async (ctx) => {\n  ctx.bot.emit('chat', ${JSON.stringify(from)}, ${JSON.stringify(message)});\n${rest}\n};\n`;
 
 async function bodyWith(routines: Record<string, string>, options: FakeBodyOptions = {}): Promise<FakeBody> {
   const body = await startFakeBody(options);
