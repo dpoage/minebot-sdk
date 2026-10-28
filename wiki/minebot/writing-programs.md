@@ -19,13 +19,13 @@ Save this as `look.ts` and run `minebot run look.ts`. A run takes its inputs fro
 
 ## It is type-checked before it runs
 
-The body type-checks your program first, and refuses a program that would fail when it runs: a name that is not defined, a call of a member that does not exist, or the wrong number of arguments. A refused program does not start. Its status is `error`, and the first line says what to do:
+The body type-checks your program first, and refuses a program that would fail when it runs: a name that is not defined, a call of a member that does not exist, a call of a value that is not a function, an object with a key the type does not have, or the wrong number of arguments. A refused program does not start. Its status is `error`, and the first line says what to do:
 
 ```
 the run did not start: the type check found 1 error(s) in your code. Fix them and run again, or put // @ts-nocheck as the first line to run it unchecked.
 ```
 
-Each error follows as `line <L>:<C> <message>`, with the line and column in your own source. Under a `bot` member that you call and that does not exist, the next line names the member to use instead: `bot.selectItem does not exist: use bot.equip(item, "hand")`. Read those lines from the top: the first error often causes the rest.
+Each error follows as `line <L>:<C> <message>`, with the line and column in your own source. Under a call of a `bot` member that does not exist, one more line names the member to use instead, when the member is on a short curated list of mistakes seen in practice: `bot.selectItem does not exist: use bot.equip(item, "hand")`. Any other missing member gets the TypeScript message alone. Read those lines from the top: the first error often causes the rest.
 
 Other type errors do not stop a program. An unresolved module and a type mismatch go through, because the body strips the types and nothing checks them again. A check that cannot answer is skipped: the run's log gets one line, `type check skipped: <reason>`, and the program runs anyway.
 

@@ -68,7 +68,7 @@ Search results and pages show a status:
 - `stale`: `mc_version` is a different version. Confirm the page again before you trust it.
 - `unverified`: the page has no `mc_version`.
 - `lesson`: an agent wrote it, and nobody has reviewed it.
-- `stale-lesson`: an agent wrote it, and a module that it names changed since. The page then carries one `[stale: <module> changed since this lesson was written; check it against builtins docs <module> before relying on it]` line per changed module, above the body.
+- `stale-lesson`: an agent wrote it, and a module that it names changed since. The page then carries a `[stale: <module> changed since this lesson was written; check it against builtins docs <module> before relying on it]` mark for each changed module, joined on one line with spaces above the body.
 
 ## Rules
 

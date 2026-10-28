@@ -25,7 +25,7 @@ A raw `bot.pathfinder.goto` fails with the plugin's own error, `No path to the g
 
 The body records each block the player places itself, and not the blocks the pathfinder scaffolds. The default movements never break a recorded block, and never place a block under one within 16 blocks. The pathfinder therefore treats your own wall as solid and your own roof as a ceiling.
 
-The record belongs to the bot host session. A restart of the body forgets it, and with it the block you placed and then forgot.
+The record is kept per bot connection. A reconnect and a restart of the bot host both forget it, and with it the block you placed and then forgot.
 
 ## Workaround
 
