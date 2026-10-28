@@ -90,7 +90,7 @@ export const BOT_FACTS: readonly BotFact[] = [
   { wrong: "`pos.floored()` on a plain `{ x, y, z }`", right: "`new Vec3(x, y, z).floored()` (only a Vec3 has `.floored()`)" },
 ];
 
-/** One row of the goal table: what an agent wants to do, and the built-in routines (`<module>.<routine>`) that already do it. */
+/** One row of the goal table: what an agent wants to do, and the built-in routines (`<module>.<routine>`) that already do it, written as a call (`<module>.<routine>(ctx, { ... })`) where the goal needs args. */
 export interface GoalBuiltin {
   goal: string;
   routines: readonly string[];
@@ -107,6 +107,8 @@ export const GOAL_BUILTINS: readonly GoalBuiltin[] = [
   { goal: "place a block", routines: ["place.place"] },
   { goal: "sleep in a bed", routines: ["survival.sleep"] },
   { goal: "find blocks (ores, logs, water, chests) around you", routines: ["explorer.scan"] },
+  { goal: "plan what a craft still needs", routines: ["crafter.plan"] },
+  { goal: "sleep as soon as night falls", routines: ["survival.sleep(ctx, { wait: true })"] },
 ];
 
 /** The goal rows a body can show: those whose routines are all of modules it offers. */

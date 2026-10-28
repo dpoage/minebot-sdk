@@ -160,9 +160,10 @@ describe("the catalog names in the reference", () => {
 
   it("has every routine of the goal table", () => {
     for (const { goal, routines } of GOAL_BUILTINS) {
-      for (const routine of routines) {
-        const [module, name] = routine.split(".");
-        assert.ok(byModule.get(module!)?.has(name!), `${goal}: ${routine} is not in the catalog`);
+      for (const call of routines) {
+        // A row names a routine, or the call that carries the args the goal needs: the routine is what precedes any `(`.
+        const [module, routine] = call.split("(")[0]!.split(".");
+        assert.ok(byModule.get(module!)?.has(routine!), `${goal}: ${call} is not in the catalog`);
       }
     }
   });
@@ -241,7 +242,7 @@ describe("the goal table", () => {
     }
   });
 
-  it("has a row for each goal of a body that offers every module: sell or buy, make tools, place a block, sleep, find blocks", () => {
+  it("has a row for each goal of a body that offers every module: sell or buy, make tools, place a block, sleep, find blocks, plan a craft, sleep at nightfall", () => {
     const rows = rowsOf(bodyFeatures(ALL));
     assert.equal(rows.length, GOAL_BUILTINS.length);
     assert.match(rowFor(rows, "trade.offers")[0] ?? "", /sell to or buy from a villager or wandering trader \| `trade\.offers`, `trade\.buy` \|$/);
@@ -249,6 +250,9 @@ describe("the goal table", () => {
     assert.match(rowFor(rows, "place.place")[0] ?? "", /place a block/);
     assert.match(rowFor(rows, "survival.sleep")[0] ?? "", /sleep in a bed/);
     assert.match(rowFor(rows, "explorer.scan")[0] ?? "", /find blocks/);
+    // The two rows that name a goal rather than its routine's module: a plan, and a sleep that carries its args.
+    assert.deepEqual(rowFor(rows, "crafter.plan"), ["| plan what a craft still needs | `crafter.plan` |"]);
+    assert.deepEqual(rowFor(rows, "survival.sleep(ctx, { wait: true })"), ["| sleep as soon as night falls | `survival.sleep(ctx, { wait: true })` |"]);
   });
 
   it("has a row only for the module a body offers, with what it uses", () => {
@@ -256,9 +260,10 @@ describe("the goal table", () => {
     assert.deepEqual(rowsOf(bodyFeatures(["move", "trade"])).map((row) => row.includes("`trade.offers`")), [true]);
     assert.deepEqual(rowsOf(bodyFeatures(["place"])).length, 1);
     assert.equal(rowFor(rowsOf(bodyFeatures(["place"])), "place.place").length, 1);
-    assert.deepEqual(rowsOf(bodyFeatures(["survival"])).length, 1);
+    // survival and crafter each carry two rows: the bed and the nightfall wait, the make and the plan.
+    assert.deepEqual(rowsOf(bodyFeatures(["survival"])).map((row) => row.includes("`survival.sleep")), [true, true]);
     assert.deepEqual(rowsOf(bodyFeatures(["explorer", "move", "dig"])).length, 1);
-    assert.deepEqual(rowsOf(bodyFeatures(["crafter", "move"])).length, 1);
+    assert.deepEqual(rowsOf(bodyFeatures(["crafter", "move"])).map((row) => row.includes("`crafter.")), [true, true]);
   });
 
   it("is shown on a body that has built-ins and no library, where a call is POST /call", () => {
