@@ -248,6 +248,9 @@ async function placeAt(ctx: RoutineContext, pos: Vec3, item: string): Promise<bo
   if (!current) throw new Error(`${pos} is not loaded`);
   const wanted = placedNames(ctx, name);
   if (wanted?.has(current.name)) return false;
+  // Before walking anywhere or clearing the cell: a missing item changes nothing in the world.
+  const stack = bot.inventory.items().find((i) => i.name === name);
+  if (!stack) throw new Error(`no ${name} in inventory`);
 
   // Torches, flowers, seeds, rails, and signs have no collision box: the server places them where a body is.
   const solid = bot.registry.blocksByName[name]?.boundingBox === "block";
@@ -295,8 +298,6 @@ async function placeAt(ctx: RoutineContext, pos: Vec3, item: string): Promise<bo
   }
   const tooFar = face.distance > MAX_REACH ? ` That face is more than ${MAX_REACH} blocks from the eyes: move next to ${pos} (move.to) and call again.` : "";
 
-  const stack = bot.inventory.items().find((i) => i.name === name);
-  if (!stack) throw new Error(`no ${name} in inventory`);
   await bot.equip(stack, "hand");
   const held = bot.heldItem;
   const heldSlot = held?.slot ?? -1;
@@ -333,7 +334,7 @@ export const place = defineRoutine(
   {
     name: "place.place",
     description:
-      "Place one block of `item` at `at` ({x,y,z} or [x,y,z]), digging out a different solid block first. Needs a solid neighbor to place against; it walks closer only when no neighbor's face is within 5 blocks of the eyes. It prefers a face on a plain block, and sneaks when it places against a block like a crafting table or chest, so no window opens. The bot steps out of the cell first for a block with a collision box; nothing is refused up front for other bodies. Throws, naming the cause, when the block did not end up in every cell it needs: a creature, player, boat or minecart in the way, a door's cell above or a bed's cell ahead not free. Returns false if the block was already there, true once it is in place (a torch or sign that went on a wall counts).",
+      "Place one block of `item` at `at` ({x,y,z} or [x,y,z]), digging out a different solid block first. Fails at once, before walking or digging, when the inventory holds no `item`. Needs a solid neighbor to place against; it walks closer only when no neighbor's face is within 5 blocks of the eyes. It prefers a face on a plain block, and sneaks when it places against a block like a crafting table or chest, so no window opens. The bot steps out of the cell first for a block with a collision box; nothing is refused up front for other bodies. Throws, naming the cause, when the block did not end up in every cell it needs: a creature, player, boat or minecart in the way, a door's cell above or a bed's cell ahead not free. Returns false if the block was already there, true once it is in place (a torch or sign that went on a wall counts).",
     args: z.object({ at: Position, item: z.string().min(1) }),
     returns: z.boolean(),
   },
