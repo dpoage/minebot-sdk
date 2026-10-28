@@ -6,6 +6,7 @@ import { after, describe, it } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
 import type { RunResult } from "../src/protocol/index.ts";
 import { removeScratch, startFakeBody } from "./fixtures/host/fake-body.ts";
+import { withoutCheckSkip } from "./fixtures/without-check-skip.ts";
 
 after(removeScratch);
 
@@ -40,7 +41,7 @@ describe("the program history of a body that ran programs", () => {
       await sleep(100);
 
       const heard = body.eventsOf("chat").find((event) => event.data.from === "alice")!;
-      const normalized = body.history().map((line) => ({ ...line, startedAt: typeof line.startedAt, ...("durationMs" in line && { durationMs: typeof line.durationMs }) }));
+      const normalized = body.history().map((line) => ({ ...line, startedAt: typeof line.startedAt, ...("durationMs" in line && { durationMs: typeof line.durationMs }), ...("logs" in line && { logs: withoutCheckSkip(String(line.logs)) }) }));
       assert.deepStrictEqual(normalized, [
         { seq: 1, startedAt: "string", code: "event.data.from === 'alice' /* process */", trigger: "greet", routine: "greet", on: ["chat"], status: "registered" },
         { seq: 2, startedAt: "string", code: source, status: "ok", result: ["string", "number"], logs: "", durationMs: "number" },

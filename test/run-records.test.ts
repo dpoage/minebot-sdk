@@ -11,6 +11,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { hungCause, restartedError } from "../src/protocol/host.ts";
 import type { RunResult } from "../src/protocol/index.ts";
 import { type FakeBody, GRACE_MS, removeScratch, startFakeBody } from "./fixtures/host/fake-body.ts";
+import { withoutCheckSkip } from "./fixtures/without-check-skip.ts";
 
 const runOf = (answer: { status: number; body: unknown }) => {
   assert.equal(answer.status, 200, JSON.stringify(answer.body));
@@ -197,8 +198,8 @@ describe("get_run keeps a finished run's record", () => {
       assert.deepEqual(body.history(), [], "no history file was written");
       assert.deepEqual(finishOf(body), { status: "ok", durationMs: "<ms>", run: 2, result: "2" });
       const record = body.host.keptRun(1);
-      assert.deepEqual({ ...record, startedAt: "<t>", durationMs: "<ms>" }, { seq: 1, startedAt: "<t>", status: "ok", durationMs: "<ms>", result: 1, logs: "" });
-      assert.equal(record.logs, "");
+      assert.deepEqual({ ...record, startedAt: "<t>", durationMs: "<ms>", logs: withoutCheckSkip(record.logs) }, { seq: 1, startedAt: "<t>", status: "ok", durationMs: "<ms>", result: 1, logs: "" });
+      assert.equal(withoutCheckSkip(record.logs), "");
     });
   });
 
@@ -273,11 +274,11 @@ describe("minebot runs prints a finished run's record", () => {
 
       const good = await cli(body, "runs", String(okSeq));
       assert.equal(good.code, 0, good.err);
-      assert.equal(good.out, `run ${okSeq}: status: ok (${ok.durationMs} ms)\n\nlogs:\nworking\n\nresult:\n42\n`);
+      assert.equal(withoutCheckSkip(good.out), `run ${okSeq}: status: ok (${ok.durationMs} ms)\n\nlogs:\nworking\n\nresult:\n42\n`);
 
       const bad = await cli(body, "runs", String(errorSeq));
       assert.equal(bad.code, 2, bad.err);
-      assert.match(bad.out, new RegExp(`^run ${errorSeq}: status: error \\(\\d+ ms\\)\\n\\nerror:\\nError: nope\\n`), "the record's error is the run's own, whole formatted error");
+      assert.match(withoutCheckSkip(bad.out), new RegExp(`^run ${errorSeq}: status: error \\(\\d+ ms\\)\\n\\n(?:logs:\\n\\n)?error:\\nError: nope\\n`), "the record's error is the run's own, whole formatted error");
 
       const latest = await cli(body, "runs");
       assert.equal(latest.code, 2, latest.err);
