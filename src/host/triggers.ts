@@ -419,13 +419,20 @@ export class Triggers {
         ...(entry.preempts && { preempted: true }),
       });
     };
-    let outcome: FinishedEnd;
+    let outcome: FinishedEnd & { diedDuringRun?: number };
     // What the run returned or threw: the end the run's delivery is about.
     let end: unknown;
     try {
       const ran = await this.#deps.run(def, entry.event, announce);
       end = ran;
-      outcome = { status: ran.status, durationMs: ran.durationMs, ...(ran.error !== undefined && { error: ran.error }), logs: ran.logs };
+      // A firing spanned the same deaths its run did: its end says how many, so reflex_finished does too.
+      outcome = {
+        status: ran.status,
+        durationMs: ran.durationMs,
+        ...(ran.error !== undefined && { error: ran.error }),
+        logs: ran.logs,
+        ...(ran.diedDuringRun !== undefined && { diedDuringRun: ran.diedDuringRun }),
+      };
     } catch (err) {
       if (err instanceof BusyError) {
         // A program slipped in between the check and the start; the firing waits for the next idle.

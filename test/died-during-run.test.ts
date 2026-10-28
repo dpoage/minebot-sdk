@@ -77,6 +77,22 @@ describe("diedDuringRun", { timeout: 60_000 }, () => {
     });
   });
 
+  it("is on the reflex_finished event's own data, and absent from a firing without a death", async () => {
+    await withBody(async (body) => {
+      body.writeRoutines({ mortal: dies(1), safe: "export default () => 1;\n" });
+      await body.ok("POST", "/bind", { kind: "reflex", name: "mortal-rfx", routine: "mortal", on: ["chat"], cooldownMs: 0 });
+      await body.ok("POST", "/bind", { kind: "reflex", name: "safe-rfx", routine: "safe", on: ["whisper"], cooldownMs: 0 });
+      body.events.push("chat", { from: "ana", message: "go" });
+      const died = await body.waitFor("reflex_finished");
+      assert.equal(died.data.name, "mortal-rfx");
+      assert.equal(died.data.diedDuringRun, 1, JSON.stringify(died.data));
+      body.events.push("whisper", { from: "ana", message: "go" });
+      const safe = await body.waitFor("reflex_finished", died.seq);
+      assert.equal(safe.data.name, "safe-rfx");
+      assert.equal(Object.hasOwn(safe.data, "diedDuringRun"), false, JSON.stringify(safe.data));
+    });
+  });
+
   it("survives the history line and the kept run that get_run serves", async () => {
     await withBody(async (body) => {
       const run = answered(await body.request("POST", "/run", { code: dies(2) }));

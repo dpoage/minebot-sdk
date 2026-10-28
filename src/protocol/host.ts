@@ -82,7 +82,7 @@ export function previewOf(end: { status: RunStatus; result?: unknown }, thrown?:
 export type FinishedEnd = { status: RunStatus; error?: string; logs?: string; durationMs: number };
 
 export type ProgramFinished = { status: RunStatus; durationMs: number; run: number; call?: string; error?: string; result?: string };
-export type TriggerFinished = { name: string; status: RunStatus; durationMs: number; error?: string; logs?: string };
+export type TriggerFinished = { name: string; status: RunStatus; durationMs: number; error?: string; logs?: string; diedDuringRun?: number };
 export type TriggerDisabled = { name: string; failures: number; reason: string };
 
 /**
@@ -116,9 +116,16 @@ function previewNamesError(error: string, preview: string): boolean {
 }
 
 /** The data of a `reflex_finished` event, built by the host that ran the firing and by the supervisor that ends it for a dead host. */
-export function triggerFinished(name: string, end: FinishedEnd): TriggerFinished {
+export function triggerFinished(name: string, end: FinishedEnd & { diedDuringRun?: number }): TriggerFinished {
   const logs = end.logs ? end.logs.slice(0, MAX_EVENT_LOGS) : undefined;
-  return { name, status: end.status, durationMs: end.durationMs, ...(end.error !== undefined && { error: end.error }), ...(logs && { logs }) };
+  return {
+    name,
+    status: end.status,
+    durationMs: end.durationMs,
+    ...(end.error !== undefined && { error: end.error }),
+    ...(logs && { logs }),
+    ...(end.diedDuringRun !== undefined && { diedDuringRun: end.diedDuringRun }),
+  };
 }
 
 /** Which definition of a reflex a firing ran: its name and when that definition was saved. */
