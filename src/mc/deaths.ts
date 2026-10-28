@@ -67,7 +67,8 @@ export function sensesOf(bot: Bot): Senses {
 export function trackDeaths(bot: Bot, carried: Senses = {}): Senses {
   const tracker: Tracker = { ...carried };
   trackers.set(bot, tracker);
-  const lang = bot.registry.language ?? {};
+  // A fake or half-built bot may have no registry yet; the message then reads as its key.
+  const lang = bot.registry?.language ?? {};
 
   // The server sends the death message just before the health update Mineflayer turns into `death`.
   bot._client.on("death_combat_event", (packet: { playerId?: unknown; message?: unknown }) => {

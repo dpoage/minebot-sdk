@@ -69,6 +69,26 @@ describe("low_oxygen", () => {
     tick(bot, 20);
     assert.deepEqual(types(events), []);
   });
+
+  it("treats an undefined air value as no data: it neither raises the event nor re-arms it", () => {
+    const bot = airBot(9);
+    const events = new EventLog();
+    watchGame(bot as unknown as Bot, events);
+    tick(bot);
+    assert.deepEqual(types(events), ["low_oxygen"]);
+
+    bot.oxygenLevel = undefined;
+    tick(bot, 3);
+    bot.oxygenLevel = 9;
+    tick(bot);
+    assert.deepEqual(types(events), ["low_oxygen"]);
+
+    bot.oxygenLevel = 10;
+    tick(bot);
+    bot.oxygenLevel = 9;
+    tick(bot);
+    assert.deepEqual(types(events), ["low_oxygen", "low_oxygen"]);
+  });
 });
 
 type ConnectionBot = EventEmitter & {
