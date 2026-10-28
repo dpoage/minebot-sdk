@@ -174,13 +174,15 @@ export class Connection {
       lastHealth = bot.health;
     });
 
-    // `wasNight` starts unknown on each connection, so the phase the body joins in is not an event.
+    // `wasNight` starts unknown on each connection, so the first time packet after a join announces
+    // the phase the body joined in; a later packet announces only a transition.
     let wasNight: boolean | undefined;
     bot.on("time", () => {
       const night = bot.time.timeOfDay >= NIGHT_START_TICK;
       if (night === wasNight) return;
       wasNight = night;
-      events.push(night ? "night" : "day", { timeOfDay: bot.time.timeOfDay });
+      if (night) events.push("night", { timeOfDay: bot.time.timeOfDay });
+      else events.push("day", { timeOfDay: bot.time.timeOfDay });
     });
     bot.on("chat", (from, message) => {
       if (from !== bot.username) events.push("chat", { from, message });

@@ -125,7 +125,7 @@ export const WaitInput = z.object({
 });
 
 export const EventsQuery = z.object({
-  since: z.coerce.number().int().nonnegative().default(0),
+  since: z.coerce.number().int().nonnegative().optional(),
   limit: z.coerce.number().int().positive().max(1000).default(200),
 });
 

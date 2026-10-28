@@ -164,9 +164,9 @@ export class Digest {
 
   /**
    * Reads the log from `from` to its end, a page at a time, and moves the cursor there; nothing moves
-   * when a page fails. A page from a log that restarted (its events' `body` is not the one last seen) is
-   * dropped and the new log is read from seq 0. A restart the body only shows by its seq numbers
-   * beginning again was already answered from the start by the body itself.
+   * when a page fails. A cursor from before a body restart is answered from the fresh log's first
+   * event: the body numbers a new log above every seq the previous one issued. A page whose events
+   * name another `body` is dropped and read again from seq 0.
    */
   async #read(client: EventSource, from: number, keep: boolean): Promise<LoggedEvent[]> {
     let since = from;

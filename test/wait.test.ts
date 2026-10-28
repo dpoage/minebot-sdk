@@ -37,8 +37,9 @@ describe("EventLog.wait", () => {
     log.push("chat", chat("ana", "hi"));
     log.push("chat", chat("ben", "hello"));
     log.push("night", { timeOfDay: 12542 });
-    assert.equal((await log.wait({ since: 0, types: ["chat"] })).event?.seq, 1);
-    assert.equal((await log.wait({ since: 1, types: ["chat"] })).event?.seq, 2);
+    const first = log.since(0).events[0]!.seq;
+    assert.equal((await log.wait({ since: 0, types: ["chat"] })).event?.data.message, "hi");
+    assert.equal((await log.wait({ since: first, types: ["chat"] })).event?.data.message, "hello");
   });
 
   it("waits only for new events by default", async () => {
@@ -58,7 +59,7 @@ describe("EventLog.wait", () => {
     log.push("whisper", chat("Ben", "psst"));
     const got = await pending;
     assert.equal(got.event?.type, "whisper");
-    assert.equal(got.next, 2);
+    assert.equal(got.next, got.event?.seq);
     assert.equal(got.timedOut, false);
   });
 
@@ -70,10 +71,10 @@ describe("EventLog.wait", () => {
     mock.timers.tick(100);
     const timedOut = await pending;
     assert.deepEqual([timedOut.event, timedOut.timedOut], [null, true]);
-    assert.equal(timedOut.next, 2);
+    assert.equal(timedOut.next, log.since().latest);
     const again = log.wait({ types: ["chat"], since: timedOut.next, timeoutMs: 100 });
     log.push("chat", chat("ana", "late"));
-    assert.equal((await again).event?.seq, 3);
+    assert.equal((await again).event?.data.message, "late");
   });
 
   it("settles every waiter that matches the event", async () => {
@@ -81,7 +82,9 @@ describe("EventLog.wait", () => {
     const matched = [log.wait({ types: ["chat"] }), log.wait({ from: "ana" })];
     const unmatched = log.wait({ types: ["night"] });
     log.push("chat", chat("ana", "hello"));
-    assert.deepEqual((await Promise.all(matched)).map((r) => r.event?.seq), [1, 1]);
+    const settled = await Promise.all(matched);
+    assert.deepEqual(settled.map((r) => r.event?.type), ["chat", "chat"]);
+    assert.equal(settled[0]!.event?.seq, settled[1]!.event?.seq);
     mock.timers.tick(60_000);
     assert.equal((await unmatched).timedOut, true);
   });
@@ -93,7 +96,7 @@ describe("EventLog.wait", () => {
     gone.abort();
     log.push("chat", chat("ana", "nobody is listening"));
     assert.equal((await pending).event, null);
-    const next = log.wait({ types: ["chat"], since: 1, timeoutMs: 1000 });
+    const next = log.wait({ types: ["chat"], since: log.since().latest, timeoutMs: 1000 });
     log.push("chat", chat("ben", "still here"));
     assert.equal((await next).event?.data.message, "still here");
   });
@@ -101,7 +104,8 @@ describe("EventLog.wait", () => {
   it("restarts from the beginning when the cursor is ahead of the log", async () => {
     const log = new EventLog();
     log.push("night", { timeOfDay: 12542 });
-    assert.equal((await log.wait({ since: 5, types: ["night"], timeoutMs: 1000 })).event?.seq, 1);
+    const got = await log.wait({ since: Number.MAX_SAFE_INTEGER, types: ["night"], timeoutMs: 1000 });
+    assert.equal(got.event?.type, "night");
   });
 });
 

@@ -51,6 +51,10 @@ export interface RunRecord {
 }
 
 export interface BodyEvent {
+  /**
+   * The log's number for this event. It never goes back after a body restarts: a fresh log's seqs
+   * start above any seq the previous log could have issued, so an old cursor hides nothing.
+   */
   seq: number;
   time: number;
   type: string;
@@ -58,9 +62,12 @@ export interface BodyEvent {
 }
 
 export interface EventsResponse {
+  /** The events, oldest first: with no cursor, the newest `limit` of them. */
   events: BodyEvent[];
   /** Pass as `since` on the next call to receive only newer events. */
   next: number;
+  /** The log's newest seq: anything pushed later is newer than every event here. */
+  latest: number;
 }
 
 /** Filters of a blocking wait. Every given filter must match the same event. */

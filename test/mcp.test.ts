@@ -12,18 +12,18 @@ import type { BodyFeatures } from "../src/protocol/index.ts";
 const EVERYTHING: BodyFeatures = { wiki: "write", lessons: true, milestones: true, reflexes: true, routines: true, builtins: ["move"] };
 const CLI = [...process.execArgv, path.join(import.meta.dirname, "..", "src", "cli.ts")];
 
-const CORE = ["api_reference", "bind_routine", "builtin_docs", "call_routine", "get_events", "get_run", "observe", "run_program", "send_chat", "stop_program", "wait_for"];
-// With no body reachable, the probe-gated tools (call_routine, bind_routine, builtin_docs) are not
-// served yet; send_chat is, like the rest of the ungated core.
-const NO_BODY = ["api_reference", "get_events", "get_run", "observe", "run_program", "send_chat", "stop_program", "wait_for"];
+const CORE = ["api_reference", "bind_routine", "builtin_docs", "builtin_search", "call_routine", "get_events", "get_run", "notes_list", "notes_set", "observe", "run_program", "send_chat", "stop_program", "wait_for"];
+// With no body reachable, the probe-gated tools (call_routine, bind_routine, builtin_docs, builtin_search)
+// are not served yet; send_chat and the notes tools are, like the rest of the ungated core.
+const NO_BODY = ["api_reference", "get_events", "get_run", "notes_list", "notes_set", "observe", "run_program", "send_chat", "stop_program", "wait_for"];
 const ROUTINE_TOOLS = ["bind_routine", "call_routine", "list_routines", "routine_revert", "routine_save", "routine_source", "routine_versions", "unbind_routine"];
 const BUILTIN_TOOLS = ["builtin_docs", "builtin_search", "builtin_source", "list_builtins"];
 const FULL = [
   ...CORE,
-  "notes_delete", "notes_list", "notes_set", "status",
+  "notes_delete", "status",
   "wiki_add_lesson", "wiki_list", "wiki_read", "wiki_search",
   "list_routines", "routine_revert", "routine_save", "routine_source", "routine_versions", "unbind_routine",
-  "builtin_search", "builtin_source", "list_builtins",
+  "builtin_source", "list_builtins",
 ].sort();
 
 /** A body that answers the feature probe with `features`; its URL, and a way to stop it. */
@@ -80,12 +80,12 @@ describe("minebot mcp tool sets", () => {
     }
   });
 
-  it("serves the built-in tools exactly when the body offers built-ins, builtin_docs in the core set and the rest with --tools full", async () => {
+  it("serves the built-in tools exactly when the body offers built-ins, builtin_docs and builtin_search in the core set and the rest with --tools full", async () => {
     const { server, url: none } = await stubBody({ ...EVERYTHING, builtins: [] });
     try {
       for (const args of [[], ["--tools", "full"]]) {
         assert.deepEqual((await tools(none, ...args)).filter((name) => BUILTIN_TOOLS.includes(name)), [], `no built-ins, ${args.join(" ")}`);
-        assert.deepEqual((await tools(url, ...args)).filter((name) => BUILTIN_TOOLS.includes(name)), args.length === 0 ? ["builtin_docs"] : BUILTIN_TOOLS, `built-ins, ${args.join(" ")}`);
+        assert.deepEqual((await tools(url, ...args)).filter((name) => BUILTIN_TOOLS.includes(name)), args.length === 0 ? ["builtin_docs", "builtin_search"] : BUILTIN_TOOLS, `built-ins, ${args.join(" ")}`);
       }
     } finally {
       server.close();

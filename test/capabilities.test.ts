@@ -258,7 +258,7 @@ function capabilitiesOn(features: BodyFeatures): Capability[] {
 }
 
 /** The gated tools the core set serves: the rest of the gated tools are in the full set only. */
-const CORE_GATED_TOOLS = ["builtin_docs", "call_routine", "bind_routine"];
+const CORE_GATED_TOOLS = ["builtin_docs", "builtin_search", "call_routine", "bind_routine"];
 const ROUTINE_TOOLS = ["call_routine", "bind_routine", "list_routines", "routine_save", "routine_source", "routine_versions", "routine_revert", "unbind_routine"];
 
 /** The capability a capability-gated tool belongs to. */

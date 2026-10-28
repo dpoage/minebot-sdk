@@ -3,11 +3,11 @@
 // The default `core` tool set is what an agent needs to drive a body through runs: observe, run,
 // stop, wait, events, a finished run's outcome (get_run), chat, and the references. send_chat is core
 // although a run's ctx has bot.chat: while another run holds the slot a new run is refused, but chat is not.
-// Everything else (notes, status, wiki management) is a ctx member, so `core` leaves those tools out;
-// `full` serves them as tools too. Tools for optional features exist only while the body offers the
-// feature, so an agent does not learn about features its body lacks. `toolPlan` derives the gated
-// tool set from the capability table; the same function is what the capability test turns against
-// every feature.
+// Everything else (status, note deletion, wiki management) is a ctx member, so `core` leaves those
+// tools out; `full` serves them as tools too. Notes are core: writing one must not cost the run slot.
+// Tools for optional features exist only while the body offers the feature, so an agent does not
+// learn about features its body lacks. `toolPlan` derives the gated tool set from the capability
+// table; the same function is what the capability test turns against every feature.
 import { McpServer, type RegisteredTool } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
@@ -37,10 +37,14 @@ import {
 import { formatBound, formatBuiltinHits, formatBuiltins, formatHits, formatLibrary, formatNotes, formatRevertedRoutine, formatRoutineVersions, formatRun, formatSavedRoutine, formatStatus } from "./render.ts";
 import { BodyClient } from "./client.ts";
 import { Digest } from "./digest.ts";
+import { EVENT_TYPES } from "../protocol/event-types.ts";
 
 type ToolResult = { content: { type: "text"; text: string }[]; isError?: boolean };
 
 const json = (value: unknown) => JSON.stringify(value, null, 2);
+
+/** The one sentence listing every event type the body pushes; the event tools' descriptions carry it, generated from the catalog. */
+const EVENT_TYPES_LINE = `Event types: ${Object.keys(EVENT_TYPES).join(", ")}.`;
 
 const API_DOC_FALLBACK = "Call the api_reference tool for how a run works and what ctx holds.";
 
@@ -49,7 +53,21 @@ export const TOOL_SETS = ["core", "full"] as const;
 export type ToolSet = (typeof TOOL_SETS)[number];
 
 /** The tools of the core set. A run reaches everything else through its context (`ctx`). */
-const CORE_TOOLS: Readonly<Record<string, true>> = { observe: true, run_program: true, stop_program: true, wait_for: true, get_events: true, get_run: true, api_reference: true, builtin_docs: true, call_routine: true, bind_routine: true };
+const CORE_TOOLS: Readonly<Record<string, true>> = {
+  observe: true,
+  run_program: true,
+  stop_program: true,
+  wait_for: true,
+  get_events: true,
+  get_run: true,
+  api_reference: true,
+  builtin_docs: true,
+  builtin_search: true,
+  call_routine: true,
+  bind_routine: true,
+  notes_list: true,
+  notes_set: true,
+};
 
 /** Which kinds of name a call takes: an action's (the body has routines) and a built-in's (it has built-ins). */
 export type CallKinds = Pick<Record<Capability, boolean>, "routines" | "builtins">;
@@ -108,8 +126,8 @@ export function toolPlan(features: BodyFeatures, toolSet: ToolSet): Record<strin
     bind_routine: {
       enabled: caps.routines,
       description: caps.reflexes
-        ? "Bind a name to a saved routine (a TypeScript module in this body's routine library). kind \"action\": call_routine runs it by name with JSON args. kind \"reflex\": the body calls the routine on its own whenever an event of the types in `on` arrives (hurt, chat, night, ...), narrowed by when, from, and match, and limited by cooldown_ms, timeout_ms, preempt, priority, and enabled; the routine is called as (ctx, { event }) with event { seq, type, time, data }. A reflex cannot listen to reflex_* events. A reflex that fails 3 times in a row disables itself; bind it again to enable it. Pass `source` to save the module as <routine>.ts and bind it in one call; a refused bind leaves the saved module. Bindings are kept on the body and survive restarts."
-        : "Bind a name to a saved routine (a TypeScript module in this body's routine library) as an action: call_routine runs it by name with JSON args. Pass `source` to save the module as <routine>.ts and bind it in one call; a refused bind leaves the saved module. Bindings are kept on the body and survive restarts.",
+        ? `Bind a name to a saved routine (a TypeScript module in this body's routine library). kind "action": call_routine runs it by name with JSON args. kind "reflex": the body calls the routine on its own whenever an event of the types in \`on\` arrives, narrowed by when, from, and match, and limited by cooldown_ms, timeout_ms, preempt, priority, and enabled; the routine is called as (ctx, { event }) with event { seq, type, time, data }. A reflex cannot listen to reflex_* events. A reflex that fails 3 times in a row disables itself; bind it again to enable it. Pass \`source\` to save the module as <routine>.ts and bind it in one call; a refused bind leaves the saved module. Bindings are kept on the body and survive restarts. ${EVENT_TYPES_LINE}`
+        : `Bind a name to a saved routine (a TypeScript module in this body's routine library) as an action: call_routine runs it by name with JSON args. Pass \`source\` to save the module as <routine>.ts and bind it in one call; a refused bind leaves the saved module. Bindings are kept on the body and survive restarts.`,
     },
     list_routines: {
       enabled: caps.routines,
@@ -263,13 +281,13 @@ export async function serveMcp(bodyName: string, toolSet: ToolSet): Promise<void
   server.registerTool(
     "get_events",
     {
-      description:
-        "Events since a cursor: chat, whispers, system messages, damage, deaths, respawns, players joining or leaving, disconnects, and what the player did or noticed (item_picked_up, block_broken, block_placed, item_crafted, hostile_near, low_health, low_food). Pass the returned `next` as `since` on the next call.",
+      description: `The body's event log, oldest first. Without \`since\` it returns the newest \`limit\` events; with \`since\` (a \`next\` or \`latest\` from an earlier answer) the oldest events after it. Every answer names the log's \`latest\` seq, and \`next\` goes into the next call's \`since\`. ${EVENT_TYPES_LINE}`,
       inputSchema: {
-        since: z.number().int().nonnegative().optional().describe("Cursor from a previous call. Omit for all buffered events."),
+        since: z.number().int().nonnegative().optional().describe("Cursor from a previous answer (`next`): return only events after it. Omit for the newest events."),
+        limit: z.number().int().min(1).max(1000).optional().describe("At most this many events, 1-1000. Default 200."),
       },
     },
-    ({ since }) => call(async (c) => json(await c.events(since))),
+    ({ since, limit }) => call(async (c) => json(await c.events(since, limit))),
   );
 
   server.registerTool(
@@ -319,8 +337,7 @@ export async function serveMcp(bodyName: string, toolSet: ToolSet): Promise<void
   server.registerTool(
     "wait_for",
     {
-      description:
-        "The cheap way to idle until something happens: blocks until an event that matches arrives, then returns it. Cheaper than polling get_events or looping sleep in a program: nothing runs until the event lands. Waits for any event type (chat, whisper, system, hurt, death, night, day, hostile_near when a hostile creature comes within 16 blocks, low_health below 8, low_food below 6, item_picked_up, block_broken, ...) or filters it.",
+      description: `The cheap way to idle until something happens: blocks until an event that matches arrives, then returns it. Cheaper than polling get_events or looping sleep in a program: nothing runs until the event lands. Waits for any event type or filters it; a wait for day (or night) while that phase already holds answers at once, including right after the body joined in it. ${EVENT_TYPES_LINE}`,
       inputSchema: {
         types: WaitInput.shape.types.describe("Event types, e.g. ['chat'] or ['night', 'day']; any of them matches."),
         from: WaitInput.shape.from.describe("Only chat or whisper events sent by this player."),
@@ -525,8 +542,8 @@ export async function serveMcp(bodyName: string, toolSet: ToolSet): Promise<void
   }
 
   for (const tool of [listBuiltins, builtinDocs, builtinSearch, builtinSource, wikiSearch, wikiRead, wikiList, addLesson, callRoutine, bindRoutine, listRoutines, routineSave, routineSource, routineVersions, routineRevert, unbindRoutine]) tool.disable();
-  // Ungated tools outside the core set: a run's context has notes and status().
-  if (toolSet !== "full") for (const tool of [status, notesList, notesSet, notesDelete]) tool.disable();
+  // Ungated tools outside the core set: a run's context has status() and notes_delete.
+  if (toolSet !== "full") for (const tool of [status, notesDelete]) tool.disable();
   await sync();
   await server.connect(new StdioServerTransport());
 }

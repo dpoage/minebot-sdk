@@ -54,7 +54,7 @@ A module is either a primitive or a composite. A primitive does one thing. A com
 - `minebot builtins search "collect logs"` ranks routines and modules by name, description, and argument names (`--limit <n>`, default 5).
 - `minebot builtins source move` prints the source file of a module. Read it when you need to know exactly what a routine does.
 
-The MCP tool `builtin_docs` prints the reference. With `--tools full`, the tools `list_builtins`, `builtin_search`, and `builtin_source` do the other three.
+The MCP tools `builtin_docs` and `builtin_search` print the reference and search it; with `--tools full`, `list_builtins` and `builtin_source` do the other two.
 
 The body counts every call of a built-in routine, including the calls that one routine makes to another and the calls from your own code, and it keeps the counts across restarts. When two routines do the same job, call the one that works, and read the last failure before you call the other.
 
