@@ -194,6 +194,14 @@ describe("the facts table", () => {
     }
   }
 
+  // P6.5: using, milking or trading with a creature is activateEntity, not useOn/interact.
+  it("teaches that using a creature is bot.activateEntity", () => {
+    const row = factRows(programApiDoc(FULL)).find((candidate) => candidate.wrong.includes("bot.useOn("));
+    assert.ok(row, "no useOn/interact row");
+    assert.match(row.wrong, /bot\.interact\(entity\)/, row.wrong);
+    assert.equal(row.right, "`await bot.activateEntity(entity)` (use, milk, trade)");
+  });
+
   it("is the data BOT_FACTS holds, one row each, and no row is without both cells", () => {
     const rows = factRows(programApiDoc(FULL));
     assert.deepEqual(rows.map(({ wrong, right }) => ({ wrong, right })), BOT_FACTS);
@@ -253,6 +261,10 @@ describe("the goal table", () => {
     // The two rows that name a goal rather than its routine's module: a plan, and a sleep that carries its args.
     assert.deepEqual(rowFor(rows, "crafter.plan"), ["| plan what a craft still needs | `crafter.plan` |"]);
     assert.deepEqual(rowFor(rows, "survival.sleep(ctx, { wait: true })"), ["| sleep as soon as night falls | `survival.sleep(ctx, { wait: true })` |"]);
+    // P6.5: the goals Rivet hand-rolled, each naming the built-in that does it.
+    assert.deepEqual(rowFor(rows, "explorer.surface"), ["| climb out of a pit or hole | `explorer.surface` |"]);
+    assert.deepEqual(rowFor(rows, "gatherer.gather"), ["| mine blocks and collect what drops | `gatherer.gather` |"]);
+    assert.deepEqual(rowFor(rows, "gatherer.collectDrops"), ["| pick up items on the ground | `gatherer.collectDrops` |"]);
   });
 
   it("has a row only for the module a body offers, with what it uses", () => {
@@ -262,7 +274,8 @@ describe("the goal table", () => {
     assert.equal(rowFor(rowsOf(bodyFeatures(["place"])), "place.place").length, 1);
     // survival and crafter each carry two rows: the bed and the nightfall wait, the make and the plan.
     assert.deepEqual(rowsOf(bodyFeatures(["survival"])).map((row) => row.includes("`survival.sleep")), [true, true]);
-    assert.deepEqual(rowsOf(bodyFeatures(["explorer", "move", "dig"])).length, 1);
+    // explorer carries two rows now: the scan, and climbing out (P6.5).
+    assert.deepEqual(rowsOf(bodyFeatures(["explorer", "move", "dig"])).map((row) => row.includes("`explorer.")), [true, true]);
     assert.deepEqual(rowsOf(bodyFeatures(["crafter", "move"])).map((row) => row.includes("`crafter.")), [true, true]);
   });
 

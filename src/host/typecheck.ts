@@ -11,7 +11,7 @@ import { PACKAGE_ROOT } from "../package.ts";
 import type { TypeCheck } from "../protocol/index.ts";
 import { ROUTINE_COMPILER_OPTIONS } from "../protocol/routine-tsconfig.ts";
 import { RoutineLibrary } from "./routines/library.ts";
-import { checkedText, type Diagnostic, lineColumn, parseDiagnostics, refusing, renderRefusal, RUN_CHECK_FILE } from "./typecheck-run.ts";
+import { checkedText, type Diagnostic, lineColumn, parseDiagnostics, readSuggestions, refusing, renderRefusal, RUN_CHECK_FILE } from "./typecheck-run.ts";
 
 const run = promisify(execFile);
 
@@ -342,7 +342,9 @@ export async function typeCheckRun(libraryDir: string | undefined, source: strin
   const text = checkedText(source);
   const answered = (found: Diagnostic[]): TypeCheck => {
     const refused = refusing(found, text);
-    return refused.length > 0 ? { status: "failed", errors: refused.map((d) => renderRefusal(d, text)) } : { status: "passed" };
+    if (refused.length > 0) return { status: "failed", errors: refused.map((d) => renderRefusal(d, text)) };
+    const notes = readSuggestions(found, text);
+    return notes.length > 0 ? { status: "passed", notes } : { status: "passed" };
   };
   try {
     const state = await warmState();

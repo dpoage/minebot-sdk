@@ -9,6 +9,7 @@ import path from "node:path";
 import { after, describe, it } from "node:test";
 import { checkedText } from "../src/host/typecheck-run.ts";
 import { closeRunCheck, typeCheckRun } from "../src/host/typecheck.ts";
+import { Position } from "../src/mc/position.ts";
 import type { TypeCheck } from "../src/protocol/index.ts";
 
 describe("checkedText", () => {
@@ -161,11 +162,14 @@ describe("typeCheckRun", () => {
   });
 
   it("runs a source whose only errors are outside the set: a missing member that is not called, a type mismatch, an unresolved module, an implicit any", { timeout: 120_000 }, async () => {
-    await passes("export default async (ctx) => {\n  const p = ctx.bot.pathfinderless;\n  const n: number = 'x';\n  return [p, n];\n};\n");
+    const read = await typeCheckRun(await emptyLibrary(), "export default async (ctx) => {\n  const p = ctx.bot.pathfinderless;\n  const n: number = 'x';\n  return [p, n];\n};\n");
+    assert.equal(read.status, "passed", JSON.stringify(read));
     await passes("import { x } from 'no-such-package';\nexport default (ctx) => x;\n");
     await passes("export default async (ctx, args) => {\n  const f = (a) => a;\n  return f(args.n);\n};\n");
     await passes("export default async (ctx) => (ctx.bot as any).selectItem(null);\n");
-    await passes("export default async (ctx) => ctx.bot.selectItem?.(null);\n");
+    // An optional call is a read that may not happen: it runs.
+    const optional = await typeCheckRun(await emptyLibrary(), "export default async (ctx) => ctx.bot.selectItem?.(null);\n");
+    assert.equal(optional.status, "passed", JSON.stringify(optional));
   });
 
   it("runs a source with a grammar error, which Node's parser answers with its own hints", { timeout: 120_000 }, async () => {
@@ -197,5 +201,110 @@ describe("typeCheckRun", () => {
     const source = "export default async (ctx) => ctx.bot.selectItem(null);\n";
     assert.deepEqual(await typeCheckRun(dir, source, { budgetMs: 1 }), { status: "skipped", reason: "the type check took longer than 0.001 s" });
     assert.deepEqual(await typeCheckRun(dir, source, { signal: AbortSignal.abort() }), { status: "skipped", reason: "the type check was aborted" });
+  });
+
+  // P6.1: a use-before-declaration refuses, and a wrong argument refuses exactly when the call is the
+  // bot's or a built-in routine's.
+  it("refuses a block-scoped name used before its declaration", { timeout: 120_000 }, async () => {
+    const errors = await refused("export default async (ctx) => {\n  x;\n  const x = 1;\n};\n");
+    assert.equal(errors.length, 1, errors.join("\n"));
+    assert.match(errors[0]!, /^line 2:3 Block-scoped variable 'x' used before its declaration/);
+  });
+
+  it("refuses a wrong argument of a bot member and of a built-in routine export, at their argument", { timeout: 120_000 }, async () => {
+    const bot = await refused("export default async (ctx) => {\n  await ctx.bot.craft(null!, 1, true);\n};\n");
+    assert.equal(bot.length, 1, bot.join("\n"));
+    assert.match(bot[0]!, /^line 2:\d+ Argument of type 'boolean' is not assignable to parameter of type 'Block'/);
+    const ns = await refused('import * as inventory from "minebot-sdk/routines/inventory";\nexport default async (ctx) => {\n  await inventory.list(ctx, 5);\n};\n');
+    assert.equal(ns.length, 1, ns.join("\n"));
+    assert.match(ns[0]!, /^line 3:\d+ Argument of type 'number' is not assignable to parameter of type/);
+    const named = await refused('import { list } from "minebot-sdk/routines/inventory";\nexport default async (ctx) => {\n  await list(ctx, 5);\n};\n');
+    assert.match(named[0]!, /^line 3:\d+ Argument of type 'number' is not assignable/);
+    // A run's own function and a method of its own class are not the bot's, so their wrong arguments run.
+    await passes("const f = (n: number) => n;\nexport default () => f('x');\n");
+    await passes("class K { m(n: number) { return n; } }\nexport default () => new K().m('x');\n");
+    // An alias of the bot is an ordinary value to the check (the reference says so; R3).
+    await passes("export default async (ctx) => {\n  const b = ctx.bot;\n  b.chat(1);\n};\n");
+    // The history replay's runs that succeeded: a string dispatch (an event name, a control state), a
+    // possibly-missing block, and a handler with different parameters run; only a value the runtime
+    // enforces refuses.
+    await passes(
+      [
+        "export default async (ctx) => {",
+        "  const e = 'time';",
+        "  ctx.bot.on(e, () => {});",
+        "  ctx.bot.on('time', (n: number) => n);",
+        "  const state: string = 'jump';",
+        "  ctx.bot.setControlState(state, true);",
+        "  const block = ctx.bot.blockAt(ctx.bot.entity.position);",
+        "  await ctx.bot.activateBlock(block!);",
+        "};",
+        "",
+      ].join("\n"),
+    );
+  });
+
+  // P6.2: a missing-member read does not refuse, and its line names the real member.
+  it("carries a did-you-mean line for a missing-member read of an Entity, Vec3, Block or Bot value", { timeout: 120_000 }, async () => {
+    const check = await typeCheckRun(await emptyLibrary(), "export default async (ctx) => {\n  const e = ctx.bot.entity;\n  return e.valid;\n};\n");
+    assert.ok(check.status === "passed", JSON.stringify(check));
+    assert.deepEqual(check.notes, ["line 3:12 Property 'valid' does not exist on type 'Entity'. Did you mean 'isValid'?"]);
+    const dead = await typeCheckRun(await emptyLibrary(), "export default async (ctx) => {\n  const e = ctx.bot.entity;\n  return e.dead;\n};\n");
+    assert.ok(dead.status === "passed", JSON.stringify(dead));
+    assert.match(dead.notes?.[0] ?? "", /^line 3:\d+ Property 'dead' does not exist on type 'Entity'; the body removes an entity .* read e\.isValid$/);
+    const vec = await typeCheckRun(await emptyLibrary(), "export default async (ctx) => {\n  const p = ctx.bot.entity.position;\n  return p.lengthSq;\n};\n");
+    assert.match(vec.status === "passed" ? (vec.notes?.[0] ?? "") : "", /^line 3:\d+ Property 'lengthSq' does not exist on type 'Vec3'; use v\.norm\(\)/);
+    const block = await typeCheckRun(await emptyLibrary(), "export default async (ctx) => {\n  const b = ctx.bot.blockAt(ctx.bot.entity.position)!;\n  return b.nbt;\n};\n");
+    assert.match(block.status === "passed" ? (block.notes?.[0] ?? "") : "", /^line 3:\d+ Property 'nbt' does not exist on type 'Block'; read block\.blockEntity/);
+    const bot = await typeCheckRun(await emptyLibrary(), "export default async (ctx) => {\n  return ctx.bot.isSneaking;\n};\n");
+    assert.match(bot.status === "passed" ? (bot.notes?.[0] ?? "") : "", /^line 2:\d+ Property 'isSneaking' does not exist on type 'Bot'; bot\.isSneaking does not exist: use bot\.getControlState\("sneak"\)$/);
+    // A called member is still refused, not suggested (the refusal carries it instead).
+    await refused("export default async (ctx) => {\n  ctx.bot.isSneaking();\n};\n");
+  });
+
+  // P6.3: the typings declare the runtime members mb-znn.18 names.
+  it("declares the runtime bot, block, window and entity members a run uses, so it is not refused", { timeout: 120_000 }, async () => {
+    await passes(
+      [
+        'import { Vec3 } from "minebot-sdk/routine";',
+        "export default async (ctx) => {",
+        "  const b = ctx.bot;",
+        '  const player = b.findPlayer("x");',
+        "  const players = b.findPlayers();",
+        "  const alive = b.isAlive;",
+        "  const rain = b.rainState;",
+        '  await b.signBook(0, ["a"], "me", "t");',
+        "  const block = b.blockAt(b.entity.position)!;",
+        "  const bed = b.parseBedMetadata(block);",
+        "  const w = b.currentWindow!;",
+        "  w.dragClick({ mode: 0, mouseButton: 0, slot: 0 }, 0);",
+        "  w.doubleClick({ mode: 0, mouseButton: 0, slot: 0 });",
+        "  const slot = w.lastEmptySlotRange(0, 1);",
+        "  const e = b.entity;",
+        "  return [player, players, alive, rain, bed, slot, block._properties, block.computedStates, e.isInWater, e.isInLava, e.eyeHeight, e.attributes, new Vec3(1, 2, 3).norm()];",
+        "};",
+        "",
+      ].join("\n"),
+    );
+  });
+
+  // P6.4: a computed number[] is a point; a {x,y,z} check is not loosened.
+  it("accepts a computed number[] where a built-in takes a point, and still checks an object point", { timeout: 120_000 }, async () => {
+    await passes(
+      [
+        'import * as move from "minebot-sdk/routines/move";',
+        "export default async (ctx) => {",
+        "  const x = 1, y = 2, z = 3;",
+        "  const p: number[] = [x, y, z];",
+        "  await move.to(ctx, { position: p });",
+        "};",
+        "",
+      ].join("\n"),
+    );
+    // The runtime schema is unchanged: three numbers, whether in an array or an object.
+    assert.equal(Position.safeParse([1, 2, 3]).success, true);
+    assert.equal(Position.safeParse({ x: 1, y: 2, z: 3 }).success, true);
+    assert.equal(Position.safeParse([1, 2]).success, false);
+    assert.equal(Position.safeParse({ x: 1, y: 2 }).success, false);
   });
 });

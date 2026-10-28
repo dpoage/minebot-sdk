@@ -88,6 +88,7 @@ export const BOT_FACTS: readonly BotFact[] = [
   { wrong: "`bot.isRaining()`", right: "`bot.isRaining` (a boolean, not a method)" },
   { wrong: "`bot.daylight()`, `bot.time.moment`", right: "`bot.time.timeOfDay` (ticks, 0-23999) or `bot.time.isDay` (a boolean)" },
   { wrong: "`pos.floored()` on a plain `{ x, y, z }`", right: "`new Vec3(x, y, z).floored()` (only a Vec3 has `.floored()`)" },
+  { wrong: "`bot.useOn(entity)`, `bot.interact(entity)`", right: "`await bot.activateEntity(entity)` (use, milk, trade)" },
 ];
 
 /** One row of the goal table: what an agent wants to do, and the built-in routines (`<module>.<routine>`) that already do it, written as a call (`<module>.<routine>(ctx, { ... })`) where the goal needs args. */
@@ -109,6 +110,9 @@ export const GOAL_BUILTINS: readonly GoalBuiltin[] = [
   { goal: "find blocks (ores, logs, water, chests) around you", routines: ["explorer.scan"] },
   { goal: "plan what a craft still needs", routines: ["crafter.plan"] },
   { goal: "sleep as soon as night falls", routines: ["survival.sleep(ctx, { wait: true })"] },
+  { goal: "climb out of a pit or hole", routines: ["explorer.surface"] },
+  { goal: "mine blocks and collect what drops", routines: ["gatherer.gather"] },
+  { goal: "pick up items on the ground", routines: ["gatherer.collectDrops"] },
 ];
 
 /** The goal rows a body can show: those whose routines are all of modules it offers. */
@@ -174,11 +178,14 @@ export function programApiDoc(features: BodyFeatures): string {
     : " This body has no library of saved modules, so a relative import fails.";
   const facts = BOT_FACTS.map(({ wrong, right }) => `| ${wrong} | ${right} |`).join("\n");
   const slot = caps.reflexes ? "runs, calls and reflex firings" : "runs and calls";
+  // What a wrong argument can be a call of, named only as far as the body's capabilities allow: the import
+  // path is told only where a routine library can import it, and a built-in only where one is offered.
+  const callee = caps.builtins && caps.routines ? "the bot or a module under `minebot-sdk/routines/`" : caps.builtins ? "the bot or a built-in routine" : "the bot";
   // The routine-related sections: the library's, then the built-ins' (each only where the body offers it).
   const routines = `${caps.routines ? `\n\n${routinesDoc(features)}` : ""}${caps.builtins ? `\n\n${builtinsDoc(features)}` : ""}`;
   return `A run is a TypeScript or JavaScript module that the body type-checks, then evaluates inside the bot host, against a live Mineflayer bot, afresh each time. Its result is its default export: \`export default async (ctx, args) => result\` is called with the run's context and the run's args (a JSON object, {} when none) and its awaited return is the result; any other default export is the result itself (awaited); a module without a default export has no result. A \`return\` statement outside a function is a syntax error, so the module cannot end with one. The result is sent back as JSON.
 
-The type check runs before the run starts. A run with errors that would make it fail when it runs (such as a name that is not defined, a call of a member that does not exist, or the wrong number of arguments) does not start: its status is error and the errors are listed, each with its line and column; fix them and run again. Other type errors do not stop a run. Where the body cannot load TypeScript the check is skipped, and the run's log says so with one line, \`type check skipped: <reason>\`.
+The type check runs before the run starts. A run with errors that would make it fail when it runs (such as a name that is not defined, a call of a member that does not exist, the wrong number of arguments, or a block-scoped name used before its declaration) does not start: its status is error and the errors are listed, each with its line and column; fix them and run again. A wrong argument stops the run only where the call is to ${callee}; the check knows the bot by the names \`bot\` and \`ctx.bot\`, so a call through an alias (\`const b = ctx.bot; b.craft(...)\`) is checked as an ordinary function's and does not stop the run. Other type errors do not stop a run; a member you only read (not call) does not either, and the run's log names the real member when one is known. Where the body cannot load TypeScript the check is skipped, and the run's log says so with one line, \`type check skipped: <reason>\`.
 
 It imports the authoring helpers from \`minebot-sdk/routine\` (\`import { goals, Movements, Vec3, z } from "minebot-sdk/routine"\`), and can import Node's core modules (\`node:fs\`, \`node:os\`), the packages this body ships (mineflayer, mineflayer-pathfinder, vec3, minecraft-data, prismarine-*, zod), and \`minebot-sdk/<subpath>\` (bare \`minebot-sdk\` does not resolve); require() of a package or a core module works too.${library}
 

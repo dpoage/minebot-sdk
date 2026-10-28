@@ -59,6 +59,20 @@ describe("a run whose source has a refusing diagnostic", () => {
     }
   });
 
+  // P6.2: the read runs, and its run result carries the did-you-mean line.
+  it("runs a missing-member read and carries its did-you-mean line in the run's log", { timeout: 120_000 }, async () => {
+    const body = await startFakeBody({});
+    try {
+      const result = runOf(
+        await body.request("POST", "/run", { code: "export default async (ctx) => {\n  const e = ctx.bot.entity;\n  return e.valid;\n};\n" }),
+      );
+      assert.equal(result.status, "ok", result.error ?? "");
+      assert.match(result.logs, /line 3:12 Property 'valid' does not exist on type 'Entity'\. Did you mean 'isValid'\?/, result.logs);
+    } finally {
+      await body.close();
+    }
+  });
+
   it("lists the first five errors and counts the rest", { timeout: 120_000 }, async () => {
     const calls = Array.from({ length: 8 }, (_, i) => `  f${i}();`).join("\n");
     const body = await startFakeBody({});
