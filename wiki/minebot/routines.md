@@ -82,7 +82,7 @@ A bind refuses a routine that the library does not hold, and the error says how 
 
 ## What outlives a call
 
-Only `ctx.on`, `ctx.sleep`, and `ctx.signal` end with the call. A `setTimeout`, a `setInterval`, or a `bot.on` listener that the routine makes itself keeps running after the call, and the body does not clear it. Clear your own timers before the routine returns. A leftover timer that throws after the call has ended crashes the bot host: the body restarts it, and you see a `disconnected` event.
+`ctx.on`, `ctx.sleep`, `ctx.signal`, and the listeners the routine adds to `ctx.bot` (`on`, `once`, `addListener`, `prependListener`, `prependOnceListener`) end with the call: the body removes them at every end, and `ctx.bot.off` removes one sooner. A listener on `ctx.bot` that throws ends the call with an error; the bot keeps its connection and its other listeners keep hearing events. A `setTimeout` or a `setInterval` that the routine makes itself keeps running after the call, and the body does not clear it: clear your own timers before the routine returns. A leftover timer that throws after the call has ended crashes the bot host: the body restarts it, and you see a `disconnected` event.
 
 <!-- reflexes -->
 ## Run a routine on an event
