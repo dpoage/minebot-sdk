@@ -86,6 +86,15 @@ export interface Vec {
   z: number;
 }
 
+/** The most recent death of this host session, as the observation reports it. */
+export interface DeathSummary {
+  /** ISO time the body saw the death. */
+  time: string;
+  position: Vec;
+  /** The server's death message, e.g. "Fartmastery drowned"; absent when the server sent none. */
+  cause?: string;
+}
+
 export interface ItemSummary {
   name: string;
   count: number;
@@ -149,6 +158,13 @@ export type Observation =
       sky: { open: boolean; cover?: string; solidAbove: number; waterAbove: number };
       /** Runs and calls in a row that ended with the same position and inventory. */
       programsWithoutChange: number;
+      /** The most recent death of this host session; absent until the player dies. */
+      lastDeath?: DeathSummary;
+      /**
+       * Where the player respawns: a bed or respawn anchor the server confirmed (the position it was set
+       * at); `null` once the server reset it to the world spawn; absent while this host session has not heard.
+       */
+      spawnPoint?: Vec | null;
     };
 
 export interface StatusResponse {
