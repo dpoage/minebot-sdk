@@ -13,6 +13,8 @@ interface OwnBuild {
   x: number;
   y: number;
   z: number;
+  /** The block the bot held as it placed this one, so an error can name it without a world read. */
+  name: string;
 }
 
 /** What the bot placed itself this host session. */
@@ -47,6 +49,9 @@ function ownBuildsOf(bot: Bot): OwnBuilds {
   if (record === undefined) {
     record = { builds: [], keys: new Set() };
     ownBuilds.set(bot, record);
+    // A property this module adds; Mineflayer has no own-builds API. `src/routines/move.ts` reads it to name a block the bot placed.
+    const carrier = bot as Bot & { ownBuilds?: OwnBuilds };
+    carrier.ownBuilds = record;
   }
   return record;
 }
@@ -109,7 +114,8 @@ export function watchOwnBuilds(bot: Bot): void {
         const key = `${target.x},${target.y},${target.z}`;
         if (!builds.keys.has(key)) {
           builds.keys.add(key);
-          builds.builds.push({ x: target.x, y: target.y, z: target.z });
+          // The held block is the one that landed: the client's copy of the cell can lag the server's.
+          builds.builds.push({ x: target.x, y: target.y, z: target.z, name: bot.heldItem?.name ?? bot.blockAt(target)?.name ?? "" });
         }
       }
       return result;

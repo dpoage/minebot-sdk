@@ -25,7 +25,7 @@ describe("move.to out of air (mb-znn.2c)", () => {
       controls.push([control, state]);
       setControlState(control, state);
     };
-    h.bot.oxygenLevel = 4;
+    h.bot.oxygenLevel = 9;
 
     let outcome: unknown = "pending";
     void h.run(move.to, { position: [10, 64, 0], range: 1 }).then(
@@ -45,6 +45,39 @@ describe("move.to out of air (mb-znn.2c)", () => {
     await settle();
     assert.match(message(outcome), /^out of air at \(0, 64, 0\): swam up to \(0, 70, 0\); the path to \(10, 64, 0\) runs underwater - go around the water$/);
     assert.deepEqual(controls.at(-1), ["jump", false], "jump was released");
+  });
+
+  it("does not call unset air data low: a fresh body has no oxygenLevel yet", async () => {
+    const h = createHarness();
+    // Before the server sends air data, Mineflayer's `oxygenLevel` is undefined, not 0 (the type says number).
+    const body = h.bot as unknown as { oxygenLevel: number | undefined };
+    body.oxygenLevel = undefined;
+    const pathfinder = h.bot.pathfinder as unknown as { goto: () => Promise<void>; setGoal: (goal: unknown) => void };
+    pathfinder.goto = () => Promise.withResolvers<void>().promise;
+    pathfinder.setGoal = () => {};
+    const controls: [string, boolean][] = [];
+    const setControlState = h.bot.setControlState.bind(h.bot);
+    h.bot.setControlState = (control, state) => {
+      controls.push([control, state]);
+      setControlState(control, state);
+    };
+
+    let outcome: unknown = "pending";
+    const done = h.run(move.to, { position: [10, 64, 0], range: 1 });
+    void done.then(
+      (value) => (outcome = { ok: value }),
+      (err: unknown) => (outcome = err),
+    );
+    await settle();
+    mock.timers.tick(1_000); // ten air samples
+    await settle();
+    await settle();
+    assert.equal(outcome, "pending", "an unset breath bar is not low air");
+    assert.equal(controls.some(([control]) => control === "jump"), false, "jump was never held");
+
+    h.teleport([10.5, 64, 0.5]);
+    h.bot.emit("path_update", { status: "success", path: [] } as never);
+    assert.deepEqual(await done, { x: 10, y: 64, z: 0 });
   });
 
   it("leaves a walk alone while the breath bar is at 10 or above", async () => {

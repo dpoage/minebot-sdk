@@ -27,6 +27,8 @@ const PATH_SHORT_IDLE_TICKS = 10;
 const UNLIMITED_DROP_DOWN = 512;
 /** Both searches that explain a missing path share this budget, so a failed walk still ends promptly. */
 const NO_PATH_RESEARCH_MS = 5_000;
+/** Scaffold must not go under a build within this many blocks; the same reach `src/host/pathfinding.ts` excludes. */
+const OWN_BUILD_SCAFFOLD_REACH = 16;
 /** The pathfinder's own search slice, so a re-search never blocks a tick for longer than a search tick. */
 const SEARCH_SLICE_MS = 40;
 /** Blocks whose cell holds water: swimming up needs the head in a cell that is none of them. */
@@ -67,7 +69,8 @@ function watchAir(bot: RoutineContext["bot"]): { low: Promise<"air">; at: () => 
   const low = Promise.withResolvers<"air">();
   let at = bot.entity.position.floored();
   const timer = setInterval(() => {
-    if (bot.oxygenLevel >= LOW_OXYGEN) return;
+    // A fresh body has no air data yet: `oxygenLevel` is undefined until the server sends it, and only a number below the threshold is low air.
+    if (typeof bot.oxygenLevel !== "number" || bot.oxygenLevel >= LOW_OXYGEN) return;
     at = bot.entity.position.floored();
     low.resolve("air");
   }, AIR_SAMPLE_MS);
@@ -218,6 +221,8 @@ interface PathNode {
   y: number;
   z: number;
   toBreak?: readonly { x: number; y: number; z: number }[];
+  /** Scaffolds the planner would place: the reference block at x,y,z, and the cell placed into at +dx,+dy,+dz. */
+  toPlace?: readonly { x: number; y: number; z: number; dx: number; dy: number; dz: number }[];
 }
 
 interface SearchResult {
@@ -275,16 +280,56 @@ function largestDrop(path: readonly PathNode[], start: Vec3): number {
   return Math.max(1, Math.round(drop));
 }
 
-/** The error that names a block on the only way: a path that appears without the own-build exclusions goes through it. */
-function ownBuildError(bot: RoutineContext["bot"], target: Vec3, path: readonly PathNode[]): Error | undefined {
-  const position =
-    path.flatMap((node) => node.toBreak ?? [])[0] ?? path.find((node) => bot.blockAt(new Vec3(node.x, node.y, node.z))?.boundingBox === "block");
-  if (!position) return undefined;
-  const at = new Vec3(position.x, position.y, position.z);
-  const block = bot.blockAt(at);
+/** A block the bot placed, as `src/host/pathfinding.ts` records it on the bot. */
+interface PlacedBlock {
+  x: number;
+  y: number;
+  z: number;
+  name?: string;
+}
+
+/** What the bot placed this host session, read off the bot; empty when the host's pathfinding setup is absent. */
+function placedBlocks(bot: RoutineContext["bot"]): readonly PlacedBlock[] {
+  // The record is added to the bot by src/host/pathfinding.ts; Mineflayer has no own-builds API.
+  const carrier = bot as unknown as { ownBuilds?: unknown };
+  const record = carrier.ownBuilds;
+  if (typeof record !== "object" || record === null || !("builds" in record) || !Array.isArray(record.builds)) return [];
+  return record.builds as readonly PlacedBlock[];
+}
+
+/** The could-not-reach error that names one block the bot placed. */
+function placedBlockError(bot: RoutineContext["bot"], target: Vec3, block: PlacedBlock): Error {
+  const at = new Vec3(block.x, block.y, block.z);
+  const name = block.name ? block.name : (bot.blockAt(at)?.name ?? "a block");
   return new Error(
-    `could not reach ${target}: every way goes through blocks you placed (e.g. ${block?.name ?? "a block"} at ${at}); open a door, break one yourself, or call move.to again with allowDigOwnBuilds: true`,
+    `could not reach ${target}: every way goes through blocks you placed (e.g. ${name} at ${at}); open a door, break one yourself, or call move.to again with allowDigOwnBuilds: true`,
   );
+}
+
+/**
+ * The error that names a block the bot placed on the only way: the relaxed path breaks one of the
+ * recorded blocks, or would scaffold a cell beneath one. A block that merely happens to be on the
+ * path is not a build; when the path meets none of the record this returns nothing, and the walk
+ * keeps the ordinary could-not-reach error.
+ */
+function ownBuildError(bot: RoutineContext["bot"], target: Vec3, path: readonly PathNode[]): Error | undefined {
+  const placed = placedBlocks(bot);
+  if (placed.length === 0) return undefined;
+  const recordedAt = new Map(placed.map((block) => [`${block.x},${block.y},${block.z}`, block] as const));
+  for (const node of path) {
+    for (const cell of node.toBreak ?? []) {
+      const hit = recordedAt.get(`${cell.x},${cell.y},${cell.z}`);
+      if (hit) return placedBlockError(bot, target, hit);
+    }
+    for (const scaffold of node.toPlace ?? []) {
+      const cellX = scaffold.x + scaffold.dx;
+      const cellY = scaffold.y + scaffold.dy;
+      const cellZ = scaffold.z + scaffold.dz;
+      const above = placed.find((block) => block.x === cellX && block.z === cellZ && block.y > cellY && block.y <= cellY + OWN_BUILD_SCAFFOLD_REACH);
+      if (above) return placedBlockError(bot, target, above);
+    }
+  }
+  return undefined;
 }
 
 /**
