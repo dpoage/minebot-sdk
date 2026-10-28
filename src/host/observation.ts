@@ -6,6 +6,7 @@ import { activeEffects } from "../mc/effects.ts";
 import { skyAbove, type SkyView } from "../mc/sky.ts";
 import type { DeathSummary, EntitySummary, ItemSummary, Observation } from "../protocol/index.ts";
 import { round, vec } from "../mc/position.ts";
+import { droppedStack } from "../routines/items.ts";
 
 const NEARBY_ENTITY_RADIUS = 32;
 const NEARBY_ENTITY_LIMIT = 24;
@@ -46,7 +47,7 @@ export function observation(
     .filter((e) => e !== self && e.position.distanceTo(self.position) <= NEARBY_ENTITY_RADIUS)
     .map((e) => {
       // A dropped item is an entity named "item"; the stack it holds is what the player cares about.
-      const stack = e.name === "item" ? e.getDroppedItem() : null;
+      const stack = droppedStack(e);
       return {
         id: e.id,
         type: e.type,

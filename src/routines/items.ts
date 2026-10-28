@@ -1,5 +1,5 @@
 // The items routines: item knowledge — recipes, and the item drops lying on the ground — and renaming an item at an anvil.
-import { type Block, type Bot, defineRoutine, type Item, type RoutineContext, within, z } from "minebot-sdk/routine";
+import { type Block, type Bot, defineRoutine, type Entity, type Item, type RoutineContext, within, z } from "minebot-sdk/routine";
 
 /** What `bot.openBlock` opens: the anvil's window, with its slots and the player's inventory in them. */
 type AnvilWindow = Awaited<ReturnType<Bot["openBlock"]>>;
@@ -28,6 +28,22 @@ function summarize(ctx: RoutineContext, recipe: { delta: { id: number; count: nu
   return { makes: recipe.result.count, requiresTable: recipe.requiresTable, ingredients };
 }
 
+/**
+ * The stack a dropped item entity holds, or null while its metadata has not arrived: Mineflayer names the
+ * entity on the spawn packet, and the stack comes with the later `entity_metadata` one, so reading it
+ * before that throws. The observation and `drops` both read the stack through this, so both see the same
+ * stack at the same moment.
+ */
+export function droppedStack(entity: Entity): { name: string; count: number } | null {
+  if (entity.name !== "item") return null;
+  try {
+    const stack = entity.getDroppedItem();
+    return stack ? { name: stack.name, count: stack.count } : null;
+  } catch {
+    return null;
+  }
+}
+
 /** The dropped stacks within `radius`, nearest first: the floored position of each entity with the item it holds. */
 function droppedItems(ctx: RoutineContext, radius: number) {
   const at = ctx.bot.entity.position;
@@ -35,7 +51,7 @@ function droppedItems(ctx: RoutineContext, radius: number) {
     .filter((e) => e.name === "item" && e.position.distanceTo(at) < radius)
     .sort((a, b) => a.position.distanceTo(at) - b.position.distanceTo(at))
     .flatMap((e) => {
-      const stack = e.getDroppedItem();
+      const stack = droppedStack(e);
       if (!stack) return [];
       const { x, y, z } = e.position.floored();
       return [{ x, y, z, name: stack.name, count: stack.count }];

@@ -6,7 +6,8 @@ import type { Bot } from "mineflayer";
 import { Vec3 } from "vec3";
 import { createHarness } from "minebot-sdk/testing";
 import { brief, observation } from "../src/host/observation.ts";
-import * as items from "../src/routines/items.ts";
+import { droppedStack, drops } from "../src/routines/items.ts";
+import { universe } from "../src/testing/universe.ts";
 
 /** A player with everything the observation reads; the registry tables stand in for the game's. */
 function fakeBot(entities: Record<number, unknown> = {}) {
@@ -43,6 +44,25 @@ const stack = (id: number, item: string, count: number, at: [number, number, num
   getDroppedItem: () => ({ name: item, count }),
 });
 
+/**
+ * A real Prismarine entity, as Mineflayer builds it on the spawn packet: named "item", with empty metadata
+ * until the later `entity_metadata` packet. `fill` sends that packet's stack into slot 8 (`metadataIxOfItem`).
+ */
+function spawnedDrop(id = 9) {
+  const { registry, Entity: EntityClass } = universe();
+  const entity = new EntityClass(id);
+  Object.assign(entity, { name: "item", type: "other", kind: "UNKNOWN" });
+  entity.position = new Vec3(3.5, 64.25, 0.5);
+  return {
+    entity,
+    fill: () => {
+      const oakLog = registry.itemsByName.oak_log;
+      if (!oakLog) throw new Error("the 26.1 registry has no oak_log");
+      entity.metadata[8] = { present: true, itemId: oakLog.id, itemCount: 3 };
+    },
+  };
+}
+
 /** The player at (5.5, 64, 7.5): the origin of every distance in these tests. */
 const connected = (bot: unknown) => {
   const value = observation(bot as Bot, { programsWithoutChange: 0, program: { running: false } });
@@ -67,6 +87,20 @@ describe("dropped items in the observation", () => {
     });
     assert.match(brief(connected(bot)), /cow 2m, oak_log x5 2m/);
   });
+
+  it("never throws for a drop whose metadata has not arrived, and names it once it does", () => {
+    const { entity, fill } = spawnedDrop();
+    entity.position = new Vec3(3.5, 64, 7.5);
+    const bot = fakeBot({ 9: entity });
+    assert.equal(droppedStack(entity), null, "empty metadata reads as no stack");
+    const before = connected(bot);
+    assert.deepEqual(before.nearbyEntities.map((e) => [e.name, e.item]), [["item", undefined]], "listed, without a stack");
+    assert.doesNotMatch(brief(before), /oak_log/, "the brief leaves the stack out until it is readable");
+    fill();
+    const after = connected(bot);
+    assert.deepEqual(after.nearbyEntities.map((e) => e.item), [{ name: "oak_log", count: 3 }]);
+    assert.match(brief(after), /oak_log x3 2m/);
+  });
 });
 
 describe("items.drops", () => {
@@ -78,7 +112,7 @@ describe("items.drops", () => {
         { name: "cow", at: [2, 64, 2] },
       ],
     });
-    assert.deepEqual(await h.run(items.drops, { radius: 8 }), [
+    assert.deepEqual(await h.run(drops, { radius: 8 }), [
       { x: 1, y: 64, z: 0, name: "oak_log", count: 1 },
       { x: 3, y: 64, z: 0, name: "oak_log", count: 2 },
     ]);
@@ -86,7 +120,16 @@ describe("items.drops", () => {
 
   it("keeps an entry usable as a point", async () => {
     const h = createHarness({ entities: [{ name: "item", item: "oak_log", at: [3.5, 64.25, 0.5] }] });
-    const [drop] = await h.run(items.drops, {});
+    const [drop] = await h.run(drops, {});
     assert.deepEqual({ x: drop?.x, y: drop?.y, z: drop?.z }, { x: 3, y: 64, z: 0 });
+  });
+
+  it("leaves a drop out until its metadata arrives, and reports it with name and count once it does", async () => {
+    const h = createHarness();
+    const { entity, fill } = spawnedDrop();
+    h.bot.entities[9] = entity;
+    assert.deepEqual(await h.run(drops, {}), [], "nothing to report while the stack is unreadable");
+    fill();
+    assert.deepEqual(await h.run(drops, {}), [{ x: 3, y: 64, z: 0, name: "oak_log", count: 3 }]);
   });
 });
