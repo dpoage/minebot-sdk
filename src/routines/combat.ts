@@ -1,6 +1,6 @@
 // The combat routines: hitting creatures, fighting hostiles until none are left, backing away.
 // Attacks use the pathfinder to close in and the held weapon's cooldown to pace each hit.
-import { defineRoutine, type Entity, goals, isHostile, nameMatcher, NamePattern, Point, Position, type RoutineContext, toVec3, Vec3, within, z } from "minebot-sdk/routine";
+import { defineRoutine, type Entity, goals, isHostile, Movements, nameMatcher, NamePattern, Point, Position, type RoutineContext, toVec3, Vec3, within, z } from "minebot-sdk/routine";
 
 export const description = "Attack creatures with the best weapon, fight hostiles until none are near, and back away.";
 export const uses = [] as const;
@@ -98,7 +98,36 @@ interface Fight {
   damage: number;
   weapon: string | null;
   dead: Set<number>;
+  /** The movement rules a chase runs on: the player's own, with digging and building off; undefined for a bot with no registry (a test stub) to build them from. */
+  chase: InstanceType<typeof Movements> | undefined;
   close(): void;
+}
+
+/**
+ * The chase's movement rules: a copy of the player's own (exclusions, fall height, doors) with
+ * digging and building switched off, so a chase never breaks a fence or leaves a block behind.
+ * A target a pen or a wall keeps out then ends as the blocked reason instead.
+ */
+function chaseMovements(bot: RoutineContext["bot"]): InstanceType<typeof Movements> | undefined {
+  if (!bot.registry) return undefined;
+  const movements = new Movements(bot);
+  const from = bot.pathfinder.movements;
+  if (from) {
+    movements.canOpenDoors = from.canOpenDoors;
+    movements.maxDropDown = from.maxDropDown;
+    movements.infiniteLiquidDropdownDistance = from.infiniteLiquidDropdownDistance;
+    movements.dontCreateFlow = from.dontCreateFlow;
+    movements.dontMineUnderFallingBlock = from.dontMineUnderFallingBlock;
+    movements.allowParkour = from.allowParkour;
+    movements.allowSprinting = from.allowSprinting;
+    movements.exclusionAreasStep = from.exclusionAreasStep;
+    movements.exclusionAreasBreak = from.exclusionAreasBreak;
+    movements.exclusionAreasPlace = from.exclusionAreasPlace;
+  }
+  movements.canDig = false;
+  movements.allow1by1towers = false;
+  movements.scafoldingBlocks = [];
+  return movements;
 }
 
 /** Equips the best weapon in the inventory and starts counting kills and damage taken. */
@@ -108,7 +137,8 @@ async function openFight(ctx: RoutineContext): Promise<Fight> {
   const name = bestWeapon(stacks.map((i) => i.name));
   if (name) await bot.equip(stacks.find((i) => i.name === name)!, "hand");
   else ctx.log("combat: no sword or axe in the inventory; fighting bare-handed");
-  const fight: Fight = { kills: 0, damage: 0, weapon: name, dead: new Set(), close: () => {} };
+  const normal = bot.pathfinder.movements;
+  const fight: Fight = { kills: 0, damage: 0, weapon: name, dead: new Set(), chase: chaseMovements(bot), close: () => {} };
   let last = bot.health;
   const onHealth = () => {
     if (bot.health < last) fight.damage += last - bot.health;
@@ -122,8 +152,13 @@ async function openFight(ctx: RoutineContext): Promise<Fight> {
   fight.close = () => {
     bot.off("health", onHealth);
     bot.off("entityDead", onDead);
-    bot.pathfinder.setGoal(null);
-    bot.clearControlStates();
+    try {
+      bot.pathfinder.setGoal(null);
+    } finally {
+      // Whatever ended the fight, the pathfinder walks on the player's own movements again.
+      if (bot.pathfinder.movements !== normal) bot.pathfinder.setMovements(normal);
+      bot.clearControlStates();
+    }
   };
   return fight;
 }
@@ -153,6 +188,7 @@ async function engage(ctx: RoutineContext, fight: Fight, target: Entity, deadlin
     const last = trail[trail.length - 1];
     return { killed: false, reason: `the target is gone (last seen ${blocks(last?.distance ?? eyeDistance(ctx, target))} blocks away); find it again with sense.look or pick another` };
   };
+  if (fight.chase !== undefined && bot.pathfinder.movements !== fight.chase) bot.pathfinder.setMovements(fight.chase);
   bot.pathfinder.setGoal(new goals.GoalFollow(target, 2), true);
   while (Date.now() < give) {
     if (ctx.signal.aborted) throw ctx.signal.reason;
@@ -225,7 +261,7 @@ const Target = z.union([z.number().int(), z.string().min(1)]);
 export const attack = defineRoutine(
   {
     name: "combat.attack",
-    description: "Hit one creature until it dies. `target` is an entity id or a name ('zombie'; the nearest match, a player's username works too). Walks up to it, holds the best sword or axe from the inventory, and hits once per weapon cooldown. Gives up after `timeoutMs` (default 20000). Returns { target, killed, damageTaken, weapon, reason }; when `killed` is false, `reason` is one line that names why it gave up (gone, still in reach, outran, blocked) and what to do next.",
+    description: "Hit one creature until it dies. `target` is an entity id or a name ('zombie'; the nearest match, a player's username works too). Walks up to it on movement rules that never break or place a block (a fence, a wall, or water stops the chase instead), holds the best sword or axe from the inventory, and hits once per weapon cooldown. Gives up after `timeoutMs` (default 20000). Returns { target, killed, damageTaken, weapon, reason }; when `killed` is false, `reason` is one line that names why it gave up (gone, still in reach, outran, blocked) and what to do next.",
     args: z.object({ target: Target, timeoutMs: z.number().int().positive().default(TARGET_TIMEOUT_MS) }),
     returns: z.object({ target: z.string(), killed: z.boolean(), damageTaken: z.number(), weapon: z.string().nullable(), reason: z.string().optional() }),
   },
@@ -246,7 +282,7 @@ export const attack = defineRoutine(
 export const fight = defineRoutine(
   {
     name: "combat.fight",
-    description: "Fight until no target is left within `radius` (default 16) or `timeoutMs` (default 60000) passes. Targets default to hostile mobs: the registry category 'Hostile mobs', which includes slimes, magma cubes, phantoms, and ghasts, minus endermen, zombified piglins, striders, and end crystals, which are no threat until provoked. `targets` ('zombie', '*_skeleton', or a list) names others, endermen included. Takes the nearest first, holds the best sword or axe from the inventory, skips a target it cannot kill in 20 seconds, and fails if the player dies. Creepers explode when close: retreat from them first. Returns { kills, damageTaken, weapon, remaining, timedOut }.",
+    description: "Fight until no target is left within `radius` (default 16) or `timeoutMs` (default 60000) passes. Targets default to hostile mobs: the registry category 'Hostile mobs', which includes slimes, magma cubes, phantoms, and ghasts, minus endermen, zombified piglins, striders, and end crystals, which are no threat until provoked. `targets` ('zombie', '*_skeleton', or a list) names others, endermen included. Takes the nearest first, holds the best sword or axe from the inventory, skips a target it cannot kill in 20 seconds, and fails if the player dies. A chase never breaks or places a block. Creepers explode when close: retreat from them first. Returns { kills, damageTaken, weapon, remaining, timedOut }.",
     args: z.object({
       radius: z.number().positive().default(DEFAULT_RADIUS),
       targets: NamePattern.optional(),

@@ -111,6 +111,57 @@ describe("crafter.plan agrees with crafter.make (P3)", () => {
   });
 });
 
+describe("crafter.make burns no fuel a later step needs (P4.3)", () => {
+  /** The stations the property names: a crafting table and a furnace within reach. */
+  const NEAR = [
+    { name: "crafting_table", at: [3, 64, 0] as const },
+    { name: "furnace", at: [4, 64, 0] as const },
+  ];
+
+  /** A harness with `inventory` in the bag and `blocks` in the world. */
+  const bench = (inventory: Inventory, blocks: readonly { name: string; at: readonly [number, number, number] }[] = []) => createHarness({ inventory, blocks: blocks.map((block) => ({ name: block.name, at: block.at })) });
+
+  it("makes the iron_pickaxe from a {raw_iron:3, oak_log:3} inventory, with the fuel the plan names added", async () => {
+    const start: Inventory = { raw_iron: 3, oak_log: 3 };
+    const { missing } = await bench(start, NEAR).run(crafter.plan, { item: "iron_pickaxe" });
+    const stocked = add(start, missing);
+    assert.deepEqual((await bench(stocked, NEAR).run(crafter.plan, { item: "iron_pickaxe" })).missing, {}, "the plan is complete before the make");
+    const h = bench(stocked, NEAR);
+    assert.equal(await h.run(crafter.make, { item: "iron_pickaxe" }), 1, `made from ${JSON.stringify(stocked)}`);
+    assert.equal(h.count("iron_pickaxe"), 1);
+  });
+
+  it("makes the composter from four logs, a goal the plan calls complete", async () => {
+    const start: Inventory = { oak_log: 4 };
+    const plan = await bench(start).run(crafter.plan, { item: "composter" });
+    assert.deepEqual(plan.missing, {}, "the plan names nothing for four logs");
+    assert.equal(await bench(start).run(crafter.make, { item: "composter" }), 1, "make reached a recipe the plan reached");
+  });
+
+  it("keeps the planks for the table and names the coal: iron_bars from iron, two cherry logs and four oak planks", async () => {
+    const start: Inventory = { raw_iron: 6, cherry_log: 2, oak_planks: 4, cobblestone: 16, stone: 4 };
+    const blocks = [{ name: "furnace", at: [4, 64, 0] as const }];
+    // The four oak planks are the fuel six ingots need; the table can come from a cherry log instead.
+    const plan = await bench(start, blocks).run(crafter.plan, { item: "iron_bars" });
+    assert.deepEqual(plan.missing, { coal: 1 }, "the plan must not count as fuel what the table consumes");
+    const h = bench(add(start, plan.missing), blocks);
+    assert.ok((await h.run(crafter.make, { item: "iron_bars" })) >= 1);
+  });
+
+  it("burns the coal and not the one log: iron_shovel from one ingot, one log and one coal", async () => {
+    // The make of an inventory the plan calls complete must not burn as fuel the only wood the sticks
+    // need: a shovel is one iron ingot and two sticks, and the coal covers the ingot's smelt.
+    const start: Inventory = { cobblestone: 6, raw_iron: 1, coal: 1, oak_log: 1 };
+    const plan = await bench(start, NEAR).run(crafter.plan, { item: "iron_shovel" });
+    assert.deepEqual(plan.missing, {}, "the plan names nothing for this inventory");
+    const h = bench(start, NEAR);
+    assert.equal(await h.run(crafter.make, { item: "iron_shovel" }), 1);
+    assert.equal(h.count("iron_shovel"), 1);
+    assert.equal(h.count("coal"), 0, "the coal is the fuel");
+    assert.equal(h.count("oak_log"), 0, "the log became the shovel's sticks");
+  });
+});
+
 describe("crafter.plan names the raw material, never the ore or the rare variant (P4)", () => {
   it("Rivet's case: stone and sticks with a table 20 blocks away need 3 cobblestone, and stone is never counted", async () => {
     const plan = await planOf({ stone: 10, stick: 2 }, "20", "stone_pickaxe");
