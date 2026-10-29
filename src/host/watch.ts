@@ -22,6 +22,14 @@ export const LOW_OXYGEN = 10;
 const HOSTILE_RADIUS = 16;
 /** A notified creature raises the event again only after it has been this far away or gone. */
 const HOSTILE_REARM_RADIUS = 32;
+/** A notable creature this close raises `entity_appeared`. */
+const NOTABLE_RADIUS = 32;
+/** A seen creature raises `entity_appeared` again only after it has been this far away or gone. */
+const NOTABLE_REARM_RADIUS = 48;
+/** The registry types of a notable creature: animals, passive creatures, and mobs. */
+const NOTABLE_TYPES: Record<string, true> = { animal: true, passive: true, mob: true };
+/** Water creatures minecraft-data types `passive`, which the event leaves out as it leaves out fish. */
+const NOT_NOTABLE: Record<string, true> = { squid: true, glow_squid: true };
 /** Physics ticks between two looks at the nearby creatures: twice a second. */
 const HOSTILE_CHECK_TICKS = 10;
 
@@ -78,6 +86,7 @@ export function watchGame(bot: Bot, events: EventSink): void {
   // A bot whose entity has not reported air yet has no oxygenLevel.
   let oxygenArmed = true;
   const notified = new Set<number>();
+  const appeared = new Set<number>();
   let ticks = 0;
   bot.on("physicsTick", () => {
     if (typeof bot.oxygenLevel === "number") {
@@ -98,6 +107,25 @@ export function watchGame(bot: Bot, events: EventSink): void {
       if (distance > HOSTILE_RADIUS) continue;
       notified.add(entity.id);
       events.push("hostile_near", { name: entity.name, id: entity.id, distance: round(distance) });
+    }
+    for (const id of appeared) {
+      const entity = bot.entities[id];
+      if (!entity || entity.position.distanceTo(bot.entity.position) > NOTABLE_REARM_RADIUS) appeared.delete(id);
+    }
+    for (const entity of Object.values(bot.entities)) {
+      if (
+        appeared.has(entity.id) ||
+        entity.type === undefined ||
+        NOTABLE_TYPES[entity.type] !== true ||
+        NOT_NOTABLE[entity.name ?? ""] ||
+        isHostile(entity)
+      ) {
+        continue;
+      }
+      const distance = entity.position.distanceTo(bot.entity.position);
+      if (distance > NOTABLE_RADIUS) continue;
+      appeared.add(entity.id);
+      events.push("entity_appeared", { name: entity.name, id: entity.id, distance: round(distance), position: vec(entity.position) });
     }
   });
 }

@@ -10,13 +10,15 @@ import * as items from "../src/routines/items.ts";
 const TUCKED = { name: "item", item: "oak_log", at: [5.5, 64.25, 4.5] } as const;
 const ROOF = { name: "stone", from: [5, 65, 4], to: [5, 65, 4] } as const;
 
-/** The `move.to` calls the harness saw toward the cell of the tucked drop. */
+/** The `move.to` calls the harness saw toward the cell of the tucked drop, whose entry also names its stack. */
 function walksToTucked(h: Harness) {
   return h.calls.filter((c) => {
     if (c.kit !== "move" || c.action !== "to") return false;
     const args: unknown = c.args;
     if (typeof args !== "object" || args === null || !("position" in args)) return false;
-    return JSON.stringify(args.position) === JSON.stringify({ x: 5, y: 64, z: 4 });
+    const { position } = args;
+    if (typeof position !== "object" || position === null) return false;
+    return "x" in position && "y" in position && "z" in position && position.x === 5 && position.y === 64 && position.z === 4;
   });
 }
 
@@ -68,7 +70,7 @@ describe("gatherer drops", () => {
 
   it("collectDrops leaves out a drop that still hangs in mid-air after 2 s: no walk, neither reached nor unreachable", async () => {
     const h = createHarness({ position: [0.5, 64, 0.5], entities: [{ name: "item", item: "oak_log", at: [3.5, 68, 0.5] }] });
-    assert.deepEqual(await h.run(items.drops, {}), [{ x: 3, y: 68, z: 0 }], "the drop is within the default radius");
+    assert.deepEqual(await h.run(items.drops, {}), [{ x: 3, y: 68, z: 0, name: "oak_log", count: 1 }], "the drop is within the default radius, named and counted (P2.1)");
     assert.deepEqual(await h.run(gatherer.collectDrops, {}), { reached: 0, unreachable: [] });
     assert.equal(h.calls.filter((c) => c.kit === "move" && c.action === "to").length, 0);
   });

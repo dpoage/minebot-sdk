@@ -110,6 +110,8 @@ export interface EntitySummary {
   type: string;
   name: string;
   username?: string;
+  /** The stack a dropped item entity holds: `name` is the item (not "item"), `count` its size. Absent for every other entity. */
+  item?: { name: string; count: number };
   distance: number;
   position: Vec;
 }
