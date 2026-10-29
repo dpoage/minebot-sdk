@@ -4,6 +4,8 @@
 // below are the authoring helpers a routine composes with: pathfinder goals, positions and name
 // patterns, block and world predicates, and the smelting tables.
 import pathfinderPkg from "mineflayer-pathfinder";
+// The runtime members the packages' typings leave out: a declaration-only module, imported for its types.
+import "./augment.ts";
 import { biomeAt } from "../mc/biome.ts";
 import { isHostile } from "../mc/hostile.ts";
 import { NamePattern, nameMatcher } from "../mc/names.ts";
@@ -15,6 +17,7 @@ import { within, type Within } from "../mc/within.ts";
 const { goals, Movements } = pathfinderPkg;
 
 export { defineRoutine } from "./define.ts";
+export { unscopedBot } from "../program/scope.ts";
 export type { Routine, RoutineMeta } from "./define.ts";
 export type { RoutineContext } from "./context.ts";
 export { z } from "zod";
@@ -23,6 +26,7 @@ export { NamePattern, nameMatcher };
 export { Point, Position, toVec3 };
 export { isAir, skyAbove, type SkyView };
 export { biomeAt };
+export { droppedStack } from "../mc/drops.ts";
 export { isHostile };
 export { burnTicks, pickFuel, SMELT_TICKS, smeltInputs, smeltOutput, withoutReserved };
 export { within, type Within };

@@ -154,7 +154,7 @@ class Log {
     if (this.failing || this.requests.length === this.failAt) throw new Error("cannot reach body");
     const from = since > this.#seq ? 0 : since;
     const events = this.events.filter((e) => e.seq > from).slice(0, limit);
-    return { events, next: events.at(-1)?.seq ?? from };
+    return { events, next: events.at(-1)?.seq ?? from, latest: this.#seq };
   }
   digest(): Digest {
     return new Digest(async () => ({ events: (since, limit) => this.read(since, limit) }));

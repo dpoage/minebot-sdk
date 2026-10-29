@@ -426,3 +426,29 @@ describe("place.place: every cell holds the block", () => {
     await assert.rejects(h.run(place.place, { at: [1, 64, 0], item: "oak_door" }), /needs its upper half, the cell above, \(1, 65, 0\), free: that cell holds stone/);
   });
 });
+
+describe("place.place checks the inventory before walking or digging (P4.1)", () => {
+  it("fails at once, naming the item, and leaves the cell and the player as they were", async () => {
+    const h = createHarness({ inventory: { cobblestone: 1 } });
+    // 8 blocks away: placing here walks first, and the grass_block is what it would clear.
+    h.setBlock([8, 64, 0], "grass_block");
+    h.teleport([0.5, 64, 0.5]);
+    let walked = 0;
+    let dug = 0;
+    const goto = h.bot.pathfinder.goto;
+    h.bot.pathfinder.goto = async (goal) => {
+      walked++;
+      return goto(goal);
+    };
+    const dig = h.bot.dig;
+    h.bot.dig = async (block) => {
+      dug++;
+      return dig(block);
+    };
+    const at = h.position.toString();
+    await assert.rejects(h.run(place.place, { at: [8, 64, 0], item: "diamond_block" }), /no diamond_block in inventory/);
+    assert.deepEqual({ walked, dug }, { walked: 0, dug: 0 }, "it walked or dug before checking the inventory");
+    assert.equal(h.blockAt([8, 64, 0]).name, "grass_block", "the target cell was cleared");
+    assert.equal(h.position.toString(), at, "the bot moved");
+  });
+});

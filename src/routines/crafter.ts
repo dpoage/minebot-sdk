@@ -171,26 +171,24 @@ async function makeItem(ctx: RoutineContext, name: string, count = 1, depth = 0)
     throw new Error(`need ${count - (await countOf(ctx, name))} more ${name}, which a furnace makes from ${smeltable.slice(0, 4).join(", ")}${reason}`);
   }
   if (depth >= MAX_MAKE_DEPTH) throw new Error(`gave up making ${name}: recipe chain deeper than ${MAX_MAKE_DEPTH}`);
-  // Tagged ingredients expand to one recipe per variant (oak planks, birch planks, ...).
-  // Try first the recipes whose ingredients the inventory holds or can craft directly.
-  const ranked = (
-    await Promise.all(
-      recipes.map(async (recipe) => {
-        const times = Math.ceil((count - have) / recipe.result.count);
-        let shortfall = 0;
-        for (const d of recipe.delta) {
-          if (d.count >= 0) continue;
-          const ingredient = bot.registry.items[d.id]?.name ?? `#${d.id}`;
-          const missing = -d.count * times - (await countOf(ctx, ingredient));
-          if (missing <= 0) continue;
-          const smeltHeld = (await heldSmeltInputs(ctx, ingredient)).reduce((n, held) => n + held.count, 0);
-          shortfall += bot.recipesFor(d.id, null, missing, true).length > 0 || smeltHeld >= missing ? 1 : 10 + missing;
-        }
-        return { recipe, times, shortfall };
-      }),
-    )
-  ).sort((a, b) => a.shortfall - b.shortfall);
-  for (const { recipe, times } of ranked.slice(0, 4)) {
+  // Tagged ingredients expand to one recipe per variant (oak planks, birch planks, ...). Take them
+  // in the order the plan would: the same routes, costed by the same simulation, so make spends
+  // what the plan spent - not as an ingredient, and not as furnace fuel, what the plan kept aside
+  // for a later step. A variant the plan ruled out stays last, so make still tries it if the
+  // plan's route fails in the world. One recipe needs no choosing, and no search of the world.
+  let order = recipes.map((_, index) => index);
+  if (recipes.length > 1) {
+    const totals: Record<string, number> = {};
+    for (const stack of bot.inventory.items()) totals[stack.name] = (totals[stack.name] ?? 0) + stack.count;
+    const stations = {
+      table: bot.findBlock({ matching: bot.registry.blocksByName.crafting_table!.id, maxDistance: TABLE_SEARCH_RADIUS }) !== null,
+      furnace: bot.findBlock({ matching: bot.registry.blocksByName.furnace!.id, maxDistance: FURNACE_SEARCH_RADIUS }) !== null,
+    };
+    order = new Planner(bot, catalogOf(bot)).recipeOrder(totals, name, count, depth, stations);
+  }
+  for (const index of order) {
+    const recipe = recipes[index]!;
+    const times = Math.ceil((count - have) / recipe.result.count);
     try {
       const ingredients = recipe.delta
         .filter((d) => d.count < 0)
@@ -221,7 +219,7 @@ async function makeItem(ctx: RoutineContext, name: string, count = 1, depth = 0)
 export const make = defineRoutine(
   {
     name: "crafter.make",
-    description: "Make sure the inventory holds at least `count` (default 1) of `item`, crafting intermediate items (planks, sticks, tables) as needed and finding or placing a crafting table. An item that a furnace makes (iron_ingot, glass, stone, charcoal, cooked food) is smelted from the matching input the inventory holds, at a furnace within 32 blocks, else one placed from the inventory, else one crafted from 8 cobblestone; fuel is coal, charcoal, planks, or logs from the inventory. Fails with the missing raw material, which you must gather, or, when a crafted item found no room in the inventory, with where it fell. Returns the count held.",
+    description: "Make sure the inventory holds at least `count` (default 1) of `item`, crafting intermediate items (planks, sticks, tables) as needed and finding or placing a crafting table. An item that a furnace makes (iron_ingot, glass, stone, charcoal, cooked food) is smelted from the matching input the inventory holds, at a furnace within 32 blocks, else one placed from the inventory, else one crafted from 8 cobblestone; fuel is coal, charcoal, planks, or logs from the inventory. It takes the recipe crafter.plan chose, so it does not spend as an ingredient or burn as fuel what the plan kept for a later step: an inventory the plan calls complete is enough. Fails with the missing raw material, which you must gather, or, when a crafted item found no room in the inventory, with where it fell. Returns the count held.",
     args: z.object({ item: z.string().min(1), count: z.number().int().positive().default(1) }),
     returns: z.number(),
   },
@@ -416,6 +414,8 @@ class Sim {
 interface Route {
   /** Taken only when the inventory covers it: a storage recipe. */
   coveredOnly: boolean;
+  /** The recipe's ingredients are all in the inventory now, so taking it needs no crafting first. */
+  ready: boolean;
   run(s: Sim): void;
 }
 
@@ -423,6 +423,12 @@ interface Tried {
   sim: Sim;
   /** The raw materials this route added. */
   added: Map<string, number>;
+}
+
+/** Whether every ingredient of `variant` times `times` is in the inventory now. */
+function coveredNow(inventory: Record<string, number> | Sim, variant: Variant, times: number): boolean {
+  const have = (name: string) => (inventory instanceof Sim ? inventory.have(name) : (inventory[name] ?? 0));
+  return variant.delta.every((d) => d.count >= 0 || have(d.name) >= -d.count * times);
 }
 
 /**
@@ -451,8 +457,11 @@ class Planner {
     }
     if (s.have(name) >= count) return;
     const routes: Route[] = [
-      ...facts.variants.map((v): Route => ({ coveredOnly: v.storage, run: (t) => this.craft(t, name, count, have0, depth, v) })),
-      ...facts.candidates.map((input): Route => ({ coveredOnly: false, run: (t) => this.smeltFrom(t, name, count, input, depth) })),
+      ...facts.variants.map((v): Route => {
+        const times = Math.ceil((count - have0) / v.makes);
+        return { coveredOnly: v.storage, ready: coveredNow(s, v, times), run: (t) => this.craft(t, name, count, have0, depth, v) };
+      }),
+      ...facts.candidates.map((input): Route => ({ coveredOnly: false, ready: false, run: (t) => this.smeltFrom(t, name, count, input, depth) })),
     ];
     const chosen = this.choose(s, routes);
     if (chosen) s.adopt(chosen);
@@ -460,14 +469,62 @@ class Planner {
     else s.lack(name, count - s.have(name));
   }
 
-  /** The cheapest of `routes`, by raw units added, then by how common those materials are, then in order; undefined when none can be done. */
+  /** What a route costs the plan: raw units added, and how common those materials are (lower is better). */
+  private rawCost(before: Sim, after: Sim): { cost: number; score: number } {
+    const gained = added(before, after);
+    return { cost: after.cost - before.cost, score: [...gained].reduce((sum, [item, n]) => sum + commonRank(item) * n, 0) };
+  }
+
+  /**
+   * The indices of `name`'s recipes in the order the plan would try them, over `inventory` with the
+   * stations named: a recipe the inventory covers now first, then fewer raw materials added, then
+   * the commoner ones, then recipe order - the rule `choose` applies. So make takes the recipe the
+   * plan took, and leaves the same materials for the later steps and for the furnace's fuel.
+   * Variants past the plan's first covered, free route come after the ones it cost, in recipe order.
+   */
+  recipeOrder(inventory: Record<string, number>, name: string, count: number, depth: number, stations: { table: boolean; furnace: boolean }): number[] {
+    const have = inventory[name] ?? 0;
+    const variants = this.catalog.facts(name).variants;
+    const tried: { index: number; ready: boolean; cost: number; score: number }[] = [];
+    let best = Infinity;
+    for (const [index, variant] of variants.entries()) {
+      const ready = coveredNow(inventory, variant, Math.ceil((count - have) / variant.makes));
+      const s = new Sim(new Map(Object.entries(inventory)), new Map(), new Map(), stations.table, stations.furnace);
+      const t = s.clone();
+      // Same rule as choose: readiness outranks cost, so a covered recipe is never cut by a cheaper one.
+      if (!ready) t.limit = s.cost + best;
+      let route: { cost: number; score: number } = { cost: Infinity, score: Infinity };
+      try {
+        this.craft(t, name, count, have, depth, variant);
+        route = this.rawCost(s, t);
+        if (!ready && route.cost < best) best = route.cost;
+      } catch (err) {
+        if (!(err instanceof BranchEnd)) throw err;
+      }
+      tried.push({ index, ready, ...route });
+      if (ready && route.cost === 0) break;
+    }
+    const order = tried.sort((a, b) => Number(b.ready) - Number(a.ready) || a.cost - b.cost || a.score - b.score || a.index - b.index).map((route) => route.index);
+    const costed = new Set(order);
+    for (let index = 0; index < variants.length; index++) if (!costed.has(index)) order.push(index);
+    return order;
+  }
+
+  /**
+   * The route the plan takes among `routes`: a recipe the inventory covers now before one that must
+   * craft its ingredients, then fewer raw units added, then the commoner materials, then the order
+   * given; undefined when none can be done. `make` uses the same rule (`recipeOrder`), so both take
+   * the same recipe and leave the same materials for the later steps and for the furnace's fuel.
+   */
   private choose(s: Sim, routes: Route[]): Sim | undefined {
     const tied: Tried[] = [];
-    let bestCost = Infinity;
+    let best = { ready: false, cost: Infinity };
     let pruned = false;
     for (const route of routes) {
       const t = s.clone();
-      t.limit = route.coveredOnly ? s.cost : Math.min(s.limit, s.cost + bestCost);
+      // A storage route may only rearrange what is already there; a route the inventory covers
+      // now is never cut by a cheaper one, because readiness outranks cost.
+      t.limit = route.coveredOnly ? s.cost : route.ready ? s.limit : Math.min(s.limit, s.cost + best.cost);
       try {
         route.run(t);
       } catch (err) {
@@ -477,12 +534,12 @@ class Planner {
         continue;
       }
       const cost = t.cost - s.cost;
-      if (cost < bestCost) {
-        bestCost = cost;
+      if ((route.ready && !best.ready) || (route.ready === best.ready && cost < best.cost)) {
+        best = { ready: route.ready, cost };
         tied.length = 0;
       }
-      tied.push({ sim: t, added: added(s, t) });
-      if (cost === 0) break;
+      if (route.ready === best.ready && cost === best.cost) tied.push({ sim: t, added: added(s, t) });
+      if (route.ready && cost === 0) break;
     }
     if (tied.length === 0) {
       // With no route found, only the limit a caller set can have cut one: the caller's route is the one that costs too much.

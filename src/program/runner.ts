@@ -3,7 +3,7 @@ import { setImmediate as nextMacrotask } from "node:timers/promises";
 import { DEFAULT_TIMEOUT_MS, MAX_TIMEOUT_MS, type RunResult, type RunStatus } from "../protocol/index.ts";
 import { hungCause, restartedError, STOP_GRACE_MS } from "../protocol/host.ts";
 import { insideDir, locateFrame } from "./frames.ts";
-import type { ProgramEventSource, ProgramScope } from "./scope.ts";
+import type { ProgramEventSource, ProgramScope, WatchOptions } from "./scope.ts";
 
 /** A run's result; `hung` marks a program that was aborted and had not settled when the grace ran out, so the host must be restarted. */
 export type RunOutcome = RunResult & { hung?: true };
@@ -99,7 +99,11 @@ export class ProgramRunner {
    * grace and `hung`, the log, the duration, the result as JSON. An aborted program gets `graceMs` to settle
    * (resolve or reject); one that does not ends the run with `hung`. `sourceDir` is the directory the
    * program's modules load from; an error reports the stack frames inside it, as file paths.
-   * Timers and bot listeners a program creates itself are not cleared; only the scope's `sleep` and `on` are run-scoped.
+   * Timers a program creates itself are not cleared, and neither are listeners it adds to an emitter other than the
+   * body's bot: the scope's `sleep`, `on`, and `watch` are run-scoped, and `routineContext` routes the bot's listener
+   * methods through `watch`, so a listener the run adds to `ctx.bot` is removed at every end of the run and a throw
+   * from it ends the run rather than the packet dispatch that called it. A listener meant to outlive the run is added
+   * to the bot itself (`unscopedBot(ctx.bot)`) and is the routine's to remove.
    * While the runner is busy with the run (an aborted program's grace included), the `console` output methods also append
    * to its log, and still write where they wrote; the methods that were there are back when the runner is free.
    * The body is halted (`halt`) at every end, and an error that reaches the process while the run is active or
@@ -116,7 +120,8 @@ export class ProgramRunner {
 
     const logs = new LogBuffer(this.#options.maxLogBytes ?? DEFAULT_MAX_LOG_BYTES);
     const timers = new Set<NodeJS.Timeout>();
-    const listeners: [ProgramEventSource, string, (...args: unknown[]) => void][] = [];
+    /** Every listener the run registered through `on` or `watch`, with the emitter it went to: removed at every end. */
+    const listeners: { emitter: ProgramEventSource; event: string; listener: (...args: unknown[]) => void }[] = [];
     const { signal } = controller;
 
     const sleep = (ms: number): Promise<void> => {
@@ -141,14 +146,6 @@ export class ProgramRunner {
     };
 
     const log = (...args: unknown[]) => logs.append(args);
-    const on = (event: string, handler: (...args: unknown[]) => void) => {
-      // A subscription after the run's abort (stop, timeout, or its end) would outlive the run: nothing clears it.
-      if (signal.aborted) return;
-      const emitter = this.#options.events?.();
-      if (!emitter) throw new Error("on() is unavailable: the body has no event source");
-      emitter.on(event, handler);
-      listeners.push([emitter, event, handler]);
-    };
     // The errors that reached the process once the program's end was decided (or its abort was under way), in order:
     // they are added to the run's error, or are its error when it had none.
     const late: { err: unknown; text: string }[] = [];
@@ -174,6 +171,39 @@ export class ProgramRunner {
       }
       return true;
     };
+    /** Registers a listener as the run's own: every end removes it, and a throw from it ends the run, not the dispatch that called it. */
+    const watch: NonNullable<ProgramScope["watch"]> = (emitter, event, handler, options: WatchOptions = {}) => {
+      // A subscription after the run's abort (stop, timeout, or its end) would outlive the run: nothing clears it.
+      if (signal.aborted) return () => {};
+      const selfRemoving = options.once === true;
+      const listener = function (this: unknown, ...args: unknown[]) {
+        if (selfRemoving) remove();
+        try {
+          handler.apply(this, args);
+        } catch (err) {
+          // The throw is the run's: it ends with that error, and the emitter goes on to its next listener.
+          if (!contain(err, "exception")) throw err;
+        }
+      };
+      const entry = { emitter, event, listener };
+      const remove = () => {
+        const at = listeners.indexOf(entry);
+        if (at < 0) return;
+        listeners.splice(at, 1);
+        emitter.off(event, listener);
+      };
+      listeners.push(entry);
+      if (options.prepend && emitter.prependListener) emitter.prependListener(event, listener);
+      else emitter.on(event, listener);
+      return remove;
+    };
+    const on = (event: string, handler: (...args: unknown[]) => void) => {
+      // A subscription after the run's abort (stop, timeout, or its end) would outlive the run: nothing clears it.
+      if (signal.aborted) return;
+      const emitter = this.#options.events?.();
+      if (!emitter) throw new Error("on() is unavailable: the body has no event source");
+      watch(emitter, event, handler);
+    };
     this.#running = { controller, startedAt, contain };
 
     let status: RunStatus;
@@ -191,7 +221,9 @@ export class ProgramRunner {
     );
     try {
       try {
-        started = fn({ log, sleep, signal, on });
+        // `watch` stays off the enumerated members: a run's context spreads the scope and must not show it.
+        const scope = Object.defineProperty({ log, sleep, signal, on } as ProgramScope, "watch", { value: watch });
+        started = fn(scope);
         started.catch(() => {}); // late rejections after an abort are expected
         const aborted = Promise.withResolvers<never>();
         if (signal.aborted) aborted.reject(signal.reason);
@@ -217,7 +249,7 @@ export class ProgramRunner {
         clearTimeout(timeout);
         if (!signal.aborted) controller.abort(new Error("finished"));
         for (const timer of timers) clearTimeout(timer);
-        for (const [emitter, event, handler] of listeners) emitter.off(event, handler);
+        for (const { emitter, event, listener } of listeners) emitter.off(event, listener);
       }
       // Whatever the end, nothing the program started keeps the body busy into the next run.
       if (!halted) this.#options.halt?.();

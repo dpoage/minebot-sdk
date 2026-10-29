@@ -765,52 +765,66 @@ describe("body API: reflexes", () => {
 describe("body API: events and waits", () => {
   let body: Running;
   const event = (seq: number, type: string, data: object) => ({ seq, time: "<ms>", type, data });
+  interface StartupEvent {
+    seq: number;
+    time: string;
+    type: string;
+    data: object;
+  }
+  // The startup events the body logged, with the seqs the log gave them (a seq is the log's number,
+  // not a count from 1: it never goes back across a restart).
+  let events: StartupEvent[];
+  let latest: number;
 
   before(async () => {
     body = await startBody({ stateFiles: { "triggers.json": { broken: { on: "chat", routine: "r1" } } } });
+    const logged = z
+      .object({ events: z.array(z.object({ seq: z.number().int().nonnegative() })).length(4) })
+      .parse((await body.send("GET", "/events?since=0")).body).events;
+    const [reflexError, connectError, disconnected, scheduled] = logged.map((entry) => entry.seq);
+    latest = scheduled!;
+    // What the body produced from start to its first failed connection attempt, in order, as the normalizer shows it.
+    events = [
+      event(reflexError!, "reflex_error", { name: "broken", error: "✖ Invalid input: expected array, received string\n  → at on\n✖ Invalid input: expected string, received undefined\n  → at updated" }),
+      event(connectError!, "error", { message: "connect ECONNREFUSED 127.0.0.1:<port>" }),
+      event(disconnected!, "disconnected", { reason: "socketClosed" }),
+      event(scheduled!, "reconnect_scheduled", { inMs: 5000, attempt: 1 }),
+    ];
   });
   after(() => body.close());
 
-  // What the body produced from start to its first failed connection attempt, in order, as the normalizer shows it.
-  const events = [
-    event(1, "reflex_error", { name: "broken", error: "✖ Invalid input: expected array, received string\n  → at on\n✖ Invalid input: expected string, received undefined\n  → at updated" }),
-    event(2, "error", { message: "connect ECONNREFUSED 127.0.0.1:<port>" }),
-    event(3, "disconnected", { reason: "socketClosed" }),
-    event(4, "reconnect_scheduled", { inMs: 5000, attempt: 1 }),
-  ];
-
-  it("lists exactly the startup events, in order, from 0", async () => {
-    await body.call("GET", "/events?since=0", { body: { events, next: 4 } });
-    await body.call("GET", "/events", { body: { events, next: 4 } });
+  it("lists exactly the startup events, in order, from 0 and without a cursor, naming the latest seq", async () => {
+    await body.call("GET", "/events?since=0", { body: { events, next: latest, latest } });
+    await body.call("GET", "/events", { body: { events, next: latest, latest } });
   });
 
   it("honors limit and since: the first two events with next at the second, then the rest", async () => {
-    await body.call("GET", "/events?since=0&limit=2", { body: { events: events.slice(0, 2), next: 2 } });
-    await body.call("GET", "/events?since=2&limit=2", { body: { events: events.slice(2, 4), next: 4 } });
-    await body.call("GET", "/events?since=3", { body: { events: events.slice(3), next: 4 } });
-    await body.call("GET", "/events?since=4", { body: { events: [], next: 4 } });
+    await body.call("GET", "/events?since=0&limit=2", { body: { events: events.slice(0, 2), next: events[1]!.seq, latest } });
+    await body.call("GET", `/events?since=${events[1]!.seq}&limit=2`, { body: { events: events.slice(2, 4), next: latest, latest } });
+    await body.call("GET", `/events?since=${events[2]!.seq}`, { body: { events: events.slice(3), next: latest, latest } });
+    await body.call("GET", `/events?since=${events[3]!.seq}`, { body: { events: [], next: latest, latest } });
   });
 
   it("restarts from the beginning when the cursor is ahead of the log", async () => {
-    await body.call("GET", "/events?since=999", { body: { events, next: 4 } });
-    await body.call("GET", "/events?since=999&limit=1", { body: { events: events.slice(0, 1), next: 1 } });
+    await body.call("GET", `/events?since=${Number.MAX_SAFE_INTEGER}`, { body: { events, next: latest, latest } });
+    await body.call("GET", `/events?since=${Number.MAX_SAFE_INTEGER}&limit=1`, { body: { events: events.slice(0, 1), next: events[0]!.seq, latest } });
   });
 
   it("POST /wait returns a buffered matching event with next, and filters by type and message", async () => {
-    await body.call("POST", "/wait", { body: { event: events[0], next: 1, timedOut: false } }, { json: { types: ["reflex_error"], since: 0, timeoutMs: 5000 } });
-    await body.call("POST", "/wait", { body: { event: events[1], next: 2, timedOut: false } }, { json: { since: 1, match: "econnrefused", types: ["error"], timeoutMs: 5000 } });
-    await body.call("POST", "/wait", { body: { event: events[2], next: 3, timedOut: false } }, { json: { types: ["disconnected", "error"], since: 2, timeoutMs: 5000 } });
+    await body.call("POST", "/wait", { body: { event: events[0], next: events[0]!.seq, timedOut: false } }, { json: { types: ["reflex_error"], since: 0, timeoutMs: 5000 } });
+    await body.call("POST", "/wait", { body: { event: events[1], next: events[1]!.seq, timedOut: false } }, { json: { since: events[0]!.seq, match: "econnrefused", types: ["error"], timeoutMs: 5000 } });
+    await body.call("POST", "/wait", { body: { event: events[2], next: events[2]!.seq, timedOut: false } }, { json: { types: ["disconnected", "error"], since: events[1]!.seq, timeoutMs: 5000 } });
   });
 
   it("POST /wait times out with the log's end as next, and a cursor ahead of the log starts over", async () => {
-    await body.call("POST", "/wait", { body: { event: null, next: 4, timedOut: true } }, { json: { types: ["chat"], since: 0, timeoutMs: 50 } });
-    await body.call("POST", "/wait", { body: { event: null, next: 4, timedOut: true } }, { json: { types: ["reflex_error"], since: 1, timeoutMs: 50 } });
-    await body.call("POST", "/wait", { body: { event: null, next: 4, timedOut: true } }, { json: { from: "someone", since: 0, timeoutMs: 50 } });
-    await body.call("POST", "/wait", { body: { event: events[1], next: 2, timedOut: false } }, { json: { types: ["error"], since: 999, timeoutMs: 5000 } });
+    await body.call("POST", "/wait", { body: { event: null, next: latest, timedOut: true } }, { json: { types: ["chat"], since: 0, timeoutMs: 50 } });
+    await body.call("POST", "/wait", { body: { event: null, next: latest, timedOut: true } }, { json: { types: ["reflex_error"], since: events[0]!.seq, timeoutMs: 50 } });
+    await body.call("POST", "/wait", { body: { event: null, next: latest, timedOut: true } }, { json: { from: "someone", since: 0, timeoutMs: 50 } });
+    await body.call("POST", "/wait", { body: { event: events[1], next: events[1]!.seq, timedOut: false } }, { json: { types: ["error"], since: Number.MAX_SAFE_INTEGER, timeoutMs: 5000 } });
   });
 
   it("POST /wait without since waits for new events only: a buffered match is not returned", async () => {
-    await body.call("POST", "/wait", { body: { event: null, next: 4, timedOut: true } }, { json: { types: ["error"], timeoutMs: 50 } });
+    await body.call("POST", "/wait", { body: { event: null, next: latest, timedOut: true } }, { json: { types: ["error"], timeoutMs: 50 } });
   });
 });
 
@@ -848,13 +862,11 @@ describe("body API: the program history file", () => {
   });
 
   it("records no program_finished event for a run that failed to start", async () => {
-    const event = (seq: number, type: string, data: object) => ({ seq, time: "<ms>", type, data });
-    await body.call("GET", "/events", {
-      body: {
-        events: [event(1, "error", { message: "connect ECONNREFUSED 127.0.0.1:<port>" }), event(2, "disconnected", { reason: "socketClosed" }), event(3, "reconnect_scheduled", { inMs: 5000, attempt: 1 })],
-        next: 3,
-      },
-    });
+    const { events } = z.object({ events: z.array(z.object({ type: z.string() })) }).parse((await body.send("GET", "/events")).body);
+    assert.deepEqual(
+      events.map((event) => event.type),
+      ["error", "disconnected", "reconnect_scheduled"],
+    );
   });
 
   it("numbers every later program too: a run that failed to run leaves no line but takes a seq, and a reflex's `when` is registered with the next one", async () => {

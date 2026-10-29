@@ -104,7 +104,53 @@ export const RunInput = z.object({
   timeoutMs: z.number().int().nonnegative().max(MAX_TIMEOUT_MS).optional(),
 });
 
-export const ChatInput = z.object({ message: z.string().min(1).max(256) });
+/** The server's chat limit, in UTF-16 code units: what mineflayer splits a line by, and what the 26.1 server refuses past (an emoji counts as 2). */
+const CHAT_LIMIT = 256;
+
+/** The first character of `message` the 26.1 server refuses in chat, with its index: control characters (U+0000-U+001F, tab and newline included), U+007F, and the section sign U+00A7. */
+function refusedChatCharacter(message: string): { index: number; code: number } | undefined {
+  for (let index = 0; index < message.length; index++) {
+    const code = message.charCodeAt(index);
+    if (code < 0x20 || code === 0x7f || code === 0xa7) return { index, code };
+  }
+  return undefined;
+}
+
+/** How the error names the character: its escape for the invisible ones, the character itself for the section sign. */
+function chatCharacterName(code: number): string {
+  if (code < 0x20 || code === 0x7f) return `\\u${code.toString(16).padStart(4, "0").toUpperCase()}`;
+  return String.fromCharCode(code);
+}
+
+/**
+ * Body of `POST /chat`: `message` is one chat line. The server disconnects the body for a control
+ * character, U+007F, or U+00A7, and counts the 256-unit limit in UTF-16 code units, so both are
+ * refused here, before anything is sent; a whisper is checked as the `/msg <to> <message>` line the
+ * client composes. `social.say` repeats the rule (a built-in module cannot import the protocol
+ * source), and `test/chat-validation.test.ts` holds the two to the same answers.
+ */
+export const ChatInput = z.object({
+  message: z
+    .string()
+    .min(1)
+    .max(CHAT_LIMIT)
+    .superRefine((message, ctx) => {
+      const refused = refusedChatCharacter(message);
+      if (refused) {
+        const code = `U+${refused.code.toString(16).padStart(4, "0").toUpperCase()}`;
+        ctx.addIssue({
+          code: "custom",
+          message: `message has the character ${chatCharacterName(refused.code)} (${code}) at index ${refused.index}: the Minecraft server refuses control characters, U+007F and the section sign U+00A7 in chat (a tab, U+007F, or U+00A7 would disconnect the body). Nothing was sent; remove that character.`,
+        });
+      }
+      if (message.length > CHAT_LIMIT) {
+        ctx.addIssue({
+          code: "custom",
+          message: `message is ${message.length} UTF-16 code units long, over the server's chat limit of ${CHAT_LIMIT} UTF-16 code units (an emoji counts as 2). Nothing was sent; shorten it.`,
+        });
+      }
+    }),
+});
 
 function isPattern(pattern: string): boolean {
   try {
@@ -125,7 +171,7 @@ export const WaitInput = z.object({
 });
 
 export const EventsQuery = z.object({
-  since: z.coerce.number().int().nonnegative().default(0),
+  since: z.coerce.number().int().nonnegative().optional(),
   limit: z.coerce.number().int().positive().max(1000).default(200),
 });
 

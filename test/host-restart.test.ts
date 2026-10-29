@@ -236,12 +236,17 @@ describe("restart: the supervisor keeps serving across a host's death", () => {
     const second = answer.pid;
     assert.notEqual(second, first);
     await waitFor(t, "hello", 3);
+    const logged = t.events.since(0).events;
     assert.deepEqual(
-      t.events.since(0).events.map((e) => [e.seq, e.type]),
-      [[1, "hello"], [2, "marker"], [3, "disconnected"], [4, "hello"]],
-      "one log, numbered without a reset, with exactly one disconnected",
+      logged.map((e) => e.type),
+      ["hello", "marker", "disconnected", "hello"],
+      "one log, with exactly one disconnected",
     );
-    assert.equal(t.events.since(0).events[2]!.data.reason, "bot host restarted: the bot host exited (signal SIGKILL)");
+    assert.ok(
+      logged.every((event, index) => index === 0 || event.seq === logged[index - 1]!.seq + 1),
+      "one log, numbered gap-free without a reset",
+    );
+    assert.equal(logged[2]!.data.reason, "bot host restarted: the bot host exited (signal SIGKILL)");
     assert.equal(t.host.connected, true);
   });
 
@@ -307,7 +312,10 @@ describe("restart: the supervisor keeps serving across a host's death", () => {
       const lost = events.filter((e) => String(e.data.reason).startsWith("bot host restarted"));
       assert.equal(lost.length, 1);
       assert.match(String(lost[0]!.data.reason), /^bot host restarted: the bot host exited \(signal SIGKILL\)$/);
-      assert.deepEqual(events.map((e) => e.seq), events.map((_, i) => i + 1), "seq has no gap and no reset");
+      assert.ok(
+        events.every((event, index) => index === 0 || event.seq === events[index - 1]!.seq + 1),
+        "seq is gap-free and never resets within one log",
+      );
       assert.ok(events.some((e) => e.seq > lost[0]!.seq), "the new host's events follow");
       assert.ok(existsSync(endpointFile("real")), "the endpoint file is still published");
     } finally {

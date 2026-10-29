@@ -263,7 +263,7 @@ async function main(): Promise<number> {
       print(await (await BodyClient.connect(opts.bot)).stop());
       return 0;
     case "events":
-      print(await (await BodyClient.connect(opts.bot)).events(Number(opts.since ?? 0)));
+      print(await (await BodyClient.connect(opts.bot)).events(opts.since === undefined ? undefined : Number(opts.since)));
       return 0;
     case "runs": {
       const [which] = rest;

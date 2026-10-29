@@ -51,6 +51,12 @@ export interface RunRecord {
 }
 
 export interface BodyEvent {
+  /**
+   * The log's number for this event: a seed from the log's creation wall clock, then one per event.
+   * A fresh log seeds above an earlier log's seqs only if it starts in a later wall-clock second and
+   * that log averaged under 1000 events a second, and the wall clock did not step back; otherwise an
+   * old cursor can hide the new log's first events.
+   */
   seq: number;
   time: number;
   type: string;
@@ -58,9 +64,12 @@ export interface BodyEvent {
 }
 
 export interface EventsResponse {
+  /** The events, oldest first: with no cursor, the newest `limit` of them. */
   events: BodyEvent[];
   /** Pass as `since` on the next call to receive only newer events. */
   next: number;
+  /** The log's newest seq: anything pushed later is newer than every event here. */
+  latest: number;
 }
 
 /** Filters of a blocking wait. Every given filter must match the same event. */
@@ -110,6 +119,8 @@ export interface EntitySummary {
   type: string;
   name: string;
   username?: string;
+  /** The stack a dropped item entity holds: `name` is the item (not "item"), `count` its size. Absent for every other entity. */
+  item?: { name: string; count: number };
   distance: number;
   position: Vec;
 }
@@ -235,7 +246,14 @@ export interface ActionStats {
 }
 
 /** The type check of a routine's source against the packages the body ships. It never blocks a save: `failed` lists the errors (`<name>.ts(line,col): error TSxxxx: ...`) and the routine is saved anyway; `skipped` says why no check ran (TypeScript is an optional peer dependency). */
-export type TypeCheck = { status: "passed" } | { status: "failed"; errors: string[] } | { status: "skipped"; reason: string };
+export type TypeCheck =
+  | {
+      status: "passed";
+      /** The suggestions a passing run's log carries: a missing-member read, and the real member to use (absent when the check had none). */
+      notes?: string[];
+    }
+  | { status: "failed"; errors: string[] }
+  | { status: "skipped"; reason: string };
 
 /** A built-in routine module a body offers: `import * as <name> from "minebot-sdk/routines/<name>"`, and each routine callable as `<name>.<routine>`. */
 export interface BuiltinInfo {

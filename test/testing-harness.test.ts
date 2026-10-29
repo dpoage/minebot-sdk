@@ -116,7 +116,7 @@ describe("minebot-sdk/testing world and inventory", () => {
     const h = createHarness({ entities: [{ name: "item", item: "stick", at: [2.5, 64, 0.5] }] });
     const [recipe] = await h.run(items.recipes, { item: "stick" });
     assert.equal(recipe?.makes, 4);
-    assert.deepEqual(await h.run(items.drops, { radius: 4 }), [{ x: 2, y: 64, z: 0 }]);
+    assert.deepEqual(await h.run(items.drops, { radius: 4 }), [{ x: 2, y: 64, z: 0, name: "stick", count: 1 }]);
   });
 
   it("cooks at a furnace on the clock: fuel burns for its real time and the output appears", async () => {

@@ -6,7 +6,7 @@
     "routines": [
       {
         "name": "to",
-        "description": "Walk within `range` blocks of `position` ({x,y,z} or [x,y,z]) and stop; the feet, or the block above them, within `range` counts as there. Throws, after stopping pathfinding, when `timeoutMs` passes, when 12 s go by with no progress (no movement, digging, or nearby block change: 'stuck at ...'), when the breath bar falls under 10 ('out of air ...'), when a finished path leaves the player short ('the path ended ... blocks short'), or when the pathfinder ends without a way within `range`, finding none or running out of search time ('could not reach ...'). A missing path names what blocked the way when a relaxed search finds one: a drop taller than the pathfinder falls, or a block the bot placed itself (`allowDigOwnBuilds: true` walks through those). Returns where the player stands once stopped.",
+        "description": "Walk within `range` blocks of `position` and stop; the feet, or the block above them, within `range` counts as there. `position` is {x,y,z} or [x,y,z]; {x,z} instead walks to the surface of that column, so a far goal needs no y guess. Returns where the player stands once stopped. Throws, after stopping pathfinding, when `timeoutMs` passes, when 12 s go by with no progress (no movement, digging, or nearby block change: 'stuck at ...'), when the breath bar falls under 10 ('out of air ...'), when a finished path leaves the player short ('the path ended ... blocks short'), or when the pathfinder ends without a way within `range`, finding none or running out of search time ('could not reach ...'). A missing path names what blocked the way when a relaxed search finds one: a drop taller than the pathfinder falls, or a block the bot placed itself (`allowDigOwnBuilds: true` walks through those). When the goal is more than `range + 1` blocks above or below the ground of its column, the error names the ground y; when that column is not loaded, it says so. A walk that ends stuck or finds no way may open a closed door other than an iron one (wooden or copper) within 8 blocks of the goal or of the player once, and try the walk again: this reaches the inside of a build of the body's own, where its own blocks stop the pathfinder.",
         "args": {
           "$schema": "https://json-schema.org/draft/2020-12/schema",
           "type": "object",
@@ -14,12 +14,49 @@
             "position": {
               "anyOf": [
                 {
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "x": {
+                          "type": "number"
+                        },
+                        "y": {
+                          "type": "number"
+                        },
+                        "z": {
+                          "type": "number"
+                        }
+                      },
+                      "required": [
+                        "x",
+                        "y",
+                        "z"
+                      ]
+                    },
+                    {
+                      "type": "array",
+                      "prefixItems": [
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "number"
+                        }
+                      ],
+                      "items": false,
+                      "minItems": 3,
+                      "maxItems": 3
+                    }
+                  ]
+                },
+                {
                   "type": "object",
                   "properties": {
                     "x": {
-                      "type": "number"
-                    },
-                    "y": {
                       "type": "number"
                     },
                     "z": {
@@ -28,26 +65,8 @@
                   },
                   "required": [
                     "x",
-                    "y",
                     "z"
                   ]
-                },
-                {
-                  "type": "array",
-                  "prefixItems": [
-                    {
-                      "type": "number"
-                    },
-                    {
-                      "type": "number"
-                    },
-                    {
-                      "type": "number"
-                    }
-                  ],
-                  "items": false,
-                  "minItems": 3,
-                  "maxItems": 3
                 }
               ]
             },
@@ -317,7 +336,7 @@
     "routines": [
       {
         "name": "place",
-        "description": "Place one block of `item` at `at` ({x,y,z} or [x,y,z]), digging out a different solid block first. Needs a solid neighbor to place against; it walks closer only when no neighbor's face is within 5 blocks of the eyes. It prefers a face on a plain block, and sneaks when it places against a block like a crafting table or chest, so no window opens. The bot steps out of the cell first for a block with a collision box; nothing is refused up front for other bodies. Throws, naming the cause, when the block did not end up in every cell it needs: a creature, player, boat or minecart in the way, a door's cell above or a bed's cell ahead not free. Returns false if the block was already there, true once it is in place (a torch or sign that went on a wall counts).",
+        "description": "Place one block of `item` at `at` ({x,y,z} or [x,y,z]), digging out a different solid block first. Fails at once, before walking or digging, when the inventory holds no `item`. Needs a solid neighbor to place against; it walks closer only when no neighbor's face is within 5 blocks of the eyes. It prefers a face on a plain block, and sneaks when it places against a block like a crafting table or chest, so no window opens. The bot steps out of the cell first for a block with a collision box; nothing is refused up front for other bodies. Throws, naming the cause, when the block did not end up in every cell it needs: a creature, player, boat or minecart in the way, a door's cell above or a bed's cell ahead not free. Returns false if the block was already there, true once it is in place (a torch or sign that went on a wall counts).",
         "args": {
           "$schema": "https://json-schema.org/draft/2020-12/schema",
           "type": "object",
@@ -614,7 +633,7 @@
       },
       {
         "name": "drops",
-        "description": "Positions ({x,y,z}) of dropped item entities within `radius`, nearest first — what a dig has left to pick up.",
+        "description": "Dropped item stacks within `radius` (default 8), nearest first: [{ x, y, z, name, count }], where x, y, z is the floored position of the stack and name and count are the item it holds, e.g. { x: 3, y: 64, z: 0, name: 'oak_log', count: 2 } — what a dig has left to pick up. An entry works wherever a position {x,y,z} is taken.",
         "args": {
           "$schema": "https://json-schema.org/draft/2020-12/schema",
           "type": "object",
@@ -633,19 +652,35 @@
             "type": "object",
             "properties": {
               "x": {
-                "type": "number"
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
               },
               "y": {
-                "type": "number"
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
               },
               "z": {
-                "type": "number"
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              "name": {
+                "type": "string"
+              },
+              "count": {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
               }
             },
             "required": [
               "x",
               "y",
-              "z"
+              "z",
+              "name",
+              "count"
             ],
             "additionalProperties": false
           }
@@ -1418,7 +1453,7 @@
     "routines": [
       {
         "name": "attack",
-        "description": "Hit one creature until it dies. `target` is an entity id or a name ('zombie'; the nearest match, a player's username works too). Walks up to it, holds the best sword or axe from the inventory, and hits once per weapon cooldown. Gives up after `timeoutMs` (default 20000). Returns { target, killed, damageTaken, weapon, reason }; when `killed` is false, `reason` is one line that names why it gave up (gone, still in reach, outran, blocked) and what to do next.",
+        "description": "Hit one creature until it dies. `target` is an entity id or a name ('zombie'; the nearest match, a player's username works too). Walks up to it on movement rules that never break or place a block (a fence or a wall stops the chase instead), holds the best sword or axe from the inventory, and hits once per weapon cooldown. Gives up after `timeoutMs` (default 20000). Returns { target, killed, damageTaken, weapon, reason }; when `killed` is false, `reason` is one line that names why it gave up (gone, still in reach, outran, blocked) and what to do next.",
         "args": {
           "$schema": "https://json-schema.org/draft/2020-12/schema",
           "type": "object",
@@ -1481,7 +1516,7 @@
       },
       {
         "name": "fight",
-        "description": "Fight until no target is left within `radius` (default 16) or `timeoutMs` (default 60000) passes. Targets default to hostile mobs: the registry category 'Hostile mobs', which includes slimes, magma cubes, phantoms, and ghasts, minus endermen, zombified piglins, striders, and end crystals, which are no threat until provoked. `targets` ('zombie', '*_skeleton', or a list) names others, endermen included. Takes the nearest first, holds the best sword or axe from the inventory, skips a target it cannot kill in 20 seconds, and fails if the player dies. Creepers explode when close: retreat from them first. Returns { kills, damageTaken, weapon, remaining, timedOut }.",
+        "description": "Fight until no target is left within `radius` (default 16) or `timeoutMs` (default 60000) passes. Targets default to hostile mobs: the registry category 'Hostile mobs', which includes slimes, magma cubes, phantoms, and ghasts, minus endermen, zombified piglins, striders, and end crystals, which are no threat until provoked. `targets` ('zombie', '*_skeleton', or a list) names others, endermen included. Takes the nearest first, holds the best sword or axe from the inventory, skips a target it cannot kill in 20 seconds, and fails if the player dies. A chase never breaks or places a block. Creepers explode when close: retreat from them first. Returns { kills, damageTaken, weapon, remaining, timedOut }.",
         "args": {
           "$schema": "https://json-schema.org/draft/2020-12/schema",
           "type": "object",
@@ -2400,7 +2435,7 @@
     "routines": [
       {
         "name": "make",
-        "description": "Make sure the inventory holds at least `count` (default 1) of `item`, crafting intermediate items (planks, sticks, tables) as needed and finding or placing a crafting table. An item that a furnace makes (iron_ingot, glass, stone, charcoal, cooked food) is smelted from the matching input the inventory holds, at a furnace within 32 blocks, else one placed from the inventory, else one crafted from 8 cobblestone; fuel is coal, charcoal, planks, or logs from the inventory. Fails with the missing raw material, which you must gather, or, when a crafted item found no room in the inventory, with where it fell. Returns the count held.",
+        "description": "Make sure the inventory holds at least `count` (default 1) of `item`, crafting intermediate items (planks, sticks, tables) as needed and finding or placing a crafting table. An item that a furnace makes (iron_ingot, glass, stone, charcoal, cooked food) is smelted from the matching input the inventory holds, at a furnace within 32 blocks, else one placed from the inventory, else one crafted from 8 cobblestone; fuel is coal, charcoal, planks, or logs from the inventory. It takes the recipe crafter.plan chose, so it does not spend as an ingredient or burn as fuel what the plan kept for a later step: an inventory the plan calls complete is enough. Fails with the missing raw material, which you must gather, or, when a crafted item found no room in the inventory, with where it fell. Returns the count held.",
         "args": {
           "$schema": "https://json-schema.org/draft/2020-12/schema",
           "type": "object",

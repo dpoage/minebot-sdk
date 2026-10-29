@@ -69,6 +69,7 @@
     "biomeAt",
     "burnTicks",
     "defineRoutine",
+    "droppedStack",
     "goals",
     "isAir",
     "isHostile",
@@ -78,6 +79,7 @@
     "smeltInputs",
     "smeltOutput",
     "toVec3",
+    "unscopedBot",
     "within",
     "withoutReserved",
     "z"

@@ -44,11 +44,44 @@ async function awaitChat(
   }
 }
 
+/** The server's chat limit, in UTF-16 code units: what mineflayer splits a line by, and what the 26.1 server refuses past (an emoji counts as 2). */
+const CHAT_LIMIT = 256;
+
+/**
+ * A chat message the server will carry. `POST /chat` validates `message` with the same rule (`ChatInput`
+ * in the protocol schemas, which also checks a whisper's `/msg <to> ` prefix). A built-in module may not
+ * import that source (`test/typecheck.test.ts` refuses an import that leaves the library), so the rule is
+ * written here too; `test/chat-validation.test.ts` holds the two paths to the same answers.
+ */
+const chatMessage = z
+  .string()
+  .min(1)
+  .max(CHAT_LIMIT)
+  .superRefine((message, ctx) => {
+    for (let index = 0; index < message.length; index++) {
+      const code = message.charCodeAt(index);
+      if (code >= 0x20 && code !== 0x7f && code !== 0xa7) continue;
+      const character = code < 0x20 || code === 0x7f ? `\\u${code.toString(16).padStart(4, "0").toUpperCase()}` : String.fromCharCode(code);
+      const point = `U+${code.toString(16).padStart(4, "0").toUpperCase()}`;
+      ctx.addIssue({
+        code: "custom",
+        message: `message has the character ${character} (${point}) at index ${index}: the Minecraft server refuses control characters, U+007F and the section sign U+00A7 in chat (a tab, U+007F, or U+00A7 would disconnect the body). Nothing was sent; remove that character.`,
+      });
+      break;
+    }
+    if (message.length > CHAT_LIMIT) {
+      ctx.addIssue({
+        code: "custom",
+        message: `message is ${message.length} UTF-16 code units long, over the server's chat limit of ${CHAT_LIMIT} UTF-16 code units (an emoji counts as 2). Nothing was sent; shorten it.`,
+      });
+    }
+  });
+
 export const say = defineRoutine(
   {
     name: "social.say",
     description: "Send a public chat `message`. Other players and agents read chat.",
-    args: z.object({ message: z.string().min(1).max(256) }),
+    args: z.object({ message: chatMessage }),
     returns: z.void(),
   },
   (ctx, { message }) => ctx.bot.chat(message),

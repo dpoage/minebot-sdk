@@ -42,7 +42,9 @@ const ARM = `export default (ctx) => {
     waiting = { resolve, reject };
     return promise;
   };
-  bot.on("physicsTick", () => {
+  // The pathfinder plugin's own listener is the host's, not a run's (a run's listeners end with it): the fake host
+  // installs it on the real bot and ticks it, as the plugin does.
+  bot.installPathfinderTick(() => {
     if (!pf.goal) return;
     try {
       pf.goal.isValid();
@@ -51,7 +53,6 @@ const ARM = `export default (ctx) => {
       throw err;
     }
   });
-  setInterval(() => bot.emit("physicsTick"), 20).unref();
   return "armed";
 };
 `;

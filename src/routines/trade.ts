@@ -1,6 +1,6 @@
 // The trade routines: reading and buying the offers of villagers and wandering traders. A trade is
 // verified by what the inventory gained and lost, not by what the window claims.
-import { type Bot, defineRoutine, type Entity, type Item, type RoutineContext, type Villager, z } from "minebot-sdk/routine";
+import { type Bot, defineRoutine, type Entity, type Item, type RoutineContext, unscopedBot, type Villager, z } from "minebot-sdk/routine";
 import * as move from "minebot-sdk/routines/move";
 
 export const description = "List and buy the offers of the nearest villager or wandering trader: walk to it, open its trade window, read its offers or trade, and say what the inventory gained and lost.";
@@ -127,7 +127,9 @@ async function closeStrayed(bot: Bot, window: Villager & { close: () => Promise<
  * open removes Mineflayer's own listeners, but its persistent open_window handler still takes a
  * window the server sends afterwards: nothing closes it, the server keeps the trade session open,
  * and every later open on that merchant times out while other inventory routines trip over the
- * window. For LATE_WINDOW_MS after a failed open, a merchant window that opens is closed.
+ * window. For LATE_WINDOW_MS after a failed open, a merchant window that opens is closed. The watch
+ * outlives the call, so it is the bot's own (`unscopedBot`): it is keyed by the bot and removed by
+ * its handler or its timer, not with the run.
  */
 interface Watcher {
   onOpen: (window: unknown) => void;
@@ -140,27 +142,29 @@ const LATE_WINDOW_MS = 1_500;
 
 /** Watches for a merchant window opening after this call failed, and closes it. */
 function watchLateWindow(bot: Bot): void {
-  if (watchers.has(bot)) return;
+  const raw = unscopedBot(bot);
+  if (watchers.has(raw)) return;
   const onOpen = (window: unknown) => {
     if (!isMerchantWindow(window)) return;
-    stopWatching(bot);
-    void closeStrayed(bot, window).catch(() => undefined);
+    stopWatching(raw);
+    void closeStrayed(raw, window).catch(() => undefined);
   };
-  const timer = setTimeout(() => stopWatching(bot), LATE_WINDOW_MS);
-  watchers.set(bot, { onOpen, timer });
-  bot.on("windowOpen", onOpen);
+  const timer = setTimeout(() => stopWatching(raw), LATE_WINDOW_MS);
+  watchers.set(raw, { onOpen, timer });
+  raw.on("windowOpen", onOpen);
   // The open may have lost only the race against the stop or the timeout: the window is already there.
-  const current = bot.currentWindow;
+  const current = raw.currentWindow;
   if (isMerchantWindow(current)) onOpen(current);
 }
 
 /** Stops watching for a late merchant window: the next open takes the window back. */
 function stopWatching(bot: Bot): void {
-  const watched = watchers.get(bot);
+  const raw = unscopedBot(bot);
+  const watched = watchers.get(raw);
   if (!watched) return;
-  bot.off("windowOpen", watched.onOpen);
+  raw.off("windowOpen", watched.onOpen);
   clearTimeout(watched.timer);
-  watchers.delete(bot);
+  watchers.delete(raw);
 }
 
 /**

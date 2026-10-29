@@ -5,6 +5,7 @@ import { sensesOf } from "../mc/deaths.ts";
 import { activeEffects } from "../mc/effects.ts";
 import { skyAbove, type SkyView } from "../mc/sky.ts";
 import type { DeathSummary, EntitySummary, ItemSummary, Observation } from "../protocol/index.ts";
+import { droppedStack } from "../mc/drops.ts";
 import { round, vec } from "../mc/position.ts";
 
 const NEARBY_ENTITY_RADIUS = 32;
@@ -44,14 +45,19 @@ export function observation(
   const senses = sensesOf(bot);
   const nearbyEntities: EntitySummary[] = Object.values(bot.entities)
     .filter((e) => e !== self && e.position.distanceTo(self.position) <= NEARBY_ENTITY_RADIUS)
-    .map((e) => ({
-      id: e.id,
-      type: e.type,
-      name: e.name ?? e.displayName ?? "unknown",
-      ...(e.username && { username: e.username }),
-      distance: round(e.position.distanceTo(self.position)),
-      position: vec(e.position),
-    }))
+    .map((e) => {
+      // A dropped item is an entity named "item"; the stack it holds is what the player cares about.
+      const stack = droppedStack(e);
+      return {
+        id: e.id,
+        type: e.type,
+        name: e.name ?? e.displayName ?? "unknown",
+        ...(e.username && { username: e.username }),
+        ...(stack && { item: { name: stack.name, count: stack.count } }),
+        distance: round(e.position.distanceTo(self.position)),
+        position: vec(e.position),
+      };
+    })
     .sort((a, b) => a.distance - b.distance)
     .slice(0, NEARBY_ENTITY_LIMIT);
   return {
@@ -115,10 +121,26 @@ export function brief(o: Observation & { connected: true; program: { running: bo
   const inventory: Record<string, number> = {};
   for (const item of o.inventory) inventory[item.name] = (inventory[item.name] ?? 0) + item.count;
   const items = Object.entries(inventory).map(([name, n]) => `${name} ${n}`).join(", ") || "empty";
-  const near = o.nearbyEntities
-    .filter((e) => !["other", "object", "projectile", "orb", "global"].includes(e.type) && e.name !== "item")
-    .slice(0, 5)
-    .map((e) => `${e.username ?? e.name} ${Math.round(e.distance)}m`)
+  // Dropped stacks are named by the item they hold, grouped by name with the counts added up; everything
+  // else that is worth naming keeps one entry, and the list reads nearest first.
+  const stacks = new Map<string, { count: number; distance: number }>();
+  for (const e of o.nearbyEntities) {
+    if (!e.item) continue;
+    const group = stacks.get(e.item.name);
+    if (group) {
+      group.count += e.item.count;
+      group.distance = Math.min(group.distance, e.distance);
+    } else stacks.set(e.item.name, { count: e.item.count, distance: e.distance });
+  }
+  const near = [
+    ...o.nearbyEntities
+      .filter((e) => !e.item && !["other", "object", "projectile", "orb", "global"].includes(e.type))
+      .slice(0, 5)
+      .map((e) => ({ text: `${e.username ?? e.name} ${Math.round(e.distance)}m`, distance: e.distance })),
+    ...[...stacks].map(([name, group]) => ({ text: `${name} x${group.count} ${Math.round(group.distance)}m`, distance: group.distance })),
+  ]
+    .sort((a, b) => a.distance - b.distance)
+    .map((e) => e.text)
     .join(", ");
   const worn = Object.values(o.armor).flatMap((item) => (item ? [item.name] : []));
   const effects = o.effects.map(
