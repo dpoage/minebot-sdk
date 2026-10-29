@@ -147,6 +147,19 @@ describe("crafter.make burns no fuel a later step needs (P4.3)", () => {
     const h = bench(add(start, plan.missing), blocks);
     assert.ok((await h.run(crafter.make, { item: "iron_bars" })) >= 1);
   });
+
+  it("burns the coal and not the one log: iron_shovel from one ingot, one log and one coal", async () => {
+    // The make of an inventory the plan calls complete must not burn as fuel the only wood the sticks
+    // need: a shovel is one iron ingot and two sticks, and the coal covers the ingot's smelt.
+    const start: Inventory = { cobblestone: 6, raw_iron: 1, coal: 1, oak_log: 1 };
+    const plan = await bench(start, NEAR).run(crafter.plan, { item: "iron_shovel" });
+    assert.deepEqual(plan.missing, {}, "the plan names nothing for this inventory");
+    const h = bench(start, NEAR);
+    assert.equal(await h.run(crafter.make, { item: "iron_shovel" }), 1);
+    assert.equal(h.count("iron_shovel"), 1);
+    assert.equal(h.count("coal"), 0, "the coal is the fuel");
+    assert.equal(h.count("oak_log"), 0, "the log became the shovel's sticks");
+  });
 });
 
 describe("crafter.plan names the raw material, never the ore or the rare variant (P4)", () => {

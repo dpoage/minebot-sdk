@@ -152,10 +152,13 @@ async function openFight(ctx: RoutineContext): Promise<Fight> {
   fight.close = () => {
     bot.off("health", onHealth);
     bot.off("entityDead", onDead);
-    bot.pathfinder.setGoal(null);
-    // Whatever ended the fight, the pathfinder walks on the player's own movements again.
-    if (bot.pathfinder.movements !== normal) bot.pathfinder.setMovements(normal);
-    bot.clearControlStates();
+    try {
+      bot.pathfinder.setGoal(null);
+    } finally {
+      // Whatever ended the fight, the pathfinder walks on the player's own movements again.
+      if (bot.pathfinder.movements !== normal) bot.pathfinder.setMovements(normal);
+      bot.clearControlStates();
+    }
   };
   return fight;
 }
