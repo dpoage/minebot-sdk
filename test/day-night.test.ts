@@ -1,20 +1,32 @@
-// P1.1: a wait for a phase that already holds answers at once, including the phase the body joined
-// in (the first time packet after a join announces it, so no transition is coming); in the other
-// phase it waits for the transition. An explicit cursor keeps the buffered-only semantics.
+// P1.1 (revised): a wait with no cursor is answered at once from the phase that holds only when its
+// `types` name exactly one of day/night and that phase holds now (other types may accompany it). A
+// wait naming both, neither, or no types is answered only by events pushed after the call. The
+// connection announces the phase a body joins in on its first time packet, then each transition.
 import assert from "node:assert/strict";
+import { EventEmitter } from "node:events";
 import { afterEach, beforeEach, describe, it, mock } from "node:test";
 import { EventLog } from "../src/body/events.ts";
+import { announceDayNight } from "../src/host/connection.ts";
 
 describe("EventLog.wait on day and night", () => {
   beforeEach(() => mock.timers.enable({ apis: ["setTimeout"] }));
   afterEach(() => mock.timers.reset());
 
-  it("answers at once with the day event when day already holds, including a phase the body joined in", async () => {
+  it("answers at once with the day event when the wait names day and day already holds", async () => {
     const log = new EventLog();
     // A body that joined in the day: the log holds the phase and never saw a transition.
     log.push("day", { timeOfDay: 1000 });
     const pending = log.wait({ types: ["day"], timeoutMs: 1000 });
     // A wait that only saw new events would need this timeout; the phase already answers.
+    mock.timers.tick(1000);
+    const got = await pending;
+    assert.deepEqual([got.event?.type, got.timedOut], ["day", false]);
+  });
+
+  it("answers at once when day is named alongside other types", async () => {
+    const log = new EventLog();
+    log.push("day", { timeOfDay: 1000 });
+    const pending = log.wait({ types: ["chat", "day"], timeoutMs: 1000 });
     mock.timers.tick(1000);
     const got = await pending;
     assert.deepEqual([got.event?.type, got.timedOut], ["day", false]);
@@ -38,10 +50,26 @@ describe("EventLog.wait on day and night", () => {
     assert.deepEqual([got.event?.type, got.timedOut], ["day", false]);
   });
 
-  it("times out when the other phase holds and no transition comes", async () => {
+  it("times out with no types: an old phase is not an event", async () => {
     const log = new EventLog();
-    log.push("night", { timeOfDay: 13000 });
-    const pending = log.wait({ types: ["day"], timeoutMs: 1000 });
+    log.push("day", { timeOfDay: 1000 });
+    const pending = log.wait({ timeoutMs: 1000 });
+    mock.timers.tick(1000);
+    assert.equal((await pending).timedOut, true);
+  });
+
+  it("times out when the types name both day and night", async () => {
+    const log = new EventLog();
+    log.push("day", { timeOfDay: 1000 });
+    const pending = log.wait({ types: ["night", "day"], timeoutMs: 1000 });
+    mock.timers.tick(1000);
+    assert.equal((await pending).timedOut, true);
+  });
+
+  it("times out when the types name neither phase", async () => {
+    const log = new EventLog();
+    log.push("day", { timeOfDay: 1000 });
+    const pending = log.wait({ types: ["chat"], timeoutMs: 1000 });
     mock.timers.tick(1000);
     assert.equal((await pending).timedOut, true);
   });
@@ -53,5 +81,29 @@ describe("EventLog.wait on day and night", () => {
     const pending = log.wait({ types: ["day"], since: latest, timeoutMs: 1000 });
     mock.timers.tick(1000);
     assert.equal((await pending).timedOut, true);
+  });
+});
+
+describe("the connection's phase announcement", () => {
+  /** A player whose time packets the test emits by hand. */
+  function phaseBot(timeOfDay: number) {
+    return Object.assign(new EventEmitter(), { time: { timeOfDay } });
+  }
+
+  it("announces the phase the body joined in on the first time packet, then only transitions", () => {
+    const bot = phaseBot(1000);
+    const log = new EventLog();
+    announceDayNight(bot, log);
+    bot.emit("time");
+    bot.emit("time"); // the same phase again is not an event
+    bot.time.timeOfDay = 13000;
+    bot.emit("time");
+    bot.time.timeOfDay = 1;
+    bot.emit("time");
+    assert.deepEqual(log.since(0).events.map((event) => [event.type, event.data.timeOfDay]), [
+      ["day", 1000],
+      ["night", 13000],
+      ["day", 1],
+    ]);
   });
 });

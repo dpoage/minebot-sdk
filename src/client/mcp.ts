@@ -37,14 +37,29 @@ import {
 import { formatBound, formatBuiltinHits, formatBuiltins, formatHits, formatLibrary, formatNotes, formatRevertedRoutine, formatRoutineVersions, formatRun, formatSavedRoutine, formatStatus } from "./render.ts";
 import { BodyClient } from "./client.ts";
 import { Digest } from "./digest.ts";
-import { EVENT_TYPES } from "../protocol/event-types.ts";
+import { eventTypesFor } from "../protocol/event-types.ts";
 
 type ToolResult = { content: { type: "text"; text: string }[]; isError?: boolean };
 
 const json = (value: unknown) => JSON.stringify(value, null, 2);
 
-/** The one sentence listing every event type the body pushes; the event tools' descriptions carry it, generated from the catalog. */
-const EVENT_TYPES_LINE = `Event types: ${Object.keys(EVENT_TYPES).join(", ")}.`;
+/**
+ * The one sentence listing the event types a body with these features can push. `triggerable` drops
+ * the reflex_* types, which a reflex may not listen to, for the reflex binding's description.
+ */
+function eventTypesLine(features: BodyFeatures, triggerable = false): string {
+  const types = eventTypesFor(capabilities(features).reflexes).filter((type) => !triggerable || !type.startsWith("reflex_"));
+  return `Event types: ${types.join(", ")}.`;
+}
+
+/** What the event tools say before the body's features are known: the types every body can push. */
+const DEFAULT_EVENT_TYPES_LINE = `Event types: ${eventTypesFor(false).join(", ")}.`;
+
+const GET_EVENTS_DESCRIPTION = (types: string) =>
+  `The body's event log, oldest first. Without \`since\` it returns the newest \`limit\` events; with \`since\` (a \`next\` or \`latest\` from an earlier answer) the oldest events after it. Every answer names the log's \`latest\` seq, and \`next\` goes into the next call's \`since\`. ${types}`;
+
+const WAIT_FOR_DESCRIPTION = (types: string) =>
+  `The cheap way to idle until something happens: blocks until an event that matches arrives, then returns it. Cheaper than polling get_events or looping sleep in a program: nothing runs until the event lands. Waits for any event type or filters it; a wait whose types name exactly one of day or night answers at once while that phase already holds, including right after the body joined in it. ${types}`;
 
 const API_DOC_FALLBACK = "Call the api_reference tool for how a run works and what ctx holds.";
 
@@ -126,8 +141,8 @@ export function toolPlan(features: BodyFeatures, toolSet: ToolSet): Record<strin
     bind_routine: {
       enabled: caps.routines,
       description: caps.reflexes
-        ? `Bind a name to a saved routine (a TypeScript module in this body's routine library). kind "action": call_routine runs it by name with JSON args. kind "reflex": the body calls the routine on its own whenever an event of the types in \`on\` arrives, narrowed by when, from, and match, and limited by cooldown_ms, timeout_ms, preempt, priority, and enabled; the routine is called as (ctx, { event }) with event { seq, type, time, data }. A reflex cannot listen to reflex_* events. A reflex that fails 3 times in a row disables itself; bind it again to enable it. Pass \`source\` to save the module as <routine>.ts and bind it in one call; a refused bind leaves the saved module. Bindings are kept on the body and survive restarts. ${EVENT_TYPES_LINE}`
-        : `Bind a name to a saved routine (a TypeScript module in this body's routine library) as an action: call_routine runs it by name with JSON args. Pass \`source\` to save the module as <routine>.ts and bind it in one call; a refused bind leaves the saved module. Bindings are kept on the body and survive restarts.`,
+        ? `Bind a name to a saved routine (a TypeScript module in this body's routine library). kind "action": call_routine runs it by name with JSON args. kind "reflex": the body calls the routine on its own whenever an event of the types in \`on\` arrives, narrowed by when, from, and match, and limited by cooldown_ms, timeout_ms, preempt, priority, and enabled; the routine is called as (ctx, { event }) with event { seq, type, time, data }. A reflex that fails 3 times in a row disables itself; bind it again to enable it. Pass \`source\` to save the module as <routine>.ts and bind it in one call; a refused bind leaves the saved module. Bindings are kept on the body and survive restarts. ${eventTypesLine(features, true)}`
+        : `Bind a name to a saved routine (a TypeScript module in this body's routine library) as an action: call_routine runs it by name with JSON args. Pass \`source\` to save the module as <routine>.ts and bind it in one call; a refused bind leaves the saved module. Bindings are kept on the body and survive restarts. ${eventTypesLine(features)}`,
     },
     list_routines: {
       enabled: caps.routines,
@@ -161,6 +176,18 @@ export function toolPlan(features: BodyFeatures, toolSet: ToolSet): Record<strin
   };
   for (const [name, entry] of Object.entries(plan)) entry.enabled &&= toolSet === "full" || Object.hasOwn(CORE_TOOLS, name);
   return plan;
+}
+
+/**
+ * The event tools' descriptions for a body with these features: each lists exactly the event types
+ * that body can push, and bind_routine lists only the types a reflex may listen to.
+ */
+export function eventToolDescriptions(features: BodyFeatures): { wait_for: string; get_events: string; bind_routine: string } {
+  return {
+    wait_for: WAIT_FOR_DESCRIPTION(eventTypesLine(features)),
+    get_events: GET_EVENTS_DESCRIPTION(eventTypesLine(features)),
+    bind_routine: toolPlan(features, "full").bind_routine!.description,
+  };
 }
 
 /** Serves one body's API as MCP tools over stdio. */
@@ -278,10 +305,10 @@ export async function serveMcp(bodyName: string, toolSet: ToolSet): Promise<void
     () => call(async (c) => json(await c.stop())),
   );
 
-  server.registerTool(
+  const getEvents = server.registerTool(
     "get_events",
     {
-      description: `The body's event log, oldest first. Without \`since\` it returns the newest \`limit\` events; with \`since\` (a \`next\` or \`latest\` from an earlier answer) the oldest events after it. Every answer names the log's \`latest\` seq, and \`next\` goes into the next call's \`since\`. ${EVENT_TYPES_LINE}`,
+      description: GET_EVENTS_DESCRIPTION(DEFAULT_EVENT_TYPES_LINE),
       inputSchema: {
         since: z.number().int().nonnegative().optional().describe("Cursor from a previous answer (`next`): return only events after it. Omit for the newest events."),
         limit: z.number().int().min(1).max(1000).optional().describe("At most this many events, 1-1000. Default 200."),
@@ -334,10 +361,10 @@ export async function serveMcp(bodyName: string, toolSet: ToolSet): Promise<void
       }),
   );
 
-  server.registerTool(
+  const waitFor = server.registerTool(
     "wait_for",
     {
-      description: `The cheap way to idle until something happens: blocks until an event that matches arrives, then returns it. Cheaper than polling get_events or looping sleep in a program: nothing runs until the event lands. Waits for any event type or filters it; a wait for day (or night) while that phase already holds answers at once, including right after the body joined in it. ${EVENT_TYPES_LINE}`,
+      description: WAIT_FOR_DESCRIPTION(DEFAULT_EVENT_TYPES_LINE),
       inputSchema: {
         types: WaitInput.shape.types.describe("Event types, e.g. ['chat'] or ['night', 'day']; any of them matches."),
         from: WaitInput.shape.from.describe("Only chat or whisper events sent by this player."),
@@ -539,6 +566,9 @@ export async function serveMcp(bodyName: string, toolSet: ToolSet): Promise<void
         : "Deaths and reconnects since the body started.",
     });
     runProgram.update({ description: runDescription(apiDoc) });
+    const eventTools = eventToolDescriptions(features);
+    getEvents.update({ description: eventTools.get_events });
+    waitFor.update({ description: eventTools.wait_for });
   }
 
   for (const tool of [listBuiltins, builtinDocs, builtinSearch, builtinSource, wikiSearch, wikiRead, wikiList, addLesson, callRoutine, bindRoutine, listRoutines, routineSave, routineSource, routineVersions, routineRevert, unbindRoutine]) tool.disable();

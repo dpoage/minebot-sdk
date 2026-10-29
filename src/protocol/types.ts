@@ -52,8 +52,9 @@ export interface RunRecord {
 
 export interface BodyEvent {
   /**
-   * The log's number for this event. It never goes back after a body restarts: a fresh log's seqs
-   * start above any seq the previous log could have issued, so an old cursor hides nothing.
+   * The log's number for this event: a seed taken from the log's creation wall clock, then one per
+   * event. The seed is above any seq an earlier log could have issued, so a seq never goes back after
+   * a body restarts and an old cursor hides nothing; the clock is assumed never to move back.
    */
   seq: number;
   time: number;

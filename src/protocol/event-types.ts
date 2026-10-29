@@ -38,3 +38,12 @@ export const EVENT_TYPES: Readonly<Record<string, string>> = {
   system: "a system or game_info message from the server: { message }",
   whisper: "a private message from another player: { from, message }",
 };
+
+/**
+ * The types a body can push, given whether it offers reflexes: the reflex events exist only there.
+ * Every other type is pushed on every body; a new feature-gated type belongs in this filter too.
+ */
+export function eventTypesFor(reflexes: boolean): string[] {
+  return Object.keys(EVENT_TYPES).filter((type) => reflexes || !type.startsWith("reflex_"));
+}
+

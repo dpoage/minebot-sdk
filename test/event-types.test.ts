@@ -108,12 +108,18 @@ describe("the event tools' descriptions", () => {
     body.close();
   });
 
-  it("wait_for, get_events and bind_routine list exactly the catalog's types, generated", () => {
-    const expected = `Event types: ${Object.keys(EVENT_TYPES).join(", ")}.`;
-    for (const name of ["wait_for", "get_events", "bind_routine"]) {
+  it("wait_for, get_events and bind_routine list the catalog's types (bind_routine only those a reflex may listen to), generated", () => {
+    const catalog = Object.keys(EVENT_TYPES);
+    const triggerable = catalog.filter((type) => !type.startsWith("reflex_"));
+    const expected: Record<string, string> = {
+      wait_for: `Event types: ${catalog.join(", ")}.`,
+      get_events: `Event types: ${catalog.join(", ")}.`,
+      bind_routine: `Event types: ${triggerable.join(", ")}.`,
+    };
+    for (const [name, line] of Object.entries(expected)) {
       const description = described.get(name);
       assert.ok(description !== undefined, `${name} is served`);
-      assert.ok(description!.endsWith(expected), `${name} does not end in the catalog's list:\n${description}`);
+      assert.ok(description!.endsWith(line), `${name} does not end in its event list:\n${description}`);
       assert.doesNotMatch(description!, /\.\.\./, `${name} still abbreviates its list`);
     }
   });

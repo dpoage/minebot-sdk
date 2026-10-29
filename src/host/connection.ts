@@ -29,6 +29,28 @@ const CLICK_PACE_MS = 100;
  */
 const NIGHT_START_TICK = 12542;
 
+/** The parts of a bot the day/night tracker reads: its clock, and the `time` event of each time packet. */
+interface PhaseSource {
+  time: { timeOfDay: number };
+  on(event: "time", listener: () => void): unknown;
+}
+
+/**
+ * Announces the phase a connection joins in on its first time packet, then only each transition:
+ * `wasNight` starts unknown, so the first packet always pushes `day` or `night`. A later reconnect
+ * starts unknown again and announces its phase too.
+ */
+export function announceDayNight(bot: PhaseSource, events: EventSink): void {
+  let wasNight: boolean | undefined;
+  bot.on("time", () => {
+    const night = bot.time.timeOfDay >= NIGHT_START_TICK;
+    if (night === wasNight) return;
+    wasNight = night;
+    if (night) events.push("night", { timeOfDay: bot.time.timeOfDay });
+    else events.push("day", { timeOfDay: bot.time.timeOfDay });
+  });
+}
+
 export class NotConnectedError extends Error {
   constructor() {
     super(NOT_CONNECTED_MESSAGE);
@@ -174,16 +196,8 @@ export class Connection {
       lastHealth = bot.health;
     });
 
-    // `wasNight` starts unknown on each connection, so the first time packet after a join announces
-    // the phase the body joined in; a later packet announces only a transition.
-    let wasNight: boolean | undefined;
-    bot.on("time", () => {
-      const night = bot.time.timeOfDay >= NIGHT_START_TICK;
-      if (night === wasNight) return;
-      wasNight = night;
-      if (night) events.push("night", { timeOfDay: bot.time.timeOfDay });
-      else events.push("day", { timeOfDay: bot.time.timeOfDay });
-    });
+    // The first time packet after a join announces the phase the body joined in; later ones only a transition.
+    announceDayNight(bot, events);
     bot.on("chat", (from, message) => {
       if (from !== bot.username) events.push("chat", { from, message });
     });

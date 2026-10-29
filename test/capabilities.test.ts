@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { describe, it } from "node:test";
-import { TOOL_SETS, toolPlan } from "../src/client/mcp.ts";
+import { eventToolDescriptions, TOOL_SETS, toolPlan } from "../src/client/mcp.ts";
 import { usageFor } from "../src/client/usage.ts";
 import { CAPABILITIES, capabilities, CAPABILITY_GATES, programApiDoc, type BodyFeatures, type Capability } from "../src/protocol/index.ts";
 import { wikiView } from "../src/wiki/access.ts";
@@ -109,6 +109,13 @@ describe("the capability table", () => {
           assert.equal(entry.enabled, served, `${tool} enabled state wrong with ${capability} off in the ${toolSet} set`);
           if (entry.enabled) assert.doesNotMatch(entry.description, forbidden, `enabled tool ${tool} description leaks ${capability}`);
         }
+      }
+
+      // The event tools, which are not in the plan: their generated type lists show only what this body can push.
+      const eventTools = eventToolDescriptions(features);
+      const shown: Record<string, string> = { wait_for: eventTools.wait_for, get_events: eventTools.get_events, ...(capsNow.routines && { bind_routine: eventTools.bind_routine }) };
+      for (const [tool, description] of Object.entries(shown)) {
+        assert.doesNotMatch(description, forbidden, `served tool ${tool} description leaks ${capability}`);
       }
 
       // The wiki's view of the body: the gated features map straight onto it.

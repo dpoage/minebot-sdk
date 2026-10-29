@@ -30,7 +30,9 @@ describe("EventLog.since", () => {
   it("keeps an explicit cursor on the oldest events after it", () => {
     const log = new EventLog();
     for (let i = 1; i <= 10; i++) log.push("chat", chat(String(i)));
-    const prior = log.since(undefined, 10).events;
+    const prior = log.since(0, 10).events;
+    const seqs = prior.map((event) => event.seq);
+    assert.deepEqual(seqs.slice(1).map((seq, index) => seq - seqs[index]!), Array(9).fill(1), "seqs are gap-free within a log");
     const page = log.since(prior[3]!.seq, 2);
     assert.deepEqual(page.events.map((event) => event.data.message), ["5", "6"]);
     assert.equal(page.next, prior[5]!.seq);
@@ -41,8 +43,11 @@ describe("EventLog.since", () => {
     assert.equal(done.latest, page.latest);
   });
 
-  it("answers an empty log with its latest seq and no events", () => {
-    assert.deepEqual(new EventLog().since(), { events: [], next: 0, latest: 0 });
+  it("answers an empty log with no events and the seq its first event will follow", () => {
+    const empty = new EventLog().since();
+    assert.deepEqual(empty.events, []);
+    assert.equal(empty.next, empty.latest);
+    assert.ok(Number.isSafeInteger(empty.latest) && empty.latest > 0, "the seed is one non-negative integer");
   });
 });
 

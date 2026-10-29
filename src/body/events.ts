@@ -20,19 +20,22 @@ export interface EventWaitOptions extends EventFilter {
 
 /**
  * A fresh log must number above any seq an earlier daemon's log issued, or a cursor held across the
- * restart would hide the new log's first events. A seq is therefore the wall clock in milliseconds
- * times this factor: room for a thousand events inside one millisecond, and a number that stays
- * exact (below 2^53) for centuries. Cursors stay one non-negative integer and nothing is persisted.
+ * restart would hide the new log's first events. The seed is the wall clock's next second times 1000,
+ * so a log created in any later second seeds above an earlier log's seqs as long as no log sustains a
+ * thousand events a second, and each log counts up by one: seqs stay one small integer per event,
+ * gap-free within a log. Nothing is persisted for it. Assumes the wall clock never moves back (a step
+ * back could let a fresh log reuse an old cursor's range) and a body pushes fewer than 1000 events a
+ * second on average.
  */
-const SEQS_PER_MS = 1000;
-/** The highest seq any log in this process issued; two logs in one process never overlap either. */
+const SEQS_PER_SECOND = 1000;
+/** The highest seq any log in this process issued or started from; two logs here never overlap either. */
 let issued = 0;
 
-/** The next seq of a log whose previous one was `previous`: always later than any seq issued before. */
-function nextSeq(previous: number): number {
-  const seq = Math.max(previous + 1, Date.now() * SEQS_PER_MS, issued + 1);
-  issued = seq;
-  return seq;
+/** The seq a new log starts from: the clock's next second times 1000, or above this process's latest log. */
+function seed(): number {
+  const start = Math.max((Math.floor(Date.now() / 1000) + 1) * SEQS_PER_SECOND, issued);
+  issued = start;
+  return start;
 }
 
 /** Bounded, sequence-numbered log of things that happened to a body. */
@@ -43,15 +46,16 @@ export class EventLog implements EventSink {
   #listeners = new Set<(event: BodyEvent) => void>();
   /** The last day or night event logged: the phase that holds now, which a wait for it must answer from at once. */
   #phase: BodyEvent | undefined;
-  #seq = 0;
+  #seq: number;
 
   constructor(capacity = 1000) {
     this.#capacity = capacity;
+    this.#seq = seed();
   }
 
   push(type: string, data: Record<string, unknown> = {}): void {
-    const event = { seq: nextSeq(this.#seq), time: Date.now(), type, data };
-    this.#seq = event.seq;
+    const event = { seq: ++this.#seq, time: Date.now(), type, data };
+    issued = this.#seq;
     this.#ring.push(event);
     if (this.#ring.length > this.#capacity) this.#ring.splice(0, this.#ring.length - this.#capacity);
     // The newest day or night event is the phase that holds now; see `wait`.
@@ -95,13 +99,22 @@ export class EventLog implements EventSink {
 
   /**
    * Resolves with the first event after the cursor that matches every filter, or with `timedOut`.
-   * Without a cursor, a day or night wait whose phase already holds answers at once with the event
-   * that announced it: the body may have joined during that phase, so no transition is coming.
+   * Without a cursor, a wait for exactly one of day or night answers at once while that phase holds
+   * with the event that announced it: the body may have joined during that phase, so no transition is
+   * coming. A wait naming both, neither, or no event types is answered only by events pushed after
+   * the call. Other types may be listed alongside the phase.
    * Does not block programs or other requests; a wait abandoned through `signal` is dropped.
    */
   async wait(options: EventWaitOptions = {}): Promise<WaitResponse> {
     const filter = { types: options.types, from: options.from, match: options.match };
-    if (options.since === undefined && this.#phase !== undefined && eventMatches(this.#phase, filter)) {
+    const phases = (options.types ?? []).filter((type) => type === "day" || type === "night");
+    if (
+      options.since === undefined &&
+      phases.length === 1 &&
+      this.#phase !== undefined &&
+      this.#phase.type === phases[0] &&
+      eventMatches(this.#phase, filter)
+    ) {
       return { event: this.#phase, next: this.#phase.seq, timedOut: false };
     }
     // A cursor ahead of the log means the body restarted; like `since()`, the wait starts over.
