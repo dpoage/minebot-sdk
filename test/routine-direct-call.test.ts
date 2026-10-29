@@ -328,6 +328,7 @@ describe("minebot-sdk/routine exports", () => {
       "biomeAt",
       "burnTicks",
       "defineRoutine",
+      "droppedStack",
       "goals",
       "isAir",
       "isHostile",

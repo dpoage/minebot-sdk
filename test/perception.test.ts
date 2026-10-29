@@ -6,7 +6,8 @@ import type { Bot } from "mineflayer";
 import { Vec3 } from "vec3";
 import { createHarness } from "minebot-sdk/testing";
 import { brief, observation } from "../src/host/observation.ts";
-import { droppedStack, drops } from "../src/routines/items.ts";
+import { droppedStack } from "../src/mc/drops.ts";
+import { drops } from "../src/routines/items.ts";
 import { universe } from "../src/testing/universe.ts";
 
 /** A player with everything the observation reads; the registry tables stand in for the game's. */

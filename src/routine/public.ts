@@ -23,6 +23,7 @@ export { NamePattern, nameMatcher };
 export { Point, Position, toVec3 };
 export { isAir, skyAbove, type SkyView };
 export { biomeAt };
+export { droppedStack } from "../mc/drops.ts";
 export { isHostile };
 export { burnTicks, pickFuel, SMELT_TICKS, smeltInputs, smeltOutput, withoutReserved };
 export { within, type Within };

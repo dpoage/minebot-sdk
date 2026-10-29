@@ -5,8 +5,8 @@ import { sensesOf } from "../mc/deaths.ts";
 import { activeEffects } from "../mc/effects.ts";
 import { skyAbove, type SkyView } from "../mc/sky.ts";
 import type { DeathSummary, EntitySummary, ItemSummary, Observation } from "../protocol/index.ts";
+import { droppedStack } from "../mc/drops.ts";
 import { round, vec } from "../mc/position.ts";
-import { droppedStack } from "../routines/items.ts";
 
 const NEARBY_ENTITY_RADIUS = 32;
 const NEARBY_ENTITY_LIMIT = 24;
