@@ -329,7 +329,11 @@ function enclosingCall(text: string, code: Uint8Array, at: number): CallSite | u
   return undefined;
 }
 
-/** The local names bound by an import from `minebot-sdk/routines/*`: calling one calls a built-in routine. */
+/**
+ * The local names bound to a `minebot-sdk/routines/*` module: a static `import` (namespace, named, renamed
+ * or default), or the run-time form the loader's import error suggests, `const ns = await import("...")`,
+ * with or without a destructuring namespace. Calling one calls a built-in routine.
+ */
 function routineNames(text: string, code: Uint8Array): Set<string> {
   const names = new Set<string>();
   for (const found of text.matchAll(/import\s+(?:type\s+)?([^;]*?)\s+from\s+["']([^"']+)["']/g)) {
@@ -346,6 +350,17 @@ function routineNames(text: string, code: Uint8Array): Set<string> {
     }
     const before = clause.replace(/\{[^}]*\}/g, "").replace(/\*\s+as\s+[\w$]+/g, "").replace(/,/g, " ").trim().replace(/^type\s+/, "");
     if (/^[\w$]+$/.test(before)) names.add(before);
+  }
+  const dynamic = /(?<![\w$.])([\w$]+)\s*=\s*(?:\(\s*)?(?:await\s+)?import\s*\(\s*["']minebot-sdk\/routines\/[\w-]+["']\s*\)/g;
+  for (const found of text.matchAll(dynamic)) if (code[found.index ?? 0] === 1) names.add(found[1]!);
+  const destructured = /(?:const|let|var)\s*\{([^}]*)\}\s*=\s*(?:\(\s*)?(?:await\s+)?import\s*\(\s*["']minebot-sdk\/routines\/[\w-]+["']\s*\)/g;
+  for (const found of text.matchAll(destructured)) {
+    if (code[found.index ?? 0] !== 1) continue;
+    for (const part of found[1]!.split(",")) {
+      const [imported, local] = part.trim().split(/\s*:\s*|\s+as\s+/);
+      const name = (local ?? imported)?.trim();
+      if (name !== undefined && name !== "") names.add(name);
+    }
   }
   return names;
 }
@@ -372,22 +387,42 @@ function calleeRoot(text: string, code: Uint8Array, call: CallSite): string {
   return text.slice(start, end);
 }
 
+/** The argument and parameter types of a wrong argument's first line, when the compiler printed both. */
+function argumentTypes(d: Diagnostic): { argument: string; parameter: string } | undefined {
+  const found = /^Argument of type '(.+)' is not assignable to parameter of type '(.+)'\.$/.exec(d.message);
+  return found === null ? undefined : { argument: found[1]!, parameter: found[2]! };
+}
+
+/** `type` without its `null` and `undefined` members, or undefined when it is only those. */
+function withoutNullability(type: string): string | undefined {
+  const stripped = type
+    .split(" | ")
+    .filter((part) => part !== "null" && part !== "undefined")
+    .join(" | ");
+  return stripped === "" ? undefined : stripped;
+}
+
 /**
- * Whether a wrong argument's mismatch is one the runtime does not enforce, so the call would not throw:
- * a string where the parameter names the keys it dispatches on (`keyof BotEvents`, `ControlState` — the
- * event emitter and the control set take any string), a value that may be null or undefined where the
- * parameter is not (the call throws only when it is), or a handler whose parameters differ from the
- * declared event's (the emitter passes what it has). The history replay found ten such runs that
- * succeeded; refusing them would have taught the agent nothing.
+ * Whether a wrong argument of the bot is one the runtime does not enforce, so the call would not throw.
+ * Tolerance is only these three shapes, each measured against the history replay:
+ * (a) a value that may be absent where the parameter takes exactly that value (`Block | null` passed to
+ *     `Block`): the call throws only when the value is absent, and the corpus's runs had it present. A
+ *     literal `null`/`undefined`, or a value whose other kind is not the parameter's (`boolean | undefined`
+ *     passed to `Block`), is refused;
+ * (b) a string (or a string literal) where the parameter names the keys it dispatches on — `keyof BotEvents`
+ *     (the emitter takes any event name) or `ControlState` (the control set takes any state);
+ * (c) a callback where the parameter is one: the emitter calls it with the arguments it has.
+ * Every other wrong argument is refused, so a call that throws at run time (`bot.chat(null)`,
+ * `bot.nearestEntity("cow")`, `bot.equip(itemOrUndefined, "hand")`) is stopped before it runs.
  */
 function toleratedArgument(d: Diagnostic): boolean {
-  const found = /^Argument of type '(.+)' is not assignable to parameter of type '(.+)'\.$/.exec(d.message);
-  if (found === null) return false;
-  const argument = found[1]!;
-  const parameter = found[2]!;
-  if (/\bnull\b|\bundefined\b/.test(argument) || argument.includes("=>") || parameter.includes("=>")) return true;
-  const stringLike = argument === "string" || /^["'`]/.test(argument);
-  return stringLike && (parameter === "ControlState" || /\bkeyof\b/.test(parameter) || /["'`]/.test(parameter));
+  const types = argumentTypes(d);
+  if (types === undefined) return false;
+  const { argument, parameter } = types;
+  const optional = withoutNullability(argument);
+  if (optional !== undefined && optional !== argument && optional === parameter) return true;
+  if ((argument === "string" || /^["'`]/.test(argument)) && (parameter === "ControlState" || parameter === "keyof BotEvents")) return true;
+  return argument.includes("=>") && parameter.includes("=>");
 }
 
 /**
@@ -539,8 +574,9 @@ export function renderRead(d: Diagnostic, text: string): string | undefined {
   if (member === undefined || !READ_TYPES[member.type] || calledMember(d, text) !== undefined) return undefined;
   let after = member.at + member.name.length;
   while (/\s/.test(text[after] ?? "")) after++;
-  const rest = text.slice(after, after + 2);
-  if (/^!?\(|^`/.test(rest) || (rest[0] === "=" && rest[1] !== "=") || rest === "++" || rest === "--") return undefined;
+  const rest = text.slice(after);
+  // A call (`(`, a tagged template) is refused, not suggested; an assignment (`=`, `+=`, `++`, …) writes.
+  if (/^(?:!?\()|^`/.test(rest) || /^(?:=(?!=|>)|[-+*/%&|^]=|\*\*=|<<=|>>=|>>>=|&&=|\|\|=|\?\?=|\+\+|--)/.test(rest)) return undefined;
   const message = d.message.endsWith(".") ? d.message.slice(0, -1) : d.message;
   const line = `line ${d.line}:${d.column} ${d.message}`;
   // TypeScript's own "Did you mean" already names the nearest member; a curated fix is for the rest.
