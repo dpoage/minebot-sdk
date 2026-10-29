@@ -53,6 +53,8 @@ interface WalkGoal {
   readonly goal: InstanceType<typeof goals.GoalNear> | InstanceType<typeof goals.GoalNearXZ>;
   /** Where progress and error messages point. */
   readonly target: Vec3;
+  /** How errors name the goal: a point's coordinates, or `column (x, z)` when there is no goal y. */
+  readonly label: string;
   /** The goal's own height, or undefined for a column goal ({ x, z }). */
   readonly y: number | undefined;
   /** The tolerance in blocks: 3D for a point goal, xz for a column. */
@@ -61,6 +63,17 @@ interface WalkGoal {
   readonly near: (feet: Vec3) => boolean;
   /** How far a standing position is from the target, in the goal's own space. */
   readonly distance: (feet: Vec3) => number;
+}
+
+/** A walk that found no way to its goal; `retryable` is true only for the plain case, with no drop, own-build, or height explanation. */
+class CouldNotReachError extends Error {
+  /** True only when the plain walk failed: no drop, own-build, or height explanation fitted it. */
+  readonly retryable: boolean;
+
+  constructor(message: string, retryable: boolean) {
+    super(message);
+    this.retryable = retryable;
+  }
 }
 
 /** The standing ground of the column (x,z) nearest `goalY`, within 64 blocks each way, read from loaded blocks. */
@@ -94,21 +107,16 @@ function groundAt(bot: RoutineContext["bot"], x: number, z: number, goalY: numbe
 function heightNote(bot: RoutineContext["bot"], spec: WalkGoal): string {
   if (spec.y === undefined) return "";
   const ground = groundAt(bot, spec.target.x, spec.target.z, spec.y);
-  if (!ground.loaded) return "; the goal's column is not loaded, so its ground height is unknown";
+  if (!ground.loaded) return "; the goal's column is not loaded, so its ground height is unknown - walk closer to load it, or pass { x, z } to walk to its surface";
   if (ground.y === undefined) return "";
   const delta = spec.y - ground.y;
   if (Math.abs(delta) <= spec.range + 1) return "";
   return `; the ground at that column is y ${ground.y}, so the goal is ${Math.abs(delta)} blocks ${delta > 0 ? "above" : "below"} the ground there - pass { x, z } to walk to the surface`;
 }
 
-/** The wooden door blocks the retry may open; an iron door takes redstone, so the pathfinder must find another way through it. */
-function woodenDoorIds(bot: RoutineContext["bot"]): number[] {
-  return bot.registry.blocksArray.filter((block) => block.name.endsWith("_door") && !block.name.startsWith("iron_")).map((block) => block.id);
-}
-
-/** The nearest wooden door within `DOOR_SEARCH_BLOCKS` of `target`, its lower half only. */
+/** The nearest wooden door within `DOOR_SEARCH_BLOCKS` of `target`, its lower half only; an iron door takes redstone and is never a retry. */
 function woodenDoorNear(bot: RoutineContext["bot"], target: Vec3): Block | undefined {
-  const ids = woodenDoorIds(bot);
+  const ids = bot.registry.blocksArray.filter((block) => block.name.endsWith("_door") && !block.name.startsWith("iron_")).map((block) => block.id);
   if (ids.length === 0) return undefined;
   for (const position of bot.findBlocks({ matching: ids, point: target, maxDistance: DOOR_SEARCH_BLOCKS, count: 16 })) {
     const block = bot.blockAt(position);
@@ -117,11 +125,17 @@ function woodenDoorNear(bot: RoutineContext["bot"], target: Vec3): Block | undef
   return undefined;
 }
 
+/** The error a walk throws when its caller's time limit, not the world, ended it. */
+function deadlineError(timeoutMs: number): Error {
+  return new Error(`pathfinding took longer than ${timeoutMs} ms`);
+}
+
 /**
  * Opens the wooden door nearest to a goal the walk could not reach, if it is still closed: walks
  * to just outside it, activates it, and waits for the server's open update. Returns the door's
  * lower cell once it is open (or was already open), or undefined when there is no such door or it
- * could not be opened, so the caller keeps the walk's own error. The default movements leave
+ * could not be opened, so the caller keeps the walk's own error. `deadline` bounds the retry:
+ * when the caller's time is up, its timeout error is thrown instead. The default movements leave
  * doors solid on purpose: the plugin's `canOpenDoors` handles fence gates only, and the single
  * `useOne` move it builds for a door crashes its executor (verified live on the dev server).
  *
@@ -129,55 +143,94 @@ function woodenDoorNear(bot: RoutineContext["bot"], target: Vec3): Block | undef
  * panel has a shape), so the pathfinder would call it solid; `passOpenDoor` hides the opened cells
  * from the retry walk, where the player's physics passes the doorway.
  */
-async function openDoorNearGoal(ctx: RoutineContext, spec: WalkGoal): Promise<Vec3 | undefined> {
+async function openDoorNearGoal(ctx: RoutineContext, spec: WalkGoal, timeoutMs: number, deadline: number): Promise<Vec3 | undefined> {
   const { bot } = ctx;
+  const remaining = () => deadline - Date.now();
+  ctx.signal.throwIfAborted();
+  if (remaining() <= 0) throw deadlineError(timeoutMs);
   const door = woodenDoorNear(bot, spec.target);
   if (!door) return undefined;
   const doorAt = door.position;
   if (door.getProperties().open !== true) {
     try {
-      await pathTo(ctx, pointGoal(doorAt, DOOR_APPROACH_BLOCKS), DOOR_WALK_MS, false);
-    } catch {
-      // The walk need not reach the door cell: the reach check below decides whether it can be opened.
+      await pathTo(ctx, pointGoal(doorAt, DOOR_APPROACH_BLOCKS), Math.min(DOOR_WALK_MS, remaining()), false);
+    } catch (err) {
+      // A stop or a replaced goal must not open anything; only a door walk without a way or out of budget may be ignored.
+      ctx.signal.throwIfAborted();
+      if (remaining() <= 0) throw deadlineError(timeoutMs);
+      if (!(err instanceof CouldNotReachError) && !(err instanceof Error && err.message.startsWith("pathfinding took longer than "))) throw err;
     }
+    ctx.signal.throwIfAborted();
+    if (remaining() <= 0) throw deadlineError(timeoutMs);
     const eyes = bot.entity.position.offset(0, EYE_HEIGHT, 0);
     if (eyes.distanceTo(doorAt.offset(0.5, 0.5, 0.5)) > DOOR_REACH) return undefined;
     await bot.activateBlock(door);
-    const deadline = Date.now() + DOOR_OPEN_MS;
-    while (Date.now() < deadline) {
+    const openBy = Math.min(Date.now() + DOOR_OPEN_MS, deadline);
+    while (Date.now() < openBy) {
+      ctx.signal.throwIfAborted();
       if (bot.blockAt(doorAt)?.getProperties().open === true) break;
       await new Promise<void>((resolve) => setTimeout(resolve, DOOR_SAMPLE_MS));
     }
+    ctx.signal.throwIfAborted();
+    if (bot.blockAt(doorAt)?.getProperties().open !== true && remaining() <= 0) throw deadlineError(timeoutMs);
   }
   return bot.blockAt(doorAt)?.getProperties().open === true ? doorAt.clone() : undefined;
 }
 
+/** The door cells each retry walk in progress makes passable, with the number of walks holding each cell. */
+interface DoorPass {
+  readonly original: RoutineContext["bot"]["blockAt"];
+  readonly cells: Map<string, number>;
+  active: number;
+}
+
+/** The one door-pass wrapper installed per bot; removing it with its last walk restores the original `blockAt` identity. */
+const doorPasses = new WeakMap<RoutineContext["bot"], DoorPass>();
+
+const doorCellKey = (cell: Vec3): string => `${Math.floor(cell.x)},${Math.floor(cell.y)},${Math.floor(cell.z)}`;
+
 /**
- * Reports an open door's two cells as empty while one retry walk runs, then restores the blocks.
- * Both the planner and the post-processed waypoints read `bot.blockAt`: an open door's data still
- * carries the swung panel's shape, which would make the planner treat it as solid and the
- * waypoint sit on top of it. The player's physics passes the open doorway; the cells are restored
- * before the walk's result is returned.
+ * Reports an open door's two cells as empty for one retry walk; returns the release. One wrapper
+ * serves every walk in progress on the bot (its cells counted, so overlapping walks neither
+ * remove each other's view nor overwrite a restore), it returns adjusted copies rather than
+ * mutating the world's cached blocks, and the last release restores the original `blockAt`
+ * function. Both the planner and the post-processed waypoints read `bot.blockAt`: an open door's
+ * data still carries the swung panel's shape, which would make the planner treat it as solid and
+ * the waypoint sit on top of it. The player's physics passes the open doorway.
  */
 function passOpenDoor(bot: RoutineContext["bot"], lower: Vec3): () => void {
-  const cells = [lower, lower.offset(0, 1, 0)];
-  const original = new Map<Block, { boundingBox: Block["boundingBox"]; shapes: Block["shapes"] }>();
-  const blockAt = bot.blockAt;
-  bot.blockAt = ((point: Vec3, extraInfos?: boolean) => {
-    const block = blockAt.call(bot, point, extraInfos);
-    if (block && cells.some((cell) => cell.x === Math.floor(point.x) && cell.y === Math.floor(point.y) && cell.z === Math.floor(point.z))) {
-      if (!original.has(block)) original.set(block, { boundingBox: block.boundingBox, shapes: block.shapes });
-      block.boundingBox = "empty";
-      block.shapes = [];
-    }
-    return block;
-  }) as typeof bot.blockAt;
+  let installed = doorPasses.get(bot);
+  if (installed === undefined) {
+    const original = bot.blockAt;
+    const cells = new Map<string, number>();
+    const wrapper = ((point: Vec3, extraInfos?: boolean) => {
+      const block = original.call(bot, point, extraInfos);
+      if (!block || !cells.has(doorCellKey(point))) return block;
+      const copy = Object.create(block) as Block;
+      copy.boundingBox = "empty";
+      copy.shapes = [];
+      return copy;
+    }) as typeof bot.blockAt;
+    installed = { original, cells, active: 0 };
+    doorPasses.set(bot, installed);
+    bot.blockAt = wrapper;
+  }
+  const pass = installed;
+  const keys = [doorCellKey(lower), doorCellKey(lower.offset(0, 1, 0))];
+  for (const key of keys) pass.cells.set(key, (pass.cells.get(key) ?? 0) + 1);
+  pass.active++;
+  let released = false;
   return () => {
-    bot.blockAt = blockAt;
-    for (const [block, saved] of original) {
-      block.boundingBox = saved.boundingBox;
-      block.shapes = saved.shapes;
+    if (released) return;
+    released = true;
+    for (const key of keys) {
+      const left = (pass.cells.get(key) ?? 0) - 1;
+      if (left > 0) pass.cells.set(key, left);
+      else pass.cells.delete(key);
     }
+    if (--pass.active > 0) return;
+    bot.blockAt = pass.original;
+    doorPasses.delete(bot);
   };
 }
 
@@ -200,7 +253,7 @@ function watchProgress(bot: RoutineContext["bot"], spec: WalkGoal): { stalled: P
     if (Date.now() - progressAt < NO_PROGRESS_MS) return;
     const feet = bot.entity.position.floored();
     bot.pathfinder.setGoal(null);
-    stalled.reject(new Error(`stuck at ${feet}, ${spec.distance(feet).toFixed(1)} blocks from ${spec.target}: no movement, digging, or nearby block change for ${NO_PROGRESS_MS / 1000} s`));
+    stalled.reject(new Error(`stuck at ${feet}, ${spec.distance(feet).toFixed(1)} blocks from ${spec.label}: no movement, digging, or nearby block change for ${NO_PROGRESS_MS / 1000} s`));
   }, SAMPLE_MS);
   return {
     stalled: stalled.promise,
@@ -237,7 +290,7 @@ function headUnderwater(bot: RoutineContext["bot"]): boolean {
  * passes), then returns the error that ends the run. The pathfinder's own control clearing has
  * already happened when its goal is dropped.
  */
-async function riseOutOfAir(bot: RoutineContext["bot"], from: Vec3, target: Vec3): Promise<Error> {
+async function riseOutOfAir(bot: RoutineContext["bot"], from: Vec3, label: string): Promise<Error> {
   bot.pathfinder.setGoal(null);
   bot.setControlState("jump", true);
   try {
@@ -249,7 +302,7 @@ async function riseOutOfAir(bot: RoutineContext["bot"], from: Vec3, target: Vec3
     bot.setControlState("jump", false);
   }
   const up = bot.entity.position.floored();
-  return new Error(`out of air at ${from}: swam up to ${up}; the path to ${target} runs underwater - go around the water`);
+  return new Error(`out of air at ${from}: swam up to ${up}; the path to ${label} runs underwater - go around the water`);
 }
 
 /**
@@ -281,7 +334,7 @@ function watchPathShort(bot: RoutineContext["bot"], spec: WalkGoal): { short: Pr
     idle++;
     if (idle < PATH_SHORT_IDLE_TICKS) return;
     walking = false;
-    short.reject(new Error(`could not reach ${spec.target}: the path ended ${spec.distance(feet).toFixed(1)} blocks short${heightNote(bot, spec)}`));
+    short.reject(new Error(`could not reach ${spec.label}: the path ended ${spec.distance(feet).toFixed(1)} blocks short${heightNote(bot, spec)}`));
   };
   bot.on("path_update", onUpdate);
   bot.on("path_reset", reached);
@@ -444,11 +497,11 @@ function placedBlocks(bot: RoutineContext["bot"]): readonly PlacedBlock[] {
 }
 
 /** The could-not-reach error that names one block the bot placed. */
-function placedBlockError(bot: RoutineContext["bot"], target: Vec3, block: PlacedBlock): Error {
+function placedBlockError(bot: RoutineContext["bot"], label: string, block: PlacedBlock): Error {
   const at = new Vec3(block.x, block.y, block.z);
   const name = block.name ? block.name : (bot.blockAt(at)?.name ?? "a block");
   return new Error(
-    `could not reach ${target}: every way goes through blocks you placed (e.g. ${name} at ${at}); open a door, break one yourself, or call move.to again with allowDigOwnBuilds: true`,
+    `could not reach ${label}: every way goes through blocks you placed (e.g. ${name} at ${at}); open a door, break one yourself, or call move.to again with allowDigOwnBuilds: true`,
   );
 }
 
@@ -458,21 +511,21 @@ function placedBlockError(bot: RoutineContext["bot"], target: Vec3, block: Place
  * path is not a build; when the path meets none of the record this returns nothing, and the walk
  * keeps the ordinary could-not-reach error.
  */
-function ownBuildError(bot: RoutineContext["bot"], target: Vec3, path: readonly PathNode[]): Error | undefined {
+function ownBuildError(bot: RoutineContext["bot"], label: string, path: readonly PathNode[]): Error | undefined {
   const placed = placedBlocks(bot);
   if (placed.length === 0) return undefined;
   const recordedAt = new Map(placed.map((block) => [`${block.x},${block.y},${block.z}`, block] as const));
   for (const node of path) {
     for (const cell of node.toBreak ?? []) {
       const hit = recordedAt.get(`${cell.x},${cell.y},${cell.z}`);
-      if (hit) return placedBlockError(bot, target, hit);
+      if (hit) return placedBlockError(bot, label, hit);
     }
     for (const scaffold of node.toPlace ?? []) {
       const cellX = scaffold.x + scaffold.dx;
       const cellY = scaffold.y + scaffold.dy;
       const cellZ = scaffold.z + scaffold.dz;
       const above = placed.find((block) => block.x === cellX && block.z === cellZ && block.y > cellY && block.y <= cellY + OWN_BUILD_SCAFFOLD_REACH);
-      if (above) return placedBlockError(bot, target, above);
+      if (above) return placedBlockError(bot, label, above);
     }
   }
   return undefined;
@@ -484,18 +537,18 @@ function ownBuildError(bot: RoutineContext["bot"], target: Vec3, path: readonly 
  * every fall allowed (so a path that appears was behind the drop limit). Throws the matching error;
  * returns when neither rule explains it, leaving the generic could-not-reach error to the walk.
  */
-async function throwWhyNoPath(bot: RoutineContext["bot"], goal: WalkGoal["goal"], walk: InstanceType<typeof Movements> | undefined, target: Vec3): Promise<void> {
+async function throwWhyNoPath(bot: RoutineContext["bot"], goal: WalkGoal["goal"], walk: InstanceType<typeof Movements> | undefined, spec: WalkGoal): Promise<void> {
   const deadline = Date.now() + NO_PATH_RESEARCH_MS;
   if ((walk?.exclusionAreasBreak.length ?? 0) > 0 || (walk?.exclusionAreasPlace.length ?? 0) > 0) {
     const found = await searchPath(bot, cloneMovements(bot, walk, { noExclusions: true }), goal, deadline - Date.now());
-    const error = found && ownBuildError(bot, target, found.path);
+    const error = found && ownBuildError(bot, spec.label, found.path);
     if (error) throw error;
   }
   const deep = await searchPath(bot, cloneMovements(bot, walk, { unlimitedDrop: true }), goal, deadline - Date.now());
   if (deep) {
     const atMost = walk?.maxDropDown ?? 4;
     throw new Error(
-      `could not reach ${target}: every way down is a drop of ${largestDrop(deep.path, bot.entity.position)} blocks (the pathfinder drops at most ${atMost}) - dig or build stairs down, or pick a target on this level`,
+      `could not reach ${spec.label}: every way down is a drop of ${largestDrop(deep.path, bot.entity.position)} blocks (the pathfinder drops at most ${atMost}) - dig or build stairs down, or pick a target on this level`,
     );
   }
 }
@@ -513,7 +566,7 @@ async function throwWhyNoPath(bot: RoutineContext["bot"], goal: WalkGoal["goal"]
  */
 async function pathTo(ctx: RoutineContext, spec: WalkGoal, timeoutMs: number, allowDigOwnBuilds: boolean, passable?: Vec3): Promise<void> {
   const { bot } = ctx;
-  const { goal, target } = spec;
+  const { goal } = spec;
   const normal = bot.pathfinder.movements;
   const walk = allowDigOwnBuilds ? cloneMovements(bot, normal, { noExclusions: true }) : normal;
   const restoreDoor = passable === undefined ? undefined : passOpenDoor(bot, passable);
@@ -550,26 +603,42 @@ async function pathTo(ctx: RoutineContext, spec: WalkGoal, timeoutMs: number, al
     if (bot.pathfinder.movements !== normal) bot.pathfinder.setMovements(normal);
     if (ended !== "reached" && bot.pathfinder.goal === goal) bot.pathfinder.setGoal(null);
   }
-  if (ended === "air") throw await riseOutOfAir(bot, air.at(), target);
+  if (ended === "air") throw await riseOutOfAir(bot, air.at(), spec.label);
   if (ended === "reached") return;
   const feet = bot.entity.position.floored();
   // As the pathfinder's own end-of-path check, the cell above the feet also counts (for standing on a half-height block).
   if (spec.near(feet) || spec.near(feet.offset(0, 1, 0))) return;
-  if (ended === "noPath") await throwWhyNoPath(bot, goal, walk, target);
+  if (ended === "noPath") await throwWhyNoPath(bot, goal, walk, spec);
   const why = ended === "timeout" ? "the path search ran out of time" : "the pathfinder found no way there from here";
-  throw new Error(`could not reach ${target}: stopped at ${feet}, ${spec.distance(feet).toFixed(1)} blocks away; ${why}${heightNote(bot, spec)}`);
+  const note = heightNote(bot, spec);
+  throw new CouldNotReachError(`could not reach ${spec.label}: stopped at ${feet}, ${spec.distance(feet).toFixed(1)} blocks away; ${why}${note}`, note === "");
 }
 
-/** Walks to `spec`'s goal, opening a closed wooden door near it once if the walk could not reach it, and returns where the player then stands. */
+/**
+ * Walks to `spec`'s goal, opening a closed wooden door near it once if the plain no-way walk could
+ * not reach it, and returns where the player then stands. The whole call settles by `timeoutMs`:
+ * the door retry gets only the time the first walk left. A stop or a replaced goal throws its own
+ * error before any door is opened or another walk started.
+ */
 async function walkTo(ctx: RoutineContext, spec: WalkGoal, timeoutMs: number, allowDigOwnBuilds: boolean): Promise<Vec3> {
+  const deadline = Date.now() + timeoutMs;
   try {
     await pathTo(ctx, spec, timeoutMs, allowDigOwnBuilds);
   } catch (err) {
-    // Only a walk that ended without a way can be explained by the closed door near the goal; every other end keeps its error.
-    if (!(err instanceof Error) || !err.message.startsWith("could not reach ")) throw err;
-    const opened = await openDoorNearGoal(ctx, spec);
+    // Only the plain no-way error may be the closed door near the goal; drop, own-build, height, stop and goal-change ends keep their errors.
+    if (!(err instanceof CouldNotReachError) || !err.retryable) throw err;
+    ctx.signal.throwIfAborted();
+    if (Date.now() >= deadline) throw deadlineError(timeoutMs);
+    const opened = await openDoorNearGoal(ctx, spec, timeoutMs, deadline);
     if (opened === undefined) throw err;
-    await pathTo(ctx, spec, timeoutMs, allowDigOwnBuilds, opened);
+    const left = deadline - Date.now();
+    if (left <= 0) throw deadlineError(timeoutMs);
+    try {
+      await pathTo(ctx, spec, left, allowDigOwnBuilds, opened);
+    } catch (retry) {
+      if (retry instanceof Error && retry.message.startsWith("pathfinding took longer than ")) throw deadlineError(timeoutMs);
+      throw retry;
+    }
   }
   return ctx.bot.entity.position.floored();
 }
@@ -586,6 +655,7 @@ function pointGoal(target: Vec3, range: number): WalkGoal {
   return {
     goal: new goals.GoalNear(target.x, target.y, target.z, range),
     target,
+    label: target.toString(),
     y: target.y,
     range,
     near: (feet) => feet.distanceSquared(target) <= range * range,
@@ -602,6 +672,7 @@ function walkGoal(bot: RoutineContext["bot"], position: MovePosition, range: num
   return {
     goal: new goals.GoalNearXZ(x, z, range),
     target: new Vec3(x, bot.entity.position.floored().y, z),
+    label: `column (${x}, ${z})`,
     y: undefined,
     range,
     near: (feet) => (feet.x - x) ** 2 + (feet.z - z) ** 2 <= range * range,

@@ -50,4 +50,20 @@ describe("move.to a column without a y (mb-znn.27)", () => {
     assert.deepEqual(await h.run(move.to, { position: { x: 10, z: 5 }, range: 0 }), { x: 10, y: 64, z: 5 });
     assert.deepEqual(await h.run(move.to, { position: { x: 10, z: 5 }, range: 1 }), { x: 10, y: 64, z: 5 });
   });
+
+  it("names a column goal by its x and z, with no invented y, in a could-not-reach error", async () => {
+    const h = createHarness();
+    const pathfinder = h.bot.pathfinder as unknown as {
+      goto: () => Promise<void>;
+      getPathFromTo: () => IterableIterator<{ result: unknown }>;
+    };
+    pathfinder.goto = async () => {
+      h.bot.emit("path_update", { status: "noPath", path: [] } as never);
+    };
+    pathfinder.getPathFromTo = () =>
+      (function* slices(): Generator<{ result: unknown }> {
+        yield { result: { status: "noPath", path: [] } };
+      })();
+    await assert.rejects(h.run(move.to, { position: { x: 10, z: 5 }, range: 0 }), /^Error: could not reach column \(10, 5\): stopped at \(0, 64, 0\), 11\.2 blocks away/);
+  });
 });

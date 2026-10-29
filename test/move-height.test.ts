@@ -71,6 +71,6 @@ describe("move.to height diagnosis (mb-znn.26)", () => {
     await settle();
     await settle();
     await settle();
-    assert.match(message(outcome), /the goal's column is not loaded, so its ground height is unknown$/);
+    assert.match(message(outcome), /the goal's column is not loaded, so its ground height is unknown - walk closer to load it, or pass \{ x, z \} to walk to its surface$/);
   });
 });
