@@ -38,6 +38,7 @@ import { formatBound, formatBuiltinHits, formatBuiltins, formatHits, formatLibra
 import { BodyClient } from "./client.ts";
 import { Digest } from "./digest.ts";
 import { eventTypesFor } from "../protocol/event-types.ts";
+import { isReflexEvent } from "../protocol/event-filter.ts";
 
 type ToolResult = { content: { type: "text"; text: string }[]; isError?: boolean };
 
@@ -48,7 +49,7 @@ const json = (value: unknown) => JSON.stringify(value, null, 2);
  * the reflex_* types, which a reflex may not listen to, for the reflex binding's description.
  */
 function eventTypesLine(features: BodyFeatures, triggerable = false): string {
-  const types = eventTypesFor(capabilities(features).reflexes).filter((type) => !triggerable || !type.startsWith("reflex_"));
+  const types = eventTypesFor(capabilities(features).reflexes).filter((type) => !triggerable || !isReflexEvent(type));
   return `Event types: ${types.join(", ")}.`;
 }
 
@@ -59,7 +60,7 @@ const GET_EVENTS_DESCRIPTION = (types: string) =>
   `The body's event log, oldest first. Without \`since\` it returns the newest \`limit\` events; with \`since\` (a \`next\` or \`latest\` from an earlier answer) the oldest events after it. Every answer names the log's \`latest\` seq, and \`next\` goes into the next call's \`since\`. ${types}`;
 
 const WAIT_FOR_DESCRIPTION = (types: string) =>
-  `The cheap way to idle until something happens: blocks until an event that matches arrives, then returns it. Cheaper than polling get_events or looping sleep in a program: nothing runs until the event lands. Waits for any event type or filters it; a wait whose types name exactly one of day or night answers at once while that phase already holds, including right after the body joined in it. ${types}`;
+  `The cheap way to idle until something happens: blocks until an event that matches arrives, then returns it. Cheaper than polling get_events or looping sleep in a program: nothing runs until the event lands. Waits for any event type or filters it; a wait whose types are exactly one of day or night (repeated or not) answers at once while that phase already holds, including right after the body joined in it. ${types}`;
 
 const API_DOC_FALLBACK = "Call the api_reference tool for how a run works and what ctx holds.";
 

@@ -5,6 +5,8 @@
 // A push site names its type as a string literal: the supervisor's relay of a host event is the one
 // non-literal `.push(type, data)`, and the host's own pushes are literal.
 
+import { isReflexEvent } from "./event-filter.ts";
+
 /** Every event type the body can push, by type: one line saying what it means and what its data holds. */
 export const EVENT_TYPES: Readonly<Record<string, string>> = {
   binding_error: "a stored action binding could not be applied when the body started, and why",
@@ -44,6 +46,6 @@ export const EVENT_TYPES: Readonly<Record<string, string>> = {
  * Every other type is pushed on every body; a new feature-gated type belongs in this filter too.
  */
 export function eventTypesFor(reflexes: boolean): string[] {
-  return Object.keys(EVENT_TYPES).filter((type) => reflexes || !type.startsWith("reflex_"));
+  return Object.keys(EVENT_TYPES).filter((type) => reflexes || !isReflexEvent(type));
 }
 

@@ -23,10 +23,10 @@ describe("EventLog.wait on day and night", () => {
     assert.deepEqual([got.event?.type, got.timedOut], ["day", false]);
   });
 
-  it("answers at once when day is named alongside other types", async () => {
+  it("answers at once with a repeated phase type, which is still exactly that phase", async () => {
     const log = new EventLog();
     log.push("day", { timeOfDay: 1000 });
-    const pending = log.wait({ types: ["chat", "day"], timeoutMs: 1000 });
+    const pending = log.wait({ types: ["day", "day"], timeoutMs: 1000 });
     mock.timers.tick(1000);
     const got = await pending;
     assert.deepEqual([got.event?.type, got.timedOut], ["day", false]);
@@ -58,12 +58,33 @@ describe("EventLog.wait on day and night", () => {
     assert.equal((await pending).timedOut, true);
   });
 
-  it("times out when the types name both day and night", async () => {
+  it("times out when the types name both day and night, holding phase first", async () => {
+    const log = new EventLog();
+    log.push("day", { timeOfDay: 1000 });
+    const pending = log.wait({ types: ["day", "night"], timeoutMs: 1000 });
+    mock.timers.tick(1000);
+    assert.equal((await pending).timedOut, true);
+  });
+
+  it("times out when the types name both day and night, other phase first", async () => {
     const log = new EventLog();
     log.push("day", { timeOfDay: 1000 });
     const pending = log.wait({ types: ["night", "day"], timeoutMs: 1000 });
     mock.timers.tick(1000);
     assert.equal((await pending).timedOut, true);
+  });
+
+  it("times out when a holding phase is mixed with other types", async () => {
+    for (const [at, types] of [
+      [1000, ["chat", "day"]],
+      [13000, ["chat", "whisper", "night"]],
+    ] as const) {
+      const log = new EventLog();
+      log.push(at < 12542 ? "day" : "night", { timeOfDay: at });
+      const pending = log.wait({ types: [...types], timeoutMs: 1000 });
+      mock.timers.tick(1000);
+      assert.equal((await pending).timedOut, true, types.join(","));
+    }
   });
 
   it("times out when the types name neither phase", async () => {

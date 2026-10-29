@@ -99,18 +99,20 @@ export class EventLog implements EventSink {
 
   /**
    * Resolves with the first event after the cursor that matches every filter, or with `timedOut`.
-   * Without a cursor, a wait for exactly one of day or night answers at once while that phase holds
-   * with the event that announced it: the body may have joined during that phase, so no transition is
-   * coming. A wait naming both, neither, or no event types is answered only by events pushed after
-   * the call. Other types may be listed alongside the phase.
+   * Without a cursor, a wait whose `types` are exactly one of day or night (repeated or not, and
+   * nothing else) answers at once while that phase holds, with the event that announced it: the body
+   * may have joined during that phase, so no transition is coming. Any other list — both phases, a
+   * phase mixed with other types, or no types — is answered only by events pushed after the call.
    * Does not block programs or other requests; a wait abandoned through `signal` is dropped.
    */
   async wait(options: EventWaitOptions = {}): Promise<WaitResponse> {
     const filter = { types: options.types, from: options.from, match: options.match };
-    const phases = (options.types ?? []).filter((type) => type === "day" || type === "night");
+    const named = options.types ?? [];
+    const phases = named.filter((type) => type === "day" || type === "night");
+    const onePhaseOnly = named.length > 0 && phases.length === named.length && phases.every((type) => type === phases[0]);
     if (
       options.since === undefined &&
-      phases.length === 1 &&
+      onePhaseOnly &&
       this.#phase !== undefined &&
       this.#phase.type === phases[0] &&
       eventMatches(this.#phase, filter)
