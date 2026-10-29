@@ -36,3 +36,16 @@ export interface ProgramEventSource {
   /** Registers before the emitter's other listeners; an emitter without it registers at the end. */
   prependListener?(event: string, listener: (...args: unknown[]) => void): unknown;
 }
+
+/** The property a run-scoped bot carries to name the bot itself (see `unscopedBot`); registered, so every copy of the package reads the same one. */
+export const UNSCOPED_BOT = Symbol.for("minebot-sdk.unscoped-bot");
+
+/**
+ * The bot itself, from the `ctx.bot` a run is given. The body hands a run a view of its bot whose listener methods
+ * belong to the run: a listener that must outlive the run is added to the bot itself with this, and it is then the
+ * routine's to remove. Anything that is not such a view — a plain Bot, a test's fake — is returned as it is.
+ */
+export function unscopedBot<T extends object>(bot: T): T {
+  const raw: unknown = Reflect.get(bot, UNSCOPED_BOT);
+  return typeof raw === "object" && raw !== null ? (raw as T) : bot;
+}

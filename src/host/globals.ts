@@ -1,10 +1,11 @@
 // Assembling the context a routine run sees, from the body's features. Only what the capability
 // table allows is present; a routine on a body without a feature finds no such member.
+import type { EventEmitter } from "node:events";
 import type { Bot } from "mineflayer";
 import { withObserver, type RoutineCallObserver } from "../routine/define.ts";
 import type { RoutineContext } from "../routine/public.ts";
 import { capabilities, type BodyFeatures, type LessonInput, type StatusResponse } from "../protocol/index.ts";
-import type { ProgramScope, WatchOptions } from "../program/scope.ts";
+import { UNSCOPED_BOT, type ProgramScope, type WatchOptions } from "../program/scope.ts";
 import type { WikiAccess } from "../wiki/access.ts";
 import type { Connection } from "./connection.ts";
 import type { Notes } from "../notes.ts";
@@ -55,11 +56,14 @@ const BOT_LISTENERS: Record<string, WatchOptions> = {
 /**
  * The live bot as a run sees it: a listener it adds with `on`, `once`, `addListener`, `prependListener`, or
  * `prependOnceListener` is the run's, removed at every end of the run, and a throw from it ends the run instead of
- * the packet dispatch that called it. The program's own `off` and `removeListener` remove what it added: the run
- * registered a wrapper, which the record of the handler names. Every other member is the bot's, bound to it so the
- * proxy is never the `this` a Mineflayer method sees.
+ * the packet dispatch that called it. The program's own `off` and `removeListener` remove what it added — the run
+ * registered a wrapper, which the record of the handler names — and every other listener the same way the bot would,
+ * so a listener a Mineflayer helper registered on the bot itself is removed too. `removeAllListeners` is the bot's.
+ * Every other member is the bot's, bound to it so the proxy is never the `this` a Mineflayer method sees.
  */
 function scopedBot(bot: Bot, watch: NonNullable<ProgramScope["watch"]>): Bot {
+  /** The bot as the emitter it is: its listener methods take event names the Mineflayer typings do not list. */
+  const emitter = bot as unknown as EventEmitter;
   /** What the program registered on this bot, so its own `off(event, handler)` removes the run's wrapper. */
   const registered: { event: string; handler: (...args: unknown[]) => void; remove: () => void }[] = [];
   const register = (event: string, handler: (...args: unknown[]) => void, options: WatchOptions): Bot => {
@@ -68,6 +72,7 @@ function scopedBot(bot: Bot, watch: NonNullable<ProgramScope["watch"]>): Bot {
   };
   const scoped: Bot = new Proxy(bot, {
     get(target, member) {
+      if (member === UNSCOPED_BOT) return target;
       if (typeof member === "string" && Object.hasOwn(BOT_LISTENERS, member)) {
         const options = BOT_LISTENERS[member]!;
         return (event: string, handler: (...args: unknown[]) => void) => register(event, handler, options);
@@ -76,6 +81,17 @@ function scopedBot(bot: Bot, watch: NonNullable<ProgramScope["watch"]>): Bot {
         return (event: string, handler: (...args: unknown[]) => void) => {
           const at = registered.findLastIndex((entry) => entry.event === event && entry.handler === handler);
           if (at >= 0) registered.splice(at, 1)[0]!.remove();
+          // Not this view's wrapper: the listener is the bot's own, from a Mineflayer helper or from `unscopedBot`.
+          else emitter.off(event, handler);
+          return scoped;
+        };
+      }
+      if (member === "removeAllListeners") {
+        return (event?: string) => {
+          for (let at = registered.length - 1; at >= 0; at--) {
+            if (event === undefined || registered[at]!.event === event) registered.splice(at, 1);
+          }
+          emitter.removeAllListeners(event);
           return scoped;
         };
       }

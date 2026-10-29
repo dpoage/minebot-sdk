@@ -102,7 +102,8 @@ export class ProgramRunner {
    * Timers a program creates itself are not cleared, and neither are listeners it adds to an emitter other than the
    * body's bot: the scope's `sleep`, `on`, and `watch` are run-scoped, and `routineContext` routes the bot's listener
    * methods through `watch`, so a listener the run adds to `ctx.bot` is removed at every end of the run and a throw
-   * from it ends the run rather than the packet dispatch that called it.
+   * from it ends the run rather than the packet dispatch that called it. A listener meant to outlive the run is added
+   * to the bot itself (`unscopedBot(ctx.bot)`) and is the routine's to remove.
    * While the runner is busy with the run (an aborted program's grace included), the `console` output methods also append
    * to its log, and still write where they wrote; the methods that were there are back when the runner is free.
    * The body is halted (`halt`) at every end, and an error that reaches the process while the run is active or

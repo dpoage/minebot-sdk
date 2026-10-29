@@ -73,6 +73,8 @@ const ROUTINES: Record<string, string> = {
     "s3-off": bot.listenerCount("s3-off"),
     // The connection's own listener: a run's listener on the same packet event is gone, this one stays.
     time: bot.listenerCount("time"),
+    // Likewise the connection's physics-tick listener: a run's stale listener would be one above this.
+    physicsTick: bot.listenerCount("physicsTick"),
   };
 };
 `,
@@ -174,13 +176,16 @@ describe("(P3.2) every listener a run adds to ctx.bot is removed when the run en
     });
   });
 
-  it("a listener left behind throws on a later tick with no run to contain it: the host stays", { timeout: 30_000 }, async () => {
+  it("a listener left behind both stays visible in the count and throws with no run to contain it: the host stays", { timeout: 30_000 }, async () => {
     await using(async (body, call) => {
       const pid = (await call("pid")).result;
+      const before = await countsOf(call);
       const since = body.events.since(0).next;
       assert.equal((await call("leave-thrower")).status, "ok");
-      // The timer outlives the run; the listener must not. Its throw would reach a process handler with no run to
-      // contain it, and the host would exit; its restart is the `disconnected` event this wait gives the time for.
+      // The listener is gone from the bot: a run's stale one would be one above the body's own count, and would throw
+      // from the timer into a finished run (no containment; the host would exit, its restart the `disconnected` event
+      // this wait gives the time for).
+      assert.equal((await countsOf(call)).physicsTick, before.physicsTick, "the run's listener is still on the bot");
       const { event } = await body.events.wait({ types: ["disconnected"], since, timeoutMs: 1_500 });
       assert.equal(event, null, "a stale listener restarted the host");
       assert.equal((await call("pid")).result, pid, "another host answered");

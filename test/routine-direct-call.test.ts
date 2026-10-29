@@ -337,6 +337,7 @@ describe("minebot-sdk/routine exports", () => {
       "smeltInputs",
       "smeltOutput",
       "toVec3",
+      "unscopedBot",
       "withoutReserved",
       "within",
       "z",

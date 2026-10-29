@@ -15,6 +15,7 @@ import { within, type Within } from "../mc/within.ts";
 const { goals, Movements } = pathfinderPkg;
 
 export { defineRoutine } from "./define.ts";
+export { unscopedBot } from "../program/scope.ts";
 export type { Routine, RoutineMeta } from "./define.ts";
 export type { RoutineContext } from "./context.ts";
 export { z } from "zod";
