@@ -153,7 +153,7 @@ describe("combat.attack give-up reasons", () => {
       });
       const result = await attack(s.ctx, { target: "sheep", timeoutMs: 200 });
       assert.equal(result.killed, false);
-      assert.match(result.reason ?? "", /^could not get within reach \(closest 8\.1 blocks, now 12\.8\); the way is blocked: water, a wall, a fence or a drop; walk around it or pick another target$/);
+      assert.match(result.reason ?? "", /^could not get within reach \(closest 8\.1 blocks, now 12\.8\); the way is blocked: a wall, a fence or a drop; walk around it or pick another target$/);
     } finally {
       s.clock.restore();
     }

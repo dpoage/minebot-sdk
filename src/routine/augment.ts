@@ -1,11 +1,7 @@
-// The runtime members of the bot and its world values that the packages' typings do not declare. The body
-// loads plugins that attach these at run time, so a routine (and the run check, which types a run against
-// this module) must see them; mb-znn.18 lists the ones agents used on a live 26.1 bot. The members and
-// their meanings below mirror the plugins' implementations (mineflayer lib/plugins, prismarine-block,
-// prismarine-windows); a member a plugin sets only for some entities is declared optional.
-//
-// This module only augments declarations: it has no run-time behavior, and importing it for the side
-// effect of its types is how `minebot-sdk/routine` carries them to every check.
+// Members of the bot and its world values that the packages' typings do not declare, but that the body's
+// plugins attach at run time; they mirror the plugins' implementations, and a member a plugin sets only
+// for some entities is optional. This module augments declarations only: importing it for its types is
+// how `minebot-sdk/routine` carries them to a routine and to the run check.
 import type { Block } from "prismarine-block";
 import type { Entity } from "prismarine-entity";
 import type { Click } from "prismarine-windows";

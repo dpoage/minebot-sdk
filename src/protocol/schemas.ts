@@ -123,11 +123,11 @@ function chatCharacterName(code: number): string {
 }
 
 /**
- * Body of `POST /chat`: `message` is one chat line. The server refuses control characters, U+007F, and
- * U+00A7, and disconnects the body for them, and it counts the 256-unit limit in UTF-16 code units,
- * so both are refused here — before anything is sent. A whisper is checked as the `/msg <to> <message>`
- * line the client composes. `social.say` repeats this rule (a built-in routine module cannot import the
- * protocol source), and `test/chat-validation.test.ts` holds the two to the same answers.
+ * Body of `POST /chat`: `message` is one chat line. The server disconnects the body for a control
+ * character, U+007F, or U+00A7, and counts the 256-unit limit in UTF-16 code units, so both are
+ * refused here, before anything is sent; a whisper is checked as the `/msg <to> <message>` line the
+ * client composes. `social.say` repeats the rule (a built-in module cannot import the protocol
+ * source), and `test/chat-validation.test.ts` holds the two to the same answers.
  */
 export const ChatInput = z.object({
   message: z
@@ -140,7 +140,7 @@ export const ChatInput = z.object({
         const code = `U+${refused.code.toString(16).padStart(4, "0").toUpperCase()}`;
         ctx.addIssue({
           code: "custom",
-          message: `message has the character ${chatCharacterName(refused.code)} (${code}) at index ${refused.index}: the Minecraft server refuses control characters, U+007F and the section sign U+00A7 in chat and would disconnect the body. Nothing was sent; remove that character.`,
+          message: `message has the character ${chatCharacterName(refused.code)} (${code}) at index ${refused.index}: the Minecraft server refuses control characters, U+007F and the section sign U+00A7 in chat, and disconnects the body for them. Nothing was sent; remove that character.`,
         });
       }
       if (message.length > CHAT_LIMIT) {

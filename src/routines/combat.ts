@@ -213,7 +213,7 @@ async function engage(ctx: RoutineContext, fight: Fight, target: Entity, deadlin
   const since = trail.find((point) => point.at >= Date.now() - OUTRUN_WINDOW_MS) ?? trail[0];
   const moved = since && trail.length > 0 ? since.position.distanceTo(trail[trail.length - 1]!.position) : 0;
   if (moved >= OUTRUN_BLOCKS) return { killed: false, reason: `it outran you (closest ${blocks(closest)} blocks, now ${blocks(now)}); it moves faster than you follow; corner it or wait until it stops` };
-  return { killed: false, reason: `could not get within reach (closest ${blocks(closest)} blocks, now ${blocks(now)}); the way is blocked: water, a wall, a fence or a drop; walk around it or pick another target` };
+  return { killed: false, reason: `could not get within reach (closest ${blocks(closest)} blocks, now ${blocks(now)}); the way is blocked: a wall, a fence or a drop; walk around it or pick another target` };
 }
 
 /** Fights hostiles (or the creatures matching `targets`) within `radius` of the player, nearest first, until none are left or `timeoutMs` passes. */
@@ -261,7 +261,7 @@ const Target = z.union([z.number().int(), z.string().min(1)]);
 export const attack = defineRoutine(
   {
     name: "combat.attack",
-    description: "Hit one creature until it dies. `target` is an entity id or a name ('zombie'; the nearest match, a player's username works too). Walks up to it on movement rules that never break or place a block (a fence, a wall, or water stops the chase instead), holds the best sword or axe from the inventory, and hits once per weapon cooldown. Gives up after `timeoutMs` (default 20000). Returns { target, killed, damageTaken, weapon, reason }; when `killed` is false, `reason` is one line that names why it gave up (gone, still in reach, outran, blocked) and what to do next.",
+    description: "Hit one creature until it dies. `target` is an entity id or a name ('zombie'; the nearest match, a player's username works too). Walks up to it on movement rules that never break or place a block (a fence or a wall stops the chase instead), holds the best sword or axe from the inventory, and hits once per weapon cooldown. Gives up after `timeoutMs` (default 20000). Returns { target, killed, damageTaken, weapon, reason }; when `killed` is false, `reason` is one line that names why it gave up (gone, still in reach, outran, blocked) and what to do next.",
     args: z.object({ target: Target, timeoutMs: z.number().int().positive().default(TARGET_TIMEOUT_MS) }),
     returns: z.object({ target: z.string(), killed: z.boolean(), damageTaken: z.number(), weapon: z.string().nullable(), reason: z.string().optional() }),
   },

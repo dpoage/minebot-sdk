@@ -48,11 +48,10 @@ async function awaitChat(
 const CHAT_LIMIT = 256;
 
 /**
- * A chat message the server will carry. `POST /chat` validates its `message` with the same rule (`ChatInput` in
- * the protocol schemas, which also checks a whisper's `/msg <to> ` prefix); a built-in routine module may not
- * import that source, because `test/typecheck.test.ts` copies every built-in module into a library and refuses
- * an import that leaves it. The rule is therefore written here too, and `test/chat-validation.test.ts` holds
- * the two paths to the same answers.
+ * A chat message the server will carry. `POST /chat` validates `message` with the same rule (`ChatInput`
+ * in the protocol schemas, which also checks a whisper's `/msg <to> ` prefix). A built-in module may not
+ * import that source (`test/typecheck.test.ts` refuses an import that leaves the library), so the rule is
+ * written here too; `test/chat-validation.test.ts` holds the two paths to the same answers.
  */
 const chatMessage = z
   .string()
@@ -66,7 +65,7 @@ const chatMessage = z
       const point = `U+${code.toString(16).padStart(4, "0").toUpperCase()}`;
       ctx.addIssue({
         code: "custom",
-        message: `message has the character ${character} (${point}) at index ${index}: the Minecraft server refuses control characters, U+007F and the section sign U+00A7 in chat and would disconnect the body. Nothing was sent; remove that character.`,
+        message: `message has the character ${character} (${point}) at index ${index}: the Minecraft server refuses control characters, U+007F and the section sign U+00A7 in chat, and disconnects the body for them. Nothing was sent; remove that character.`,
       });
       break;
     }

@@ -35,7 +35,7 @@ const SEARCH_SLICE_MS = 40;
 const WATER_BLOCKS = new Set(["water", "kelp", "kelp_plant", "seagrass", "tall_seagrass", "bubble_column"]);
 /** The height diagnosis searches this far above and below the goal's y for the column's ground. */
 const GROUND_SEARCH_BLOCKS = 64;
-/** A closed wooden door this near a goal the walk could not reach may be the way in; move.to opens it and walks again once. */
+/** A closed door this near a goal, or the player, may be the way in; move.to opens it and walks again once. */
 const DOOR_SEARCH_BLOCKS = 8;
 /** The walk to just outside a door, so a door that cannot be reached costs no more than this. */
 const DOOR_WALK_MS = 20_000;
@@ -114,7 +114,7 @@ function heightNote(bot: RoutineContext["bot"], spec: WalkGoal): string {
   return `; the ground at that column is y ${ground.y}, so the goal is ${Math.abs(delta)} blocks ${delta > 0 ? "above" : "below"} the ground there - pass { x, z } to walk to the surface`;
 }
 
-/** The nearest wooden door within `DOOR_SEARCH_BLOCKS` of `target`, its lower half only; an iron door takes redstone and is never a retry. */
+/** The nearest door within `DOOR_SEARCH_BLOCKS` of `target`, its lower half only; an iron door takes redstone and is never a retry. */
 function woodenDoorNear(bot: RoutineContext["bot"], target: Vec3): Block | undefined {
   const ids = bot.registry.blocksArray.filter((block) => block.name.endsWith("_door") && !block.name.startsWith("iron_")).map((block) => block.id);
   if (ids.length === 0) return undefined;
@@ -131,17 +131,15 @@ function deadlineError(timeoutMs: number): Error {
 }
 
 /**
- * Opens the wooden door nearest to a goal the walk could not reach, if it is still closed: walks
- * to just outside it, activates it, and waits for the server's open update. Returns the door's
- * lower cell once it is open (or was already open), or undefined when there is no such door or it
- * could not be opened, so the caller keeps the walk's own error. `deadline` bounds the retry:
- * when the caller's time is up, its timeout error is thrown instead. The default movements leave
- * doors solid on purpose: the plugin's `canOpenDoors` handles fence gates only, and the single
- * `useOne` move it builds for a door crashes its executor (verified live on the dev server).
- *
- * An open wooden door is not a fence gate: its data still says `boundingBox: "block"` (the swung
- * panel has a shape), so the pathfinder would call it solid; `passOpenDoor` hides the opened cells
- * from the retry walk, where the player's physics passes the doorway.
+ * Opens the nearest door other than an iron one when the walk could not reach the goal, if the
+ * door is still closed: walks to just outside it, activates it, and waits for the server's open
+ * update. Returns the door's lower cell once it is open (or was already open), or undefined when
+ * there is no such door or it could not be opened, so the caller keeps the walk's own error.
+ * `deadline` bounds the retry: when the caller's time is up, its timeout error is thrown instead.
+ * The default movements leave doors solid on purpose: the plugin's `canOpenDoors` handles fence
+ * gates only, and with it on a door goal left the plugin's goto short of a range-0 goal (one
+ * attempt threw a TypeError at index.js:538). `passOpenDoor` hides the opened cells from the
+ * retry walk: an open door's data still says solid, and the player's physics passes it.
  */
 async function openDoorNearGoal(ctx: RoutineContext, spec: WalkGoal, timeoutMs: number, deadline: number): Promise<Vec3 | undefined> {
   const { bot } = ctx;
@@ -191,12 +189,10 @@ const doorCellKey = (cell: Vec3): string => `${Math.floor(cell.x)},${Math.floor(
 
 /**
  * Reports an open door's two cells as empty for one retry walk; returns the release. One wrapper
- * serves every walk in progress on the bot (its cells counted, so overlapping walks neither
- * remove each other's view nor overwrite a restore), it returns adjusted copies rather than
- * mutating the world's cached blocks, and the last release restores the original `blockAt`
- * function. Both the planner and the post-processed waypoints read `bot.blockAt`: an open door's
- * data still carries the swung panel's shape, which would make the planner treat it as solid and
- * the waypoint sit on top of it. The player's physics passes the open doorway.
+ * serves every walk in progress (cell counts keep overlapping walks apart) and returns copies
+ * rather than mutating cached blocks; the last release restores the original `blockAt`. The
+ * planner and the post-processed waypoints read `bot.blockAt`, and an open door's data still says
+ * solid; the player's physics passes the open doorway.
  */
 function passOpenDoor(bot: RoutineContext["bot"], lower: Vec3): () => void {
   let installed = doorPasses.get(bot);
@@ -618,11 +614,11 @@ async function pathTo(ctx: RoutineContext, spec: WalkGoal, timeoutMs: number, al
 }
 
 /**
- * Walks to `spec`'s goal, opening a closed wooden door once when a plain no-way walk, an own-build
+ * Walks to `spec`'s goal, opening a closed door once when a plain no-way walk, an own-build
  * explanation, or a stuck end falls short of it, and returns where the player then stands. The
- * door is looked for near the goal or near the player (a walk out of a hut). The whole call
- * settles by `timeoutMs`: the door retry gets only the time the first walk left. A stop or a
- * replaced goal throws its own error before any door is opened or another walk started.
+ * door is looked for near the goal or near the player (a walk out of a hut); the whole call
+ * settles by `timeoutMs`, so the retry gets only the time the first walk left. A stop or a
+ * replaced goal throws before any door opens.
  */
 async function walkTo(ctx: RoutineContext, spec: WalkGoal, timeoutMs: number, allowDigOwnBuilds: boolean): Promise<Vec3> {
   const deadline = Date.now() + timeoutMs;
@@ -688,7 +684,7 @@ export const to = defineRoutine(
   {
     name: "move.to",
     description:
-      "Walk within `range` blocks of `position` and stop; the feet, or the block above them, within `range` counts as there. `position` is {x,y,z} or [x,y,z]; {x,z} instead walks to the surface of that column, so a far goal needs no y guess. Returns where the player stands once stopped. Throws, after stopping pathfinding, when `timeoutMs` passes, when 12 s go by with no progress (no movement, digging, or nearby block change: 'stuck at ...'), when the breath bar falls under 10 ('out of air ...'), when a finished path leaves the player short ('the path ended ... blocks short'), or when the pathfinder ends without a way within `range`, finding none or running out of search time ('could not reach ...'). A missing path names what blocked the way when a relaxed search finds one: a drop taller than the pathfinder falls, or a block the bot placed itself (`allowDigOwnBuilds: true` walks through those). When the goal is more than `range + 1` blocks above or below the ground of its column, the error names the ground y; when that column is not loaded, it says so. A closed wooden door near the goal is opened once and the walk tried again, so a hut with a wooden door is reachable without breaking a block.",
+      "Walk within `range` blocks of `position` and stop; the feet, or the block above them, within `range` counts as there. `position` is {x,y,z} or [x,y,z]; {x,z} instead walks to the surface of that column, so a far goal needs no y guess. Returns where the player stands once stopped. Throws, after stopping pathfinding, when `timeoutMs` passes, when 12 s go by with no progress (no movement, digging, or nearby block change: 'stuck at ...'), when the breath bar falls under 10 ('out of air ...'), when a finished path leaves the player short ('the path ended ... blocks short'), or when the pathfinder ends without a way within `range`, finding none or running out of search time ('could not reach ...'). A missing path names what blocked the way when a relaxed search finds one: a drop taller than the pathfinder falls, or a block the bot placed itself (`allowDigOwnBuilds: true` walks through those). When the goal is more than `range + 1` blocks above or below the ground of its column, the error names the ground y; when that column is not loaded, it says so. A walk that ends stuck or finds no way may open a closed door other than an iron one (wooden or copper) within 8 blocks of the goal or of the player once, and try the walk again: this reaches the inside of a build of the body's own, where its own blocks stop the pathfinder.",
     args: z.object({
       position: MovePosition,
       range: z.number().min(0).default(1),

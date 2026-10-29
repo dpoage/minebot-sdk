@@ -52,10 +52,10 @@ export interface RunRecord {
 
 export interface BodyEvent {
   /**
-   * The log's number for this event: a seed taken from the log's creation wall clock, then one per
-   * event. The seed is above an earlier log's seqs only when the new log starts in a later wall-clock
-   * second than the earlier log's last event and that log averaged under 1000 events a second, so a
-   * same-second restart can reuse an old cursor's range; the clock is assumed never to move back.
+   * The log's number for this event: a seed from the log's creation wall clock, then one per event.
+   * A fresh log seeds above an earlier log's seqs only if it starts in a later wall-clock second and
+   * that log averaged under 1000 events a second, and the wall clock did not step back; otherwise an
+   * old cursor can hide the new log's first events.
    */
   seq: number;
   time: number;

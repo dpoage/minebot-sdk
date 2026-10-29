@@ -20,12 +20,8 @@ export interface EventWaitOptions extends EventFilter {
 
 /**
  * A fresh log must number above any seq an earlier daemon's log issued, or a cursor held across the
- * restart would hide the new log's first events. The seed is the wall clock's next second times 1000,
- * so a log created in any later second seeds above an earlier log's seqs as long as no log sustains a
- * thousand events a second, and each log counts up by one: seqs stay one small integer per event,
- * gap-free within a log. Nothing is persisted for it. Assumes the wall clock never moves back (a step
- * back could let a fresh log reuse an old cursor's range) and a body pushes fewer than 1000 events a
- * second on average.
+ * restart would hide its first events. The seed is the wall clock's next second times 1000, so that
+ * holds unless the clock steps back or a log sustains 1000 events a second; seqs then count up by one.
  */
 const SEQS_PER_SECOND = 1000;
 /** The highest seq any log in this process issued or started from; two logs here never overlap either. */
@@ -80,11 +76,9 @@ export class EventLog implements EventSink {
   }
 
   /**
-   * Returns at most `limit` buffered events, oldest first. Without `since` that is the newest
-   * `limit` of them, and `next` is the log's newest seq: what a caller asking for "the events"
-   * wants, so a stale buffer's oldest events cannot crowd out the newest. With `since` it is the
-   * oldest `limit` events whose seq is greater; a cursor ahead of the log starts from the beginning.
-   * `latest` always names the log's newest seq.
+   * At most `limit` buffered events, oldest first: the newest `limit` without `since`, else the
+   * oldest `limit` after it. `next` is the newest seq returned, `latest` the log's newest; a cursor
+   * ahead of the log starts from the beginning.
    */
   since(since?: number, limit = 200): EventsResponse {
     const latest = this.#seq;
@@ -98,12 +92,10 @@ export class EventLog implements EventSink {
   }
 
   /**
-   * Resolves with the first event after the cursor that matches every filter, or with `timedOut`.
-   * Without a cursor, a wait whose `types` are exactly one of day or night (repeated or not, and
-   * nothing else) answers at once while that phase holds, with the event that announced it: the body
-   * may have joined during that phase, so no transition is coming. Any other list — both phases, a
-   * phase mixed with other types, or no types — is answered only by events pushed after the call.
-   * Does not block programs or other requests; a wait abandoned through `signal` is dropped.
+   * The first event after the cursor that matches every filter, else `timedOut`. Without a cursor,
+   * a wait whose `types` are exactly one phase (day or night) answers at once while that phase
+   * holds: the body may have joined during it, so no transition is coming. Any other list sees only
+   * events pushed after the call. A wait abandoned through `signal` is dropped.
    */
   async wait(options: EventWaitOptions = {}): Promise<WaitResponse> {
     const filter = { types: options.types, from: options.from, match: options.match };

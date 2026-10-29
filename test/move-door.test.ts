@@ -1,8 +1,8 @@
 // move.to through a closed wooden door (mb-q8g): a plain no-way walk with a closed wooden door
 // near its goal walks to the door, opens it, and tries the goal once more within the caller's
 // time; an iron door is never opened, and drop/own-build/height explanations are not retried. The
-// plugin's own canOpenDoors path is not used: it crashes its executor on the single useOne move a
-// door plans (verified live on the dev server). A stop or a replaced goal ends the walk with its
+// plugin's own canOpenDoors path is not used: with it on, a door goal left goto short of a range-0
+// goal, and one attempt threw a TypeError at index.js:538. A stop or a replaced goal ends the walk with its
 // own error before any door is opened or another walk started; overlapping retries share one
 // blockAt wrapper that restores the original identity with its last walk.
 import assert from "node:assert/strict";

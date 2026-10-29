@@ -54,12 +54,10 @@ const BOT_LISTENERS: Record<string, WatchOptions> = {
 };
 
 /**
- * The live bot as a run sees it: a listener it adds with `on`, `once`, `addListener`, `prependListener`, or
- * `prependOnceListener` is the run's, removed at every end of the run, and a throw from it ends the run instead of
- * the packet dispatch that called it. The program's own `off` and `removeListener` remove what it added — the run
- * registered a wrapper, which the record of the handler names — and every other listener the same way the bot would,
- * so a listener a Mineflayer helper registered on the bot itself is removed too. `removeAllListeners` is the bot's.
- * Every other member is the bot's, bound to it so the proxy is never the `this` a Mineflayer method sees.
+ * The live bot as a run sees it. A listener added with `on`, `once`, `addListener`, `prependListener`, or
+ * `prependOnceListener` is the run's: removed at every end, and its throw ends the run, not the packet dispatch.
+ * `off` and `removeListener` remove a run listener through its record, and any other listener as the bot would;
+ * `removeAllListeners` is the bot's. Every other member is the bot's, bound so Mineflayer never sees the proxy.
  */
 function scopedBot(bot: Bot, watch: NonNullable<ProgramScope["watch"]>): Bot {
   /** The bot as the emitter it is: its listener methods take event names the Mineflayer typings do not list. */
