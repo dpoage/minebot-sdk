@@ -140,7 +140,7 @@ export const ChatInput = z.object({
         const code = `U+${refused.code.toString(16).padStart(4, "0").toUpperCase()}`;
         ctx.addIssue({
           code: "custom",
-          message: `message has the character ${chatCharacterName(refused.code)} (${code}) at index ${refused.index}: the Minecraft server refuses control characters, U+007F and the section sign U+00A7 in chat, and disconnects the body for them. Nothing was sent; remove that character.`,
+          message: `message has the character ${chatCharacterName(refused.code)} (${code}) at index ${refused.index}: the Minecraft server refuses control characters, U+007F and the section sign U+00A7 in chat (a tab, U+007F, or U+00A7 would disconnect the body). Nothing was sent; remove that character.`,
         });
       }
       if (message.length > CHAT_LIMIT) {

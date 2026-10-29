@@ -1,8 +1,8 @@
 // Chat is validated before it is sent, on both paths that send it: POST /chat (what send_chat and the
-// client reach) and social.say. A message the 26.1 server would disconnect the body for — a control
-// character, U+007F, the section sign — is refused with the character and its position; a message past
-// the 256-unit limit is refused with the count in the units the server counts (UTF-16, an emoji is 2),
-// the whisper prefix included.
+// client reach) and social.say. A message with a character the 26.1 server will not carry — a control
+// character, U+007F, the section sign — is refused with the character and its position (a tab, U+007F,
+// or the section sign would disconnect the body); a message past the 256-unit limit is refused with
+// the count in the units the server counts (UTF-16, an emoji is 2), the whisper prefix included.
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { createHarness } from "minebot-sdk/testing";
