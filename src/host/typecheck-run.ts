@@ -435,10 +435,10 @@ function wrongArgumentOfBotOrRoutine(d: Diagnostic, text: string, code: Uint8Arr
   if (at === undefined) return false;
   const call = enclosingCall(text, code, at);
   if (call === undefined) return false;
-  // The library's own type-only restrictions (an event name, a control state, a nullable value) are the
-  // bot's; a wrong argument of a built-in routine is refused as the property says.
-  if (botMemberPath(text, call.at, call.name) !== undefined) return !toleratedArgument(d);
-  return routineNames(text, code).has(calleeRoot(text, code, call));
+  // The bot's own type-only restrictions (an event name, a control state, a nullable value) and a
+  // callback's shape are tolerated on both call kinds; every other wrong argument refuses.
+  if (botMemberPath(text, call.at, call.name) === undefined && !routineNames(text, code).has(calleeRoot(text, code, call))) return false;
+  return !toleratedArgument(d);
 }
 
 /**
