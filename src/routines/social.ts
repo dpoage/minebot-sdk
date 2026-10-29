@@ -44,11 +44,45 @@ async function awaitChat(
   }
 }
 
+/** The server's chat limit, in UTF-16 code units: what mineflayer splits a line by, and what the 26.1 server refuses past (an emoji counts as 2). */
+const CHAT_LIMIT = 256;
+
+/**
+ * A chat message the server will carry. `POST /chat` validates its `message` with the same rule (`ChatInput` in
+ * the protocol schemas, which also checks a whisper's `/msg <to> ` prefix); a built-in routine module may not
+ * import that source, because `test/typecheck.test.ts` copies every built-in module into a library and refuses
+ * an import that leaves it. The rule is therefore written here too, and `test/chat-validation.test.ts` holds
+ * the two paths to the same answers.
+ */
+const chatMessage = z
+  .string()
+  .min(1)
+  .max(CHAT_LIMIT)
+  .superRefine((message, ctx) => {
+    for (let index = 0; index < message.length; index++) {
+      const code = message.charCodeAt(index);
+      if (code >= 0x20 && code !== 0x7f && code !== 0xa7) continue;
+      const character = code < 0x20 || code === 0x7f ? `\\u${code.toString(16).padStart(4, "0").toUpperCase()}` : String.fromCharCode(code);
+      const point = `U+${code.toString(16).padStart(4, "0").toUpperCase()}`;
+      ctx.addIssue({
+        code: "custom",
+        message: `message has the character ${character} (${point}) at index ${index}: the Minecraft server refuses control characters, U+007F and the section sign U+00A7 in chat and would disconnect the body. Nothing was sent; remove that character.`,
+      });
+      break;
+    }
+    if (message.length > CHAT_LIMIT) {
+      ctx.addIssue({
+        code: "custom",
+        message: `message is ${message.length} UTF-16 code units long, over the server's chat limit of ${CHAT_LIMIT} UTF-16 code units (an emoji counts as 2). Nothing was sent; shorten it.`,
+      });
+    }
+  });
+
 export const say = defineRoutine(
   {
     name: "social.say",
     description: "Send a public chat `message`. Other players and agents read chat.",
-    args: z.object({ message: z.string().min(1).max(256) }),
+    args: z.object({ message: chatMessage }),
     returns: z.void(),
   },
   (ctx, { message }) => ctx.bot.chat(message),
