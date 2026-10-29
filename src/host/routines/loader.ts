@@ -412,6 +412,10 @@ export class RoutineLoader {
     const check = await typeCheckRun(this.library ? this.dir : undefined, source, { signal: ctx.signal });
     ctx.signal.throwIfAborted();
     if (check.status === "skipped") ctx.log(`type check skipped: ${check.reason}`);
+    if (check.status === "passed") {
+      for (const note of check.notes ?? []) ctx.log(note);
+      return;
+    }
     if (check.status !== "failed") return;
     const shown = check.errors.slice(0, MAX_REFUSED_SHOWN).map((error) => error.replace(/^/gm, "  "));
     const more = check.errors.length - shown.length;

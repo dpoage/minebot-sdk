@@ -172,12 +172,274 @@ function offsetOf(text: string, line: number, column: number): number | undefine
   return start + column - 1 <= text.length ? start + column - 1 : undefined;
 }
 
-/** Codes whose diagnostic refuses a run: a value that is not callable, a call with the wrong number of arguments, a key the object's type does not have. */
-const REFUSED_CODES: Record<number, true> = { 2349: true, 2554: true, 2353: true };
+/** Codes whose diagnostic refuses a run: a value that is not callable, a call with the wrong number of arguments, a key the object's type does not have, a block-scoped name used before its declaration (a guaranteed throw). */
+const REFUSED_CODES: Record<number, true> = { 2349: true, 2554: true, 2353: true, 2448: true };
 /** Codes of a member that the type does not have; they refuse only where the member is called. */
 const MISSING_MEMBER_CODES: Record<number, true> = { 2339: true, 2551: true };
 /** The code of a name that is not defined: it refuses a run, except where the name is only asked for with `typeof`. */
 const UNDEFINED_NAME = 2304;
+/** The code of an argument that does not fit the call's parameter type: it refuses only where the call targets the bot or a built-in routine. */
+const WRONG_ARGUMENT = 2345;
+
+/**
+ * Which characters of `text` are code: a comment, a string, a template's text and a regular expression
+ * are not, so a bracket or a parenthesis inside one never balances a call's. The same traversal as
+ * `defaultExportAt`, which needs the same distinctions.
+ */
+function codeMask(text: string): Uint8Array {
+  const code = new Uint8Array(text.length);
+  const n = text.length;
+  const templates: number[] = [];
+  let braces = 0;
+  let previous = "";
+  let previousWord = "";
+  let i = 0;
+  /** Skips template text from `i` up to the end of the template or the start of a substitution. */
+  const templateText = () => {
+    while (i < n) {
+      const c = text[i];
+      if (c === "\\") i += 2;
+      else if (c === "`") return void i++;
+      else if (c === "$" && text[i + 1] === "{") {
+        templates.push(braces);
+        return void (i += 2);
+      } else i++;
+    }
+  };
+  while (i < n) {
+    const c = text[i]!;
+    if (/\s/.test(c)) {
+      i++;
+    } else if (c === "/" && text[i + 1] === "/") {
+      while (i < n && text[i] !== "\n") i++;
+    } else if (c === "/" && text[i + 1] === "*") {
+      const end = text.indexOf("*/", i + 2);
+      i = end < 0 ? n : end + 2;
+    } else if (c === '"' || c === "'") {
+      i++;
+      while (i < n && text[i] !== c && text[i] !== "\n") i += text[i] === "\\" ? 2 : 1;
+      i++;
+      previous = c;
+      previousWord = "";
+    } else if (c === "`") {
+      i++;
+      templateText();
+      previous = "`";
+      previousWord = "";
+    } else if (c === "/" && (BEFORE_REGEX[previous] || KEYWORDS_BEFORE_REGEX[previousWord])) {
+      i++;
+      for (let inClass = false; i < n && text[i] !== "\n" && (inClass || text[i] !== "/"); i++) {
+        if (text[i] === "\\") i++;
+        else if (text[i] === "[") inClass = true;
+        else if (text[i] === "]") inClass = false;
+      }
+      i++;
+      previous = "/";
+      previousWord = "";
+    } else if (/[\p{ID_Start}$_]/u.test(c)) {
+      const start = i;
+      while (i < n && /[\p{ID_Continue}$\u200C\u200D]/u.test(text[i]!)) code[i++] = 1;
+      previous = "a";
+      previousWord = text.slice(start, i);
+    } else {
+      if (c === "{") braces++;
+      else if (c === "}") {
+        if (templates.length > 0 && braces === templates.at(-1)) {
+          templates.pop();
+          i++;
+          templateText();
+          previous = "`";
+          previousWord = "";
+          continue;
+        }
+        braces--;
+      }
+      code[i] = 1;
+      previous = c;
+      previousWord = "";
+      i++;
+    }
+  }
+  return code;
+}
+
+/** A call in the run's source: the offset of the callee's last name, and that name. */
+interface CallSite {
+  at: number;
+  name: string;
+}
+
+/**
+ * The callee whose opening parenthesis is at `open`: the last name before it, stepping over `!` and a
+ * generic argument list (`f<T>(`), or undefined when the parenthesis is a grouping, not a call's.
+ */
+function calleeAt(text: string, code: Uint8Array, open: number): CallSite | undefined {
+  let i = open - 1;
+  const skip = () => {
+    while (i >= 0 && (code[i] !== 1 || /\s/.test(text[i]!))) i--;
+  };
+  skip();
+  if (i >= 0 && text[i] === ">") {
+    let depth = 0;
+    for (; i >= 0; i--) {
+      if (code[i] !== 1) continue;
+      if (text[i] === ">") depth++;
+      else if (text[i] === "<" && --depth === 0) {
+        i--;
+        break;
+      }
+    }
+    skip();
+  }
+  while (i >= 0 && text[i] === "!") {
+    i--;
+    skip();
+  }
+  const end = i + 1;
+  while (i >= 0 && code[i] === 1 && /[\p{ID_Continue}$\u200C\u200D]/u.test(text[i]!)) i--;
+  return end === i + 1 ? undefined : { at: i + 1, name: text.slice(i + 1, end) };
+}
+
+/**
+ * The call whose argument list holds offset `at`: scanning backwards, the first parenthesis at bracket
+ * depth 0 that follows an expression is the call's; a grouping parenthesis is stepped over.
+ */
+function enclosingCall(text: string, code: Uint8Array, at: number): CallSite | undefined {
+  let parens = 0;
+  let brackets = 0;
+  let braces = 0;
+  for (let i = at - 1; i >= 0; i--) {
+    if (code[i] !== 1) continue;
+    const c = text[i]!;
+    if (c === ")") parens++;
+    else if (c === "]") brackets++;
+    else if (c === "}") braces++;
+    else if (c === "(") {
+      if (parens > 0) parens--;
+      else {
+        const call = calleeAt(text, code, i);
+        if (call !== undefined) return call;
+      }
+    } else if (c === "[") {
+      if (brackets > 0) brackets--;
+    } else if (c === "{") {
+      if (braces > 0) braces--;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * The local names bound to a `minebot-sdk/routines/*` module: a static `import` (namespace, named, renamed
+ * or default), or the run-time form the loader's import error suggests, `const ns = await import("...")`,
+ * with or without a destructuring namespace. Calling one calls a built-in routine.
+ */
+function routineNames(text: string, code: Uint8Array): Set<string> {
+  const names = new Set<string>();
+  for (const found of text.matchAll(/import\s+(?:type\s+)?([^;]*?)\s+from\s+["']([^"']+)["']/g)) {
+    if (code[found.index ?? 0] !== 1 || !/^minebot-sdk\/routines\/[\w-]+$/.test(found[2]!)) continue;
+    const clause = found[1]!;
+    for (const bind of clause.matchAll(/\*\s+as\s+([\w$]+)/g)) names.add(bind[1]!);
+    const braced = /\{([^}]*)\}/.exec(clause);
+    if (braced !== null) {
+      for (const part of braced[1]!.split(",")) {
+        const [imported, local] = part.trim().split(/\s+as\s+/);
+        const name = (local ?? imported)?.trim().replace(/^type\s+/, "");
+        if (name !== undefined && name !== "") names.add(name);
+      }
+    }
+    const before = clause.replace(/\{[^}]*\}/g, "").replace(/\*\s+as\s+[\w$]+/g, "").replace(/,/g, " ").trim().replace(/^type\s+/, "");
+    if (/^[\w$]+$/.test(before)) names.add(before);
+  }
+  const dynamic = /(?<![\w$.])([\w$]+)\s*=\s*(?:\(\s*)?(?:await\s+)?import\s*\(\s*["']minebot-sdk\/routines\/[\w-]+["']\s*\)/g;
+  for (const found of text.matchAll(dynamic)) if (code[found.index ?? 0] === 1) names.add(found[1]!);
+  const destructured = /(?:const|let|var)\s*\{([^}]*)\}\s*=\s*(?:\(\s*)?(?:await\s+)?import\s*\(\s*["']minebot-sdk\/routines\/[\w-]+["']\s*\)/g;
+  for (const found of text.matchAll(destructured)) {
+    if (code[found.index ?? 0] !== 1) continue;
+    for (const part of found[1]!.split(",")) {
+      const [imported, local] = part.trim().split(/\s*:\s*|\s+as\s+/);
+      const name = (local ?? imported)?.trim();
+      if (name !== undefined && name !== "") names.add(name);
+    }
+  }
+  return names;
+}
+
+/** The identifier a call is rooted at: `craft` in `craft.make(...)`, the same in `ctx` for `ctx.bot.chat(...)`. */
+function calleeRoot(text: string, code: Uint8Array, call: CallSite): string {
+  let start = call.at;
+  for (;;) {
+    let i = start - 1;
+    const skip = () => {
+      while (i >= 0 && (code[i] !== 1 || /\s/.test(text[i]!))) i--;
+    };
+    skip();
+    if (i < 0 || text[i] !== ".") break;
+    i--;
+    skip();
+    const end = i + 1;
+    while (i >= 0 && code[i] === 1 && /[\p{ID_Continue}$\u200C\u200D]/u.test(text[i]!)) i--;
+    if (end === i + 1) break;
+    start = i + 1;
+  }
+  let end = start;
+  while (end < text.length && /[\p{ID_Continue}$\u200C\u200D]/u.test(text[end]!)) end++;
+  return text.slice(start, end);
+}
+
+/** The argument and parameter types of a wrong argument's first line, when the compiler printed both. */
+function argumentTypes(d: Diagnostic): { argument: string; parameter: string } | undefined {
+  const found = /^Argument of type '(.+)' is not assignable to parameter of type '(.+)'\.$/.exec(d.message);
+  return found === null ? undefined : { argument: found[1]!, parameter: found[2]! };
+}
+
+/** `type` without its `null` and `undefined` members, or undefined when it is only those. */
+function withoutNullability(type: string): string | undefined {
+  const stripped = type
+    .split(" | ")
+    .filter((part) => part !== "null" && part !== "undefined")
+    .join(" | ");
+  return stripped === "" ? undefined : stripped;
+}
+
+/**
+ * Whether a wrong argument of the bot is one the runtime does not enforce, so the call would not throw.
+ * Tolerance is only these three shapes, each measured against the history replay:
+ * (a) a value that may be absent where the parameter takes exactly that value (`Block | null` passed to
+ *     `Block`): the call throws only when the value is absent, and the corpus's runs had it present. A
+ *     literal `null`/`undefined`, or a value whose other kind is not the parameter's (`boolean | undefined`
+ *     passed to `Block`), is refused;
+ * (b) a string (or a string literal) where the parameter names the keys it dispatches on — `keyof BotEvents`
+ *     (the emitter takes any event name) or `ControlState` (the control set takes any state);
+ * (c) a callback where the parameter is one: the emitter calls it with the arguments it has.
+ * Every other wrong argument is refused, so a call that throws at run time (`bot.chat(null)`,
+ * `bot.nearestEntity("cow")`, `bot.equip(itemOrUndefined, "hand")`) is stopped before it runs.
+ */
+function toleratedArgument(d: Diagnostic): boolean {
+  const types = argumentTypes(d);
+  if (types === undefined) return false;
+  const { argument, parameter } = types;
+  const optional = withoutNullability(argument);
+  if (optional !== undefined && optional !== argument && optional === parameter) return true;
+  if ((argument === "string" || /^["'`]/.test(argument)) && (parameter === "ControlState" || parameter === "keyof BotEvents")) return true;
+  return argument.includes("=>") && parameter.includes("=>");
+}
+
+/**
+ * Whether `d` (a wrong argument, `WRONG_ARGUMENT`) is an argument of a call of a member of `bot` or of an
+ * export of a `minebot-sdk/routines/*` module. A call through an alias of the bot (`const b = ctx.bot`)
+ * is not resolved: the check knows only the names `bot` and `ctx.bot`.
+ */
+function wrongArgumentOfBotOrRoutine(d: Diagnostic, text: string, code: Uint8Array): boolean {
+  const at = offsetOf(text, d.line, d.column);
+  if (at === undefined) return false;
+  const call = enclosingCall(text, code, at);
+  if (call === undefined) return false;
+  // The bot's own type-only restrictions (an event name, a control state, a nullable value) and a
+  // callback's shape are tolerated on both call kinds; every other wrong argument refuses.
+  if (botMemberPath(text, call.at, call.name) === undefined && !routineNames(text, code).has(calleeRoot(text, code, call))) return false;
+  return !toleratedArgument(d);
+}
 
 /**
  * The offset in `text` where a missing member (diagnostic `d`, code 2339 or 2551) is named, and its name,
@@ -205,13 +467,15 @@ function typeofOperand(d: Diagnostic, text: string): boolean {
 
 /**
  * Whether diagnostic `d` refuses a run: the classes that predict a failure at run time (see
- * `REFUSED_CODES`), a member that is missing where it is called, and an undefined name that is used for
- * more than a `typeof` probe. A diagnostic that names one of the names the check adds is the check's.
+ * `REFUSED_CODES`), a member that is missing where it is called, an undefined name that is used for
+ * more than a `typeof` probe, and a wrong argument of a call to the bot or a built-in routine. A
+ * diagnostic that names one of the names the check adds is the check's.
  */
-function refuses(d: Diagnostic, text: string): boolean {
+function refuses(d: Diagnostic, text: string, code: Uint8Array | undefined): boolean {
   if (/\$(?:RC|R|r)\b/.test(d.message)) return false;
   if (d.code === UNDEFINED_NAME) return !typeofOperand(d, text);
   if (MISSING_MEMBER_CODES[d.code]) return calledMember(d, text) !== undefined;
+  if (d.code === WRONG_ARGUMENT) return wrongArgumentOfBotOrRoutine(d, text, code ?? codeMask(text));
   return REFUSED_CODES[d.code] === true;
 }
 
@@ -226,8 +490,9 @@ function refuses(d: Diagnostic, text: string): boolean {
  */
 export function refusing(diagnostics: readonly Diagnostic[], text: string): Diagnostic[] {
   if (diagnostics.some((d) => d.code >= 1000 && d.code < 2000)) return [];
+  const code = diagnostics.some((d) => d.code === WRONG_ARGUMENT) ? codeMask(text) : undefined;
   return diagnostics
-    .filter((d) => refuses(d, text))
+    .filter((d) => refuses(d, text, code))
     .sort((a, b) => a.line - b.line || a.column - b.column);
 }
 
@@ -272,4 +537,63 @@ export function renderRefusal(d: Diagnostic, text: string): string {
   const message = suggestion === undefined ? d.message : d.message.replace(/ Did you mean .*\?$/, "");
   const line = `line ${d.line}:${d.column} ${message}`;
   return suggestion === undefined ? line : `${line}\n  ${suggestion}`;
+}
+
+/** The real member a missing read should have used, for the values whose member the compiler cannot name (the corpus of mb-znn.29). */
+const READ_FIXES: Record<string, Record<string, string>> = {
+  Entity: {
+    dead: "the body removes an entity from bot.entities when it dies: read e.isValid",
+    valid: "read e.isValid",
+  },
+  Vec3: { lengthSq: "use v.norm() for the length, or v.distanceSquared(other) for a squared one" },
+  Block: { nbt: "read block.blockEntity (simplified NBT) or block.entity (full NBT)" },
+};
+
+/** The types whose member reads the check answers: the bot and the world values agents read. */
+const READ_TYPES: Record<string, true> = { Bot: true, Entity: true, Block: true, Item: true, Vec3: true };
+
+/** The name of a missing-member diagnostic's member and its receiver's type, when the diagnostic is one. */
+function missingMember(d: Diagnostic, text: string): { name: string; at: number; type: string } | undefined {
+  const found = /^Property '([^']+)' does not exist on type '([^']+)'/.exec(d.message);
+  if (found === null) return undefined;
+  const name = found[1]!;
+  const at = offsetOf(text, d.line, d.column);
+  if (at === undefined || !text.startsWith(name, at)) return undefined;
+  return { name, at, type: found[2]! };
+}
+
+/**
+ * How a missing-member READ the check does not refuse reads to the agent: `line L:C <message>`, which
+ * names the nearest real member when the compiler found one ("Did you mean"), and for the corpus's
+ * mistakes whose real member the compiler cannot name, the member to use instead. Undefined for anything
+ * that is not such a read (a call refuses the run; an assignment writes; other codes are not suggestions).
+ */
+export function renderRead(d: Diagnostic, text: string): string | undefined {
+  if (!MISSING_MEMBER_CODES[d.code]) return undefined;
+  const member = missingMember(d, text);
+  if (member === undefined || !READ_TYPES[member.type] || calledMember(d, text) !== undefined) return undefined;
+  let after = member.at + member.name.length;
+  while (/\s/.test(text[after] ?? "")) after++;
+  const rest = text.slice(after);
+  // A call (`(`, a tagged template) is refused, not suggested; an assignment (`=`, `+=`, `++`, …) writes.
+  if (/^(?:!?\()|^`/.test(rest) || /^(?:=(?!=|>)|[-+*/%&|^]=|\*\*=|<<=|>>=|>>>=|&&=|\|\|=|\?\?=|\+\+|--)/.test(rest)) return undefined;
+  const message = d.message.endsWith(".") ? d.message.slice(0, -1) : d.message;
+  const line = `line ${d.line}:${d.column} ${d.message}`;
+  // TypeScript's own "Did you mean" already names the nearest member; a curated fix is for the rest.
+  if (/ Did you mean '[^']+'\?$/.test(message)) return line;
+  if (member.type === "Bot") {
+    const path = botMemberPath(text, member.at, member.name);
+    const hint = path === undefined ? undefined : suggestBotMember(path);
+    return hint === undefined ? line : `line ${d.line}:${d.column} ${message}; ${hint}`;
+  }
+  const fix = READ_FIXES[member.type]?.[member.name];
+  return fix === undefined ? line : `line ${d.line}:${d.column} ${message}; ${fix}`;
+}
+
+/** The lines a passing run's log carries for the missing-member reads in `diagnostics`; `text` is `checkedText` of its source. */
+export function readSuggestions(diagnostics: readonly Diagnostic[], text: string): string[] {
+  return diagnostics.flatMap((d) => {
+    const line = renderRead(d, text);
+    return line === undefined ? [] : [line];
+  });
 }

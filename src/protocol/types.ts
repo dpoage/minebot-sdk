@@ -246,7 +246,14 @@ export interface ActionStats {
 }
 
 /** The type check of a routine's source against the packages the body ships. It never blocks a save: `failed` lists the errors (`<name>.ts(line,col): error TSxxxx: ...`) and the routine is saved anyway; `skipped` says why no check ran (TypeScript is an optional peer dependency). */
-export type TypeCheck = { status: "passed" } | { status: "failed"; errors: string[] } | { status: "skipped"; reason: string };
+export type TypeCheck =
+  | {
+      status: "passed";
+      /** The suggestions a passing run's log carries: a missing-member read, and the real member to use (absent when the check had none). */
+      notes?: string[];
+    }
+  | { status: "failed"; errors: string[] }
+  | { status: "skipped"; reason: string };
 
 /** A built-in routine module a body offers: `import * as <name> from "minebot-sdk/routines/<name>"`, and each routine callable as `<name>.<routine>`. */
 export interface BuiltinInfo {

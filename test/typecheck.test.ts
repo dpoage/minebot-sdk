@@ -187,6 +187,22 @@ console.log(JSON.stringify(await typeCheckRoutine(${JSON.stringify(dir)}, "walk"
     assert.deepEqual(checks.filter(([, check]) => check.status !== "passed"), []);
   });
 
+  // P6.4: a routine that computes [x, y, z] as a number[] may pass it to a built-in's point argument.
+  it("accepts a computed number[] where a built-in takes a point", { timeout: 120_000 }, async () => {
+    const { dir } = await library({
+      walk: `import type { RoutineContext } from "minebot-sdk/routine";
+import * as move from "minebot-sdk/routines/move";
+
+export default async (ctx: RoutineContext) => {
+  const x = 1, y = 2, z = 3;
+  const p: number[] = [x, y, z];
+  await move.to(ctx, { position: p });
+};
+`,
+    });
+    assert.deepEqual(await typeCheckRoutine(dir, "walk"), { status: "passed" });
+  });
+
   it("skips, without throwing, when it cannot set up the check", async () => {
     const { dir } = await library({ walk: "export default 1;\n" });
     const saved = process.env.TMPDIR;

@@ -4,6 +4,8 @@
 // below are the authoring helpers a routine composes with: pathfinder goals, positions and name
 // patterns, block and world predicates, and the smelting tables.
 import pathfinderPkg from "mineflayer-pathfinder";
+// The runtime members the packages' typings leave out: a declaration-only module, imported for its types.
+import "./augment.ts";
 import { biomeAt } from "../mc/biome.ts";
 import { isHostile } from "../mc/hostile.ts";
 import { NamePattern, nameMatcher } from "../mc/names.ts";
