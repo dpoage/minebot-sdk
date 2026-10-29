@@ -9,6 +9,7 @@ import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it, mock } from "node:test";
 import { createHarness, type Harness } from "minebot-sdk/testing";
 import { Vec3 } from "minebot-sdk/routine";
+import { installBodyPolicies } from "../src/host/pathfinding.ts";
 import * as move from "../src/routines/move.ts";
 
 const settle = () => new Promise<void>((resolve) => setImmediate(resolve));
@@ -39,8 +40,8 @@ const noPathSearch = () =>
   })();
 
 /** A harness with a closed door at (4, 64, 0), a counting activateBlock that opens it, and a no-way search. */
-function scene(options: { position?: [number, number, number]; door?: "spruce_door" | "iron_door" } = {}) {
-  const h = createHarness({ position: options.position ?? [0.5, 64, 0.5] });
+function scene(options: { position?: [number, number, number]; door?: "spruce_door" | "iron_door"; inventory?: Record<string, number> } = {}) {
+  const h = createHarness({ position: options.position ?? [0.5, 64, 0.5], inventory: options.inventory ?? {} });
   const name = options.door ?? "spruce_door";
   const hang = (half: string, open: boolean) => h.setBlock([4, half === "lower" ? 64 : 65, 0], name, { half, open, facing: "east", hinge: "left" });
   hang("lower", false);
@@ -264,6 +265,90 @@ describe("door retry respects timeoutMs (B3)", () => {
     await flush();
     assert.equal(message(walk.outcome()), "pathfinding took longer than 1500 ms");
     assert.equal(interior(), 2, "the retry walk started and was cut by the caller's deadline");
+  });
+});
+
+describe("own-build and stuck ends retry through the door (r2)", () => {
+  it("opens the door when the first walk is explained by the bot's own build", async () => {
+    const { h, pathfinder, activations } = scene({ position: [3.5, 64, 0.5], inventory: { oak_planks: 4 } });
+    installBodyPolicies(h.bot);
+    const planks = h.bot.inventory.items().find((item) => item.name === "oak_planks");
+    assert.ok(planks);
+    await h.bot.equip(planks, "hand");
+    await h.bot.placeBlock(h.blockAt([2, 63, 0]), new Vec3(0, 1, 0));
+    pathfinder.goto = async (goal) => {
+      if (goal.x === 4) {
+        h.teleport([3.5, 64, 0.5]);
+        h.bot.emit("goal_reached", goal);
+        return;
+      }
+      if (h.blockAt([4, 64, 0]).getProperties().open !== true) {
+        h.bot.emit("path_update", { status: "noPath", path: [] } as never);
+        return;
+      }
+      h.teleport([5.5, 64, 0.5]);
+      h.bot.emit("goal_reached", goal);
+    };
+    pathfinder.getPathFromTo = ((movements: { exclusionAreasBreak: unknown[] }) =>
+      (function* slices(): Generator<{ result: unknown }> {
+        if (movements.exclusionAreasBreak.length === 0) yield { result: { status: "success", path: [{ x: 0, y: 64, z: 0, toBreak: [{ x: 2, y: 64, z: 0 }], toPlace: [] }] } };
+        else yield { result: { status: "noPath", path: [] } };
+      })()) as never;
+    assert.deepEqual(await h.run(move.to, { position: [5, 64, 0], range: 0 }), { x: 5, y: 64, z: 0 });
+    assert.equal(activations(), 1, "the own-build explanation opened the door and the walk was retried");
+  });
+
+  it("finds the door near the player when the goal is beyond the door search range", async () => {
+    const { h, pathfinder, activations } = scene({ position: [3.5, 64, 0.5] });
+    pathfinder.goto = async (goal) => {
+      if (goal.x === 4) {
+        h.teleport([3.5, 64, 0.5]);
+        h.bot.emit("goal_reached", goal);
+        return;
+      }
+      if (h.blockAt([4, 64, 0]).getProperties().open !== true) {
+        h.bot.emit("path_update", { status: "noPath", path: [] } as never);
+        return;
+      }
+      h.teleport([20.5, 64, 0.5]);
+      h.bot.emit("goal_reached", goal);
+    };
+    assert.deepEqual(await h.run(move.to, { position: [20, 64, 0], range: 0 }), { x: 20, y: 64, z: 0 });
+    assert.equal(activations(), 1, "the door beside the player was found and opened");
+  });
+});
+
+describe("stuck ends retry through the door (r2)", () => {
+  beforeEach(() => mock.timers.enable({ apis: ["setTimeout", "setInterval", "Date"] }));
+  afterEach(() => mock.timers.reset());
+
+  it("opens the door when the walk gets stuck at the doorway", async () => {
+    const { h, pathfinder, activations } = scene({ position: [3.5, 64, 0.5] });
+    let interior = 0;
+    pathfinder.goto = async (goal) => {
+      if (goal.x === 4) {
+        h.teleport([3.5, 64, 0.5]);
+        h.bot.emit("goal_reached", goal);
+        return;
+      }
+      interior++;
+      if (interior === 1) return new Promise<void>(() => {});
+      h.teleport([5.5, 64, 0.5]);
+      h.bot.emit("goal_reached", goal);
+    };
+    let outcome: unknown = "pending";
+    void h.run(move.to, { position: [5, 64, 0], range: 0, timeoutMs: 60_000 }).then(
+      (value) => (outcome = { ok: value }),
+      (err: unknown) => (outcome = err),
+    );
+    for (let i = 0; i < 24; i++) {
+      mock.timers.tick(500);
+      await flush();
+    }
+    await flush();
+    assert.deepEqual(outcome, { ok: { x: 5, y: 64, z: 0 } });
+    assert.equal(activations(), 1, "the stuck end opened the door");
+    assert.equal(interior, 2, "the walk was retried once");
   });
 });
 

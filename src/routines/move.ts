@@ -65,9 +65,9 @@ interface WalkGoal {
   readonly distance: (feet: Vec3) => number;
 }
 
-/** A walk that found no way to its goal; `retryable` is true only for the plain case, with no drop, own-build, or height explanation. */
+/** A walk that ended short of its goal: the plain no-way result, a stuck end, or an explanation; `retryable` marks the ends a closed door can explain. */
 class CouldNotReachError extends Error {
-  /** True only when the plain walk failed: no drop, own-build, or height explanation fitted it. */
+  /** True for a plain no-way, an own-build explanation, or a stuck end; false when a drop or the goal's height explains the failure. */
   readonly retryable: boolean;
 
   constructor(message: string, retryable: boolean) {
@@ -148,7 +148,7 @@ async function openDoorNearGoal(ctx: RoutineContext, spec: WalkGoal, timeoutMs: 
   const remaining = () => deadline - Date.now();
   ctx.signal.throwIfAborted();
   if (remaining() <= 0) throw deadlineError(timeoutMs);
-  const door = woodenDoorNear(bot, spec.target);
+  const door = woodenDoorNear(bot, spec.target) ?? woodenDoorNear(bot, bot.entity.position);
   if (!door) return undefined;
   const doorAt = door.position;
   if (door.getProperties().open !== true) {
@@ -253,7 +253,9 @@ function watchProgress(bot: RoutineContext["bot"], spec: WalkGoal): { stalled: P
     if (Date.now() - progressAt < NO_PROGRESS_MS) return;
     const feet = bot.entity.position.floored();
     bot.pathfinder.setGoal(null);
-    stalled.reject(new Error(`stuck at ${feet}, ${spec.distance(feet).toFixed(1)} blocks from ${spec.label}: no movement, digging, or nearby block change for ${NO_PROGRESS_MS / 1000} s`));
+    stalled.reject(
+      new CouldNotReachError(`stuck at ${feet}, ${spec.distance(feet).toFixed(1)} blocks from ${spec.label}: no movement, digging, or nearby block change for ${NO_PROGRESS_MS / 1000} s`, true),
+    );
   }, SAMPLE_MS);
   return {
     stalled: stalled.promise,
@@ -500,8 +502,9 @@ function placedBlocks(bot: RoutineContext["bot"]): readonly PlacedBlock[] {
 function placedBlockError(bot: RoutineContext["bot"], label: string, block: PlacedBlock): Error {
   const at = new Vec3(block.x, block.y, block.z);
   const name = block.name ? block.name : (bot.blockAt(at)?.name ?? "a block");
-  return new Error(
+  return new CouldNotReachError(
     `could not reach ${label}: every way goes through blocks you placed (e.g. ${name} at ${at}); open a door, break one yourself, or call move.to again with allowDigOwnBuilds: true`,
+    true,
   );
 }
 
@@ -615,17 +618,18 @@ async function pathTo(ctx: RoutineContext, spec: WalkGoal, timeoutMs: number, al
 }
 
 /**
- * Walks to `spec`'s goal, opening a closed wooden door near it once if the plain no-way walk could
- * not reach it, and returns where the player then stands. The whole call settles by `timeoutMs`:
- * the door retry gets only the time the first walk left. A stop or a replaced goal throws its own
- * error before any door is opened or another walk started.
+ * Walks to `spec`'s goal, opening a closed wooden door once when a plain no-way walk, an own-build
+ * explanation, or a stuck end falls short of it, and returns where the player then stands. The
+ * door is looked for near the goal or near the player (a walk out of a hut). The whole call
+ * settles by `timeoutMs`: the door retry gets only the time the first walk left. A stop or a
+ * replaced goal throws its own error before any door is opened or another walk started.
  */
 async function walkTo(ctx: RoutineContext, spec: WalkGoal, timeoutMs: number, allowDigOwnBuilds: boolean): Promise<Vec3> {
   const deadline = Date.now() + timeoutMs;
   try {
     await pathTo(ctx, spec, timeoutMs, allowDigOwnBuilds);
   } catch (err) {
-    // Only the plain no-way error may be the closed door near the goal; drop, own-build, height, stop and goal-change ends keep their errors.
+    // A plain no-way, an own-build explanation, and a stuck end may be the closed door; drop, height, stop and goal-change ends keep their errors.
     if (!(err instanceof CouldNotReachError) || !err.retryable) throw err;
     ctx.signal.throwIfAborted();
     if (Date.now() >= deadline) throw deadlineError(timeoutMs);
