@@ -79,6 +79,7 @@
     "smeltInputs",
     "smeltOutput",
     "toVec3",
+    "unscopedBot",
     "within",
     "withoutReserved",
     "z"

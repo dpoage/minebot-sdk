@@ -58,6 +58,12 @@ function fakeBot(): EventEmitter {
     // Real members a run's "did you mean" line names: a suggestion is shown only when the member it names exists.
     equip: async () => {},
     isRaining: false,
+    // A plugin's listener is the host's, not a run's: this installs the tick model on the real bot, outside any run's
+    // scope, and ticks it, as mineflayer-pathfinder installs and ticks its own physicsTick listener when it loads.
+    installPathfinderTick: (listener: () => void) => {
+      bot.on("physicsTick", listener);
+      setInterval(() => bot.emit("physicsTick"), 20).unref();
+    },
   });
   // After Connection has attached its listeners.
   setTimeout(() => {
