@@ -86,7 +86,7 @@ describe("one event log", () => {
         "each host event is in the log once, in production order",
       );
       const ping = logged[3]!;
-      assert.equal(ping.seq, 4, "the host's event was numbered by the log, after the three it holds");
+      assert.ok(ping.seq > logged[2]!.seq, "the host's event was numbered by the log, after the three it holds");
       assert.deepEqual(logged[4]!.data.event, { seq: ping.seq, type: "ping" });
     } finally {
       await host.close();

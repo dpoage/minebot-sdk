@@ -180,7 +180,7 @@ A body started with `--no-reflexes` has no reflexes: no reflex fields in the too
 | Observe | Returns the player's state as JSON, or as one line with `--brief`. |
 | Run | Runs a module against the live bot and returns logs and a result. |
 | Stop | Aborts the running run and halts movement and digging. |
-| Events | Returns chat, damage, deaths, joins, disconnects, day and night changes, finished runs, and what the player did or noticed (items picked up, blocks broken or placed, items crafted, hostile creatures near, low health or food) since a cursor. |
+| Events | Returns the body's event log, oldest first: the newest `limit` events when no cursor is given, or the oldest events after the cursor. Every answer carries the log's `latest` seq. The types are the catalog in `src/protocol/event-types.ts`. |
 | Wait | Blocks until an event matches a filter, or until a timeout. An agent uses it to idle at the cost of one call. |
 | Chat | Sends a chat message as the player. |
 | Notes | Stores text that the agent writes, on the body. |

@@ -83,7 +83,7 @@ From a checkout of this repository, point the harness at the source instead:
 claude mcp add minebot -- node --conditions=minebot-sdk:source /absolute/path/to/minebot/src/cli.ts mcp --bot alpha
 ```
 
-By default, the MCP server serves the core tools. The agent acts through runs, and a run reaches everything else through its context, `ctx` (`ctx.notes`, `ctx.status()`, `ctx.bot.chat`, `ctx.wiki`). A run cannot bind a routine, so the core set holds the tools that call and bind routines, and the one that documents the built-in routines. The core set also holds `send_chat`: while another run holds the slot, a new run is refused, and `send_chat` still speaks. A short tool list keeps the agent's context small.
+By default, the MCP server serves the core tools. The agent acts through runs, and a run reaches everything else through its context, `ctx` (`ctx.status()`, `ctx.bot.chat`, `ctx.wiki`). A run cannot bind a routine, so the core set holds the tools that call and bind routines, and the one that documents the built-in routines. The core set also holds `send_chat`, `notes_list`, `notes_set`, and `builtin_search`: while another run holds the slot a new run is refused, but chat, a note, and a search do not need it. A short tool list keeps the agent's context small.
 
 | Core tool | What it does |
 | - | - |
@@ -91,11 +91,13 @@ By default, the MCP server serves the core tools. The agent acts through runs, a
 | `run_program` | Runs a module and blocks until it returns, fails, or times out. Its description holds the run reference for this body. |
 | `stop_program` | Aborts the running run and halts movement, pathfinding, and digging. |
 | `get_run` | Returns a finished run's record: status, logs, and error or result. `seq` is the `run` field in the `data` of the run's `program_finished` event. Do not pass the event's own `seq`: if that number is also the seq of a kept run, `get_run` returns that other run without an error. Without `seq`, it returns the most recent finished run. The body keeps the last 20 finished runs, so a caller that detached (a timeout, a killed CLI) reads the outcome here instead of running again. |
-| `get_events` | Returns chat, damage, deaths, respawns, joins, disconnects, and what the player did or noticed (items picked up, blocks broken and placed, low health, food, or air, hostile creatures near) since a cursor. |
-| `wait_for` | Blocks until a matching event arrives (chat, whisper, system message, night, day, hostile_near, low_health, low_food, low_oxygen, item_picked_up, ...) or the timeout, then returns it. The cheap way to idle. |
+| `get_events` | Returns the body's event log, oldest first: without `since`, the newest `limit` events (default 200); with `since`, the oldest events after that cursor. Every answer names the log's `latest` seq; pass `next` as `since` on the next call. The tool's description lists every event type the body can push. |
+| `wait_for` | Blocks until a matching event arrives or the timeout, then returns it. Its description lists every event type the body can push; a wait whose `types` are exactly one of `day` or `night` (repeated or not, and nothing else) answers at once while that phase already holds, also right after the body joined in it. The cheap way to idle. |
 | `send_chat` | Sends a public chat message or a command as the player, or whispers to one player when you pass `to` (sent as `/msg`, so a leading `/` stays text and runs no command). A message the server would disconnect the body for is refused before sending: control characters, U+007F, the section sign U+00A7, or more than 256 UTF-16 code units (an emoji counts as 2), the `/msg <to> ` prefix included in a whisper. Works while a run is going. |
 | `api_reference` | Returns the run reference for this body: what a run is and what `ctx` holds. |
+| `notes_list`, `notes_set` | Read the agent's persistent notes, and create or replace one. They survive body restarts and resets of the agent's context. |
 | `builtin_docs` | Returns the reference for the built-in routines: call shapes, arguments, and results. Only on a body that offers built-ins. |
+| `builtin_search` | Finds built-in routines by what they do: ranks routines and modules by name, description, and argument names. Only on a body that offers built-ins. |
 | `call_routine` | Calls an action (a saved routine that `bind_routine` bound to a name) or a built-in routine by its `<module>.<routine>` name, with JSON arguments. Blocks until the call returns, fails, or times out, and answers like `run_program`. Only on a body that offers routines or built-ins. |
 | `bind_routine` | Binds a name to a saved routine, as an action or, on a body with reflexes, as a reflex. With `source`, it saves the module first. A routine that the library does not hold is refused: ``no routine named "<name>" in this body's routine library; save it first: pass its TypeScript as `source` to bind_routine (or routine_save), or run `npx minebot routines save <file>.ts`, then bind again``. Only on a body that offers routines. |
 
@@ -104,9 +106,8 @@ By default, the MCP server serves the core tools. The agent acts through runs, a
 | Tool | What it does |
 | - | - |
 | `status` | Returns deaths and reconnects since the body started, and progress toward the body's milestones. |
-| `notes_list`, `notes_set`, `notes_delete` | Read and write the agent's persistent notes. |
+| `notes_delete` | Deletes a note. `notes_list` and `notes_set` are in the core set. |
 | `list_builtins` | Lists the built-in modules, their uses and routines, and how often each routine worked. |
-| `builtin_search` | Ranks the built-in routines and modules by what they do (names, descriptions, argument names). |
 | `builtin_source` | Prints a built-in module's source: the model for writing your own. |
 | `list_routines` | Lists the saved routines with their versions, and the names bound to them. |
 | `routine_save` | Saves a routine from TypeScript source and returns its type check. |
@@ -533,7 +534,7 @@ A body can run for days or weeks. The agent's context can be reset, the agent ha
 | Brief observation | The observation as one line, to keep the agent's context small. |
 | `explorer.surface` | Digs a staircase to open sky when the player is trapped underground. It tunnels sideways when a stair step is impossible, swims up through water, and avoids lava. Under water it checks the air supply first: it does not start a dig that the air cannot cover, and swims to air instead. |
 | `explorer.remember`, `explorer.places` | Typed place memory. `remember({ name, kind, tags, note, contents })` saves a chest, bed, farm, ore, base, portal, or other place with a note and, for a chest, its contents. `places({ kind, near, radius, limit })` lists them nearest first. `waypoints` and `travel` use the same places, and a store written before places existed loads as places of kind `other`. |
-| Blocking wait | `minebot wait` (also `POST /wait` and the `wait_for` MCP tool) blocks until a matching event arrives: chat or whisper from a player, a system message, `night`, `day`, `hostile_near`, `low_health`, `low_food`, `low_oxygen`, `item_picked_up`, or any other event. Filters: types, sender, a regex over the message. The cheap way to idle. |
+| Blocking wait | `minebot wait` (also `POST /wait` and the `wait_for` MCP tool) blocks until a matching event arrives: chat or whisper from a player, a system message, `night`, `day`, `hostile_near`, `low_health`, `low_food`, `low_oxygen`, `item_picked_up`, or any other event. Filters: types, sender, a regex over the message. A wait whose types are exactly one of `day` or `night` (repeated or not, and nothing else) answers at once while that phase already holds, including right after the body joined in it. The cheap way to idle. |
 | Idle float | While no run or reflex holds the run slot and the player's eyes are in water, the body holds jump, so the player floats up instead of sinking and drowning between your calls. A water block, kelp, seagrass, a bubble column, and a waterlogged block all count. A run that dives keeps its own control: the float lets go of its jump when a run starts and holds nothing while the slot is taken. |
 | Death awareness | The `death` event carries the death's `position`, the server's `cause`, and the `dropped` items. `observe` reports `spawnPoint` and `lastDeath`, and the MCP tools report a death since your last call. Two deaths during or just after a reflex's run disable that reflex. See [Reflexes](#reflexes). |
 
@@ -618,7 +619,7 @@ See [wiki/README.md](wiki/README.md) for the page format and the rules for addin
 | `notes` | Lists notes. `notes get <key>`, `notes set <key> [text]` (stdin when the text is omitted), `notes rm <key>`. |
 | `run [file]` | Runs a module from a file, or from stdin. `--args <json>` passes the arguments of its default function. Exits with status 2 if the run does not end `ok`. |
 | `stop` | Aborts the running run. |
-| `events` | Prints buffered events. Use `--since <seq>` to get only newer events. |
+| `events` | Prints buffered events, oldest first: the newest 200, or those after `--since <seq>`. |
 | `runs` | `runs [seq]` prints a finished run's record: its seq and, for a call, its name, then status, logs, and error or result. `seq` is the `run` field of the run's `program_finished` event. Without it, the command prints the most recent finished run. |
 | `wait` | Blocks until a matching event arrives, then prints it as JSON, or `timed out`. Options: `--types a,b`, `--from <name>`, `--match <regex>`, `--since <seq>`, `--timeout <ms>`. |
 | `chat <message>` | Sends a chat message. |

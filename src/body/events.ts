@@ -18,22 +18,48 @@ export interface EventWaitOptions extends EventFilter {
   signal?: AbortSignal;
 }
 
+/**
+ * A fresh log must number above any seq an earlier daemon's log issued, or a cursor held across the
+ * restart would hide the new log's first events. The seed is the wall clock's next second times 1000,
+ * so a log created in any later second seeds above an earlier log's seqs as long as no log sustains a
+ * thousand events a second, and each log counts up by one: seqs stay one small integer per event,
+ * gap-free within a log. Nothing is persisted for it. Assumes the wall clock never moves back (a step
+ * back could let a fresh log reuse an old cursor's range) and a body pushes fewer than 1000 events a
+ * second on average.
+ */
+const SEQS_PER_SECOND = 1000;
+/** The highest seq any log in this process issued or started from; two logs here never overlap either. */
+let issued = 0;
+
+/** The seq a new log starts from: the clock's next second times 1000, or above this process's latest log. */
+function seed(): number {
+  const start = Math.max((Math.floor(Date.now() / 1000) + 1) * SEQS_PER_SECOND, issued);
+  issued = start;
+  return start;
+}
+
 /** Bounded, sequence-numbered log of things that happened to a body. */
 export class EventLog implements EventSink {
   readonly #capacity: number;
-  #events: BodyEvent[] = [];
+  #ring: BodyEvent[] = [];
   #waiters = new Set<Waiter>();
   #listeners = new Set<(event: BodyEvent) => void>();
-  #seq = 0;
+  /** The last day or night event logged: the phase that holds now, which a wait for it must answer from at once. */
+  #phase: BodyEvent | undefined;
+  #seq: number;
 
   constructor(capacity = 1000) {
     this.#capacity = capacity;
+    this.#seq = seed();
   }
 
   push(type: string, data: Record<string, unknown> = {}): void {
     const event = { seq: ++this.#seq, time: Date.now(), type, data };
-    this.#events.push(event);
-    if (this.#events.length > this.#capacity) this.#events.splice(0, this.#events.length - this.#capacity);
+    issued = this.#seq;
+    this.#ring.push(event);
+    if (this.#ring.length > this.#capacity) this.#ring.splice(0, this.#ring.length - this.#capacity);
+    // The newest day or night event is the phase that holds now; see `wait`.
+    if (type === "day" || type === "night") this.#phase = event;
     // A waiter consumes no event: every wait pending on the event's arrival is settled with it.
     for (const waiter of [...this.#waiters]) {
       if (eventMatches(event, waiter.filter)) this.#settle(waiter, { event, next: event.seq, timedOut: false });
@@ -54,24 +80,48 @@ export class EventLog implements EventSink {
   }
 
   /**
-   * Returns events with seq > since, oldest first, at most `limit` of them.
-   * A cursor ahead of the log (the body restarted) restarts from the beginning.
+   * Returns at most `limit` buffered events, oldest first. Without `since` that is the newest
+   * `limit` of them, and `next` is the log's newest seq: what a caller asking for "the events"
+   * wants, so a stale buffer's oldest events cannot crowd out the newest. With `since` it is the
+   * oldest `limit` events whose seq is greater; a cursor ahead of the log starts from the beginning.
+   * `latest` always names the log's newest seq.
    */
-  since(since = 0, limit = 200): EventsResponse {
-    const from = since > this.#seq ? 0 : since;
-    const events = this.#events.filter((e) => e.seq > from).slice(0, limit);
-    return { events, next: events.at(-1)?.seq ?? from };
+  since(since?: number, limit = 200): EventsResponse {
+    const latest = this.#seq;
+    if (since === undefined) {
+      const events = this.#ring.slice(-limit);
+      return { events, next: events.at(-1)?.seq ?? latest, latest };
+    }
+    const from = since > latest ? 0 : since;
+    const events = this.#ring.filter((e) => e.seq > from).slice(0, limit);
+    return { events, next: events.at(-1)?.seq ?? from, latest };
   }
 
   /**
    * Resolves with the first event after the cursor that matches every filter, or with `timedOut`.
+   * Without a cursor, a wait whose `types` are exactly one of day or night (repeated or not, and
+   * nothing else) answers at once while that phase holds, with the event that announced it: the body
+   * may have joined during that phase, so no transition is coming. Any other list — both phases, a
+   * phase mixed with other types, or no types — is answered only by events pushed after the call.
    * Does not block programs or other requests; a wait abandoned through `signal` is dropped.
    */
   async wait(options: EventWaitOptions = {}): Promise<WaitResponse> {
     const filter = { types: options.types, from: options.from, match: options.match };
+    const named = options.types ?? [];
+    const phases = named.filter((type) => type === "day" || type === "night");
+    const onePhaseOnly = named.length > 0 && phases.length === named.length && phases.every((type) => type === phases[0]);
+    if (
+      options.since === undefined &&
+      onePhaseOnly &&
+      this.#phase !== undefined &&
+      this.#phase.type === phases[0] &&
+      eventMatches(this.#phase, filter)
+    ) {
+      return { event: this.#phase, next: this.#phase.seq, timedOut: false };
+    }
     // A cursor ahead of the log means the body restarted; like `since()`, the wait starts over.
     const from = options.since === undefined ? this.#seq : options.since > this.#seq ? 0 : options.since;
-    const found = this.#events.find((e) => e.seq > from && eventMatches(e, filter));
+    const found = this.#ring.find((e) => e.seq > from && eventMatches(e, filter));
     if (found) return { event: found, next: found.seq, timedOut: false };
     const { promise, resolve } = Promise.withResolvers<WaitResponse>();
     const waiter: Waiter = {

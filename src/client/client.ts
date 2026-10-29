@@ -116,8 +116,14 @@ export class BodyClient {
     return this.#request("POST", "/stop", {});
   }
 
-  events(since = 0, limit = 200): Promise<EventsResponse> {
-    return this.#request("GET", `/events?since=${since}&limit=${limit}`);
+  /**
+   * Buffered events, oldest first: the newest `limit` of them when `since` is omitted, and the
+   * oldest `limit` after the cursor when it is given.
+   */
+  events(since?: number, limit = 200): Promise<EventsResponse> {
+    const query = new URLSearchParams({ limit: String(limit) });
+    if (since !== undefined) query.set("since", String(since));
+    return this.#request("GET", `/events?${query}`);
   }
 
   /**

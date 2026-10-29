@@ -220,7 +220,8 @@ describe("Triggers: a reflex fires, queues, preempts, and fails", () => {
     assert.deepEqual(ran.map((r) => [r.name, r.event.type, r.event.data]), [["react", "hurt", { health: 8 }]]);
     const log = events.since(0).events.filter((e) => e.type.startsWith("reflex_"));
     assert.deepEqual(log.map((e) => e.type), ["reflex_fired", "reflex_finished"]);
-    assert.deepEqual(log[0]!.data, { name: "react", event: { seq: 2, type: "hurt" } });
+    const hurt = events.since(0).events.find((e) => e.type === "hurt")!;
+    assert.deepEqual(log[0]!.data, { name: "react", event: { seq: hurt.seq, type: "hurt" } });
     assert.equal(log[1]!.data.status, "ok");
     assert.equal(triggers.reflexes()[0]!.fired, 1);
   });

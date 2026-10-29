@@ -51,6 +51,12 @@ export interface RunRecord {
 }
 
 export interface BodyEvent {
+  /**
+   * The log's number for this event: a seed taken from the log's creation wall clock, then one per
+   * event. The seed is above an earlier log's seqs only when the new log starts in a later wall-clock
+   * second than the earlier log's last event and that log averaged under 1000 events a second, so a
+   * same-second restart can reuse an old cursor's range; the clock is assumed never to move back.
+   */
   seq: number;
   time: number;
   type: string;
@@ -58,9 +64,12 @@ export interface BodyEvent {
 }
 
 export interface EventsResponse {
+  /** The events, oldest first: with no cursor, the newest `limit` of them. */
   events: BodyEvent[];
   /** Pass as `since` on the next call to receive only newer events. */
   next: number;
+  /** The log's newest seq: anything pushed later is newer than every event here. */
+  latest: number;
 }
 
 /** Filters of a blocking wait. Every given filter must match the same event. */
